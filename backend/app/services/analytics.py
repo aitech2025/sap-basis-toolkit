@@ -4,7 +4,6 @@ The query path is intentionally portable: TimescaleDB accelerates the indexed
 time-range scan, while aggregation remains SQL-dialect independent for SQLite
 and vanilla PostgreSQL deployments.
 """
-from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import func, select, text
@@ -81,6 +80,7 @@ def summary(hours: int = 24, landscape: str | None = None) -> dict:
         "last_sample_at": _iso(totals.last_sample_at),
         "metrics": metric_keys,
     }
+
 
 def series(metric: str, hours: int = 24, bucket_seconds: int = 300,
            aggregation: str = "avg", system_id: int | None = None,
