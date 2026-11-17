@@ -403,6 +403,20 @@ system_operations = Table(
 )
 Index("ix_system_operations", system_operations.c.system_id, system_operations.c.started_at)
 
+# Configuration & Security Analysis: immutable configuration snapshots and drift baseline.
+configuration_snapshots = Table(
+    "configuration_snapshots", metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    SYSTEM_FK(),
+    Column("source", String(40), nullable=False),
+    Column("captured_at", DateTime(timezone=True), nullable=False),
+    Column("is_baseline", Boolean, nullable=False, default=False, server_default=text("0")),
+    Column("snapshot_json", Text, nullable=False),
+    Column("change_count", Integer, nullable=False, default=0, server_default=text("0")),
+)
+Index("ix_configuration_snapshots_sys", configuration_snapshots.c.system_id,
+      configuration_snapshots.c.captured_at)
+
 # Columns added to pre-existing tables (applied by init_db and Alembic).
 ADDED_COLUMNS = {
     "targets": [("system_id", "INTEGER REFERENCES sap_systems(id) ON DELETE SET NULL")],

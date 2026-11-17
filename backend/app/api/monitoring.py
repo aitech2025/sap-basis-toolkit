@@ -4,8 +4,8 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from pydantic import BaseModel, Field
 
-from ..auth import Principal, authorize
-from ..services import incidents, monitors, systems
+from ..auth import Principal, authorize, require
+from ..services import configuration, incidents, monitors, systems
 from ..services.collectors import CollectorError, runner
 from ..services.tabular import InputFormatError
 from .toolkit import load_system, read_body
@@ -144,6 +144,46 @@ async def upload_monitor(request: Request, system_id: int, monitor: str):
     monitors.record_metrics(system_id, metrics)
     evaluation = incidents.evaluate(system, metrics)
     return {"monitor": monitor, "health": health, "summary": data.get("summary"), "metrics": metrics, "incidents": evaluation}
+
+
+# ---------------------------------------------------------------- configuration & security analysis
+class ConfigurationSnapshotIn(BaseModel):
+    source: str = Field(default="manual", min_length=1, max_length=40)
+    snapshot: dict = Field(min_length=1)
+    set_baseline: bool = False
+
+
+@router.post("/systems/{system_id}/configuration/snapshots", status_code=201)
+def capture_configuration(system_id: int, payload: ConfigurationSnapshotIn):
+    """Store a sanitized configuration snapshot; set_baseline establishes/replaces the comparison baseline."""
+    load_system(system_id)
+    try:
+        return configuration.capture(system_id, payload.source, payload.snapshot, payload.set_baseline)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc))
+
+
+@router.get("/systems/{system_id}/configuration/snapshots")
+def configuration_history(system_id: int, limit: int = Query(50, ge=1, le=500)):
+    load_system(system_id)
+    return configuration.list_snapshots(system_id, limit)
+
+
+@router.get("/systems/{system_id}/configuration/drift")
+def configuration_drift(system_id: int):
+    load_system(system_id)
+    return configuration.drift(system_id)
+
+
+@router.post("/systems/{system_id}/configuration/baseline", status_code=201,
+             dependencies=[Depends(require("admin"))])
+def set_configuration_baseline(system_id: int, payload: ConfigurationSnapshotIn):
+    """Admin-only baseline replacement; credentials and secret-like fields are redacted before storage."""
+    load_system(system_id)
+    try:
+        return configuration.capture(system_id, payload.source, payload.snapshot, True)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc))
 
 
 # ------------------------------------------------------------------------------- incidents
