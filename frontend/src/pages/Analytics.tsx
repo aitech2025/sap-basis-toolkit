@@ -40,7 +40,8 @@ export default function Analytics() {
   const [result, setResult] = useState<AnalyticsSeries | null>(null);
   const [correlations, setCorrelations] = useState<IncidentCorrelationResponse | null>(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);\n  const [refreshKey, setRefreshKey] = useState(0);
+  const [error, setError] = useState<string | null>(null);
+  const [refreshKey, setRefreshKey] = useState(0);
 
   useEffect(() => {
     let active = true;
@@ -68,6 +69,7 @@ export default function Analytics() {
     ]).then(([overview, incidents, series]) => {
       if (!active) return;
       setSummary(overview);
+      setCorrelations(incidents);
       setResult(series);
     }).catch((e) => active && setError(e instanceof Error ? e.message : "Unable to load historical telemetry"))
       .finally(() => active && setLoading(false));
