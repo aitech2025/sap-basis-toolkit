@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from pydantic import BaseModel, Field
 
 from ..auth import Principal, authorize, require
-from ..services import configuration, incidents, monitors, systems
+from ..services import configuration, incidents, monitors, systems, topology
 from ..services.collectors import CollectorError, runner
 from ..services.tabular import InputFormatError
 from .toolkit import load_system, read_body
@@ -107,6 +107,72 @@ def run_collector(collector_id: int):
     """Run now (operators may trigger runs; changing collectors needs admin)."""
     _collector_errors(runner.get, collector_id)
     return runner.run(collector_id)
+
+
+# ------------------------------------------------------------------------------- explicit dependency topology
+class TopologyAssetIn(BaseModel):
+    landscape: str = Field(min_length=1, max_length=80)
+    system_id: int | None = None
+    kind: str = Field(min_length=1, max_length=30)
+    name: str = Field(min_length=1, max_length=160)
+    hostname: str | None = Field(default=None, max_length=253)
+    port: int | None = Field(default=None, ge=1, le=65535)
+    attributes: dict = Field(default_factory=dict)
+    source: str = Field(default="manual", pattern="^(manual|sapcontrol|hana)$")
+
+
+class TopologyLinkIn(BaseModel):
+    source_asset_id: int = Field(gt=0)
+    target_asset_id: int = Field(gt=0)
+    relationship: str = Field(min_length=1, max_length=30)
+    source: str = Field(default="manual", pattern="^(manual|sapcontrol|hana)$")
+    notes: str | None = Field(default=None, max_length=1000)
+
+
+@router.get("/topology")
+def get_topology(landscape: str = Query(min_length=1, max_length=80)):
+    return topology.list_graph(landscape)
+
+
+@router.get("/systems/{system_id}/topology")
+def get_system_topology(system_id: int):
+    system = load_system(system_id)
+    return topology.list_graph(system["landscape"], system_id)
+
+
+@router.post("/topology/assets", status_code=201, dependencies=[Depends(require("admin"))])
+def add_topology_asset(payload: TopologyAssetIn):
+    try:
+        return topology.create_asset(payload.model_dump())
+    except topology.TopologyError as exc:
+        raise HTTPException(422, str(exc))
+
+
+@router.delete("/topology/assets/{asset_id}", status_code=204, dependencies=[Depends(require("admin"))])
+def remove_topology_asset(asset_id: int):
+    try:
+        topology.delete_asset(asset_id)
+    except LookupError as exc:
+        raise HTTPException(404, str(exc))
+    return Response(status_code=204)
+
+
+@router.post("/topology/links", status_code=201, dependencies=[Depends(require("admin"))])
+def add_topology_link(payload: TopologyLinkIn):
+    try:
+        return topology.create_link(payload.model_dump())
+    except topology.TopologyError as exc:
+        status = 409 if "already exists" in str(exc) else 422
+        raise HTTPException(status, str(exc))
+
+
+@router.delete("/topology/links/{link_id}", status_code=204, dependencies=[Depends(require("admin"))])
+def remove_topology_link(link_id: int):
+    try:
+        topology.delete_link(link_id)
+    except LookupError as exc:
+        raise HTTPException(404, str(exc))
+    return Response(status_code=204)
 
 
 # ------------------------------------------------------------------------------- monitors
