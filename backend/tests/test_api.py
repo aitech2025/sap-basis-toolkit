@@ -1,4 +1,5 @@
 from fastapi.testclient import TestClient
+from sqlalchemy.exc import IntegrityError
 
 from app.main import app
 from app import db, config
@@ -42,6 +43,20 @@ def test_target_registration_and_duplicate(monkeypatch, tmp_path):
         assert created.status_code == 201 and created.json()["hostname"] == "qa.example.test"
         assert client.post("/api/v1/targets", json=payload, headers=headers).status_code == 409
         assert len(client.get("/api/v1/targets", headers=headers).json()) == 1
+
+
+def test_database_rejects_duplicate_endpoint(monkeypatch, tmp_path):
+    setup_test_db(monkeypatch, tmp_path)
+    db.init_db()
+    with db.get_db() as connection:
+        connection.execute(targets.insert().values(name="SAP QA", hostname="qa.example.test", port=443))
+    try:
+        with db.get_db() as connection:
+            connection.execute(targets.insert().values(name="SAP QA duplicate", hostname="qa.example.test", port=443))
+    except IntegrityError:
+        pass
+    else:
+        raise AssertionError("Database should enforce endpoint uniqueness")
 
 
 def test_target_can_be_disabled(monkeypatch, tmp_path):
