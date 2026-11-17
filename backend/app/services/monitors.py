@@ -318,7 +318,8 @@ def build_hana(parts: dict, now: datetime | None = None) -> tuple[dict, dict, st
     levels.append("warning" if high else "healthy")
     data = {"version": parts.get("version"), "memory": mem, "cpu_pct": parts.get("cpu_pct"), "disk": disk,
             "alerts": sorted(alerts, key=lambda a: -int(a.get("rating") or 0))[:50], "backups": backups,
-            "replication": replication, "services": services, "active_statements": active,\n            "service_threads": threads, "expensive_statements_1h": expensive}
+            "replication": replication, "services": services, "active_statements": active,
+            "service_threads": threads, "expensive_statements_1h": expensive}
     return data, metrics, _health(levels)
 
 
