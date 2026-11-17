@@ -11,6 +11,9 @@ from sqlalchemy import func, select, text
 from ..db import get_db, metric_points, sap_systems
 
 METRICS = [
+    {"key": "host.load1", "label": "Host load average (1m)", "category": "Host", "unit": "load", "description": "Operating-system one-minute load average; not CPU percentage", "format": "number"},
+    {"key": "host.memory_used_pct", "label": "Host memory used", "category": "Host", "unit": "%", "description": "Host memory utilisation derived from MemTotal and MemAvailable", "format": "percent"},
+    {"key": "host.disk_used_pct", "label": "Host root filesystem used", "category": "Host", "unit": "%", "description": "Root filesystem utilisation; other mount points are not included", "format": "percent"},
     {"key": "availability.system_up", "label": "System availability", "category": "Availability", "unit": "%", "description": "1 = SAP system available; 0 = unavailable", "format": "percent"},
     {"key": "availability.instances_down", "label": "Instances down", "category": "Availability", "unit": "instances", "description": "Number of SAP instances reported down", "format": "number"},
     {"key": "wp.dia_busy_pct", "label": "DIA work process busy", "category": "Work processes", "unit": "%", "description": "Dialog work-process busy percentage", "format": "percent"},

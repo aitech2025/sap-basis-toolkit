@@ -503,7 +503,7 @@ export interface MaintenanceWindow {
 export interface Collector {
   id: number;
   system_id: number;
-  type: "sapcontrol" | "hana";
+  type: "sapcontrol" | "hana" | "node_exporter";
   host: string;
   port: number;
   use_tls: boolean;

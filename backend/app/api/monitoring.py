@@ -14,6 +14,7 @@ router = APIRouter(prefix="/api/v1", dependencies=[Depends(authorize)])
 
 MONITOR_METRICS = {
     "availability": ["availability.system_up", "availability.instances_down"],
+    "host": ["host.load1", "host.memory_used_pct", "host.disk_used_pct"],
     "workprocesses": ["wp.dia_busy_pct", "wp.btc_busy_pct", "wp.long_running", "wp.stopped"],
     "dumps": ["dumps.last_hour", "dumps.last_24h"],
     "syslog": ["syslog.errors_last_hour"],
@@ -32,7 +33,7 @@ def _principal(request: Request) -> Principal:
 
 # ------------------------------------------------------------------------------- collectors
 class CollectorIn(BaseModel):
-    type: str = Field(pattern="^(sapcontrol|hana)$")
+    type: str = Field(pattern="^(sapcontrol|hana|node_exporter)$")
     host: str = Field(min_length=1, max_length=253)
     port: int = Field(ge=1, le=65535)
     use_tls: bool = True

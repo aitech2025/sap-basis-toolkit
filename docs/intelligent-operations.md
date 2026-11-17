@@ -52,3 +52,22 @@ Monitoring Analytics overlays incident markers on a metric series when the incid
 - Maintenance periods are disclosed, not silently removed.
 - Forecast and anomaly calculations are deterministic and inspectable.
 - For high-volume environments, consider rollups/continuous aggregates and configurable retention after measuring real workload.
+
+## Root cause analysis
+
+`GET /api/v1/intelligence/root-cause/{incident_id}` returns a read-only diagnostic report for an incident.
+
+The initial engine correlates the incident's registered SAP system telemetry within ±30 minutes of incident opening. It groups threshold breaches and worsening metric movements into HANA, ABAP, Interfaces, Availability and Connectivity hypotheses. Evidence includes the observed value, investigation threshold, before/after averages, sample counts, timestamp and whether a metric was the incident's original trigger.
+
+Hypotheses receive a deterministic evidence score capped at 10. A primary incident metric is discounted so the triggering alert is not incorrectly counted as independent corroboration. Confidence labels describe evidence strength and signal coverage; they are not probabilities.
+
+The report also includes monitor snapshot metadata, collection coverage, data truncation indicators, limitations and operator investigation steps. Raw monitor payloads, usernames, credentials and other sensitive details are not exposed by this endpoint.
+
+### Current limits
+
+- This is a rules-and-evidence ranking engine, not causal inference or an ML model.
+- It correlates only the incident's assigned SAP system. Shared HANA, network, storage and middleware dependencies are not inferred.
+- OS CPU, network latency, RFC response-time and application dependency telemetry are not yet first-class collected signals.
+- Snapshot evidence is summary-only and metrics without observations remain unknown.
+- No remediation action is executed. Operators remain responsible for diagnosis and change approval.
+\n\n## Host telemetry expansion\n\nA third collector type, `node_exporter`, can scrape a host-level Prometheus node_exporter endpoint over HTTP or HTTPS. Configure the host, port `9100`, TLS mode and certificate verification. The destination must pass Sentinel outbound host/CIDR policy. The scrape is read-only, limited to 2 MiB and a short timeout, and parses only a small allowlist.\n\nCollected signals are `host.load1`, `host.memory_used_pct` (MemTotal minus MemAvailable) and `host.disk_used_pct` (root filesystem only). These are stored in the existing metric stream and host monitor snapshot and are available to anomaly/correlation analytics. Load average is not CPU utilisation. CPU percentage, per-device disk I/O rates and network throughput require counter-delta handling across samples and are intentionally not fabricated from a single scrape.\n\nThe endpoint should be exposed only on a trusted management network or behind a TLS reverse proxy with network-level access controls. Sentinel does not accept node_exporter credentials; do not expose an unauthenticated exporter to the public internet. The current metric schema has no host dimension, so Sentinel permits only one node_exporter collector per SAP system to avoid silently mixing measurements from multiple hosts. Associate it with the designated primary host for now; multi-host correlation requires a future host-dimension/topology migration. A host collector is associated only with the SAP system record to which it is attached; cross-system dependencies are not inferred.\n

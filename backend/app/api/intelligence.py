@@ -2,7 +2,7 @@
 from fastapi import APIRouter, Depends, Query
 
 from ..auth import authorize
-from ..services import intelligence
+from ..services import intelligence, root_cause
 
 router = APIRouter(prefix="/api/v1/intelligence", dependencies=[Depends(authorize)])
 
@@ -34,3 +34,14 @@ def incident_correlations(hours: int = Query(24, ge=1, le=24 * 30),
                           system_id: int | None = Query(None, ge=1),
                           landscape: str | None = Query(None, min_length=1, max_length=80)):
     return intelligence.correlations(hours, system_id, landscape)
+
+
+
+@router.get("/root-cause/{incident_id}")
+def root_cause_analysis(incident_id: int):
+    """Return ranked, explainable diagnostic hypotheses for one incident."""
+    try:
+        return root_cause.analyze(incident_id)
+    except LookupError as exc:
+        from fastapi import HTTPException
+        raise HTTPException(404, str(exc))

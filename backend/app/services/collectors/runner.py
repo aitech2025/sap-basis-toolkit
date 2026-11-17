@@ -13,10 +13,10 @@ from ...db import collectors, get_db, sap_systems
 from .. import growth, incidents, monitors, ops, transports, vault
 from ..systems import system_zone
 from ..tabular import parse_sap_datetime
-from . import CollectorError, hana, sapcontrol, simulator, validate_port
+from . import CollectorError, hana, node_exporter, sapcontrol, simulator, validate_port
 
 logger = logging.getLogger(__name__)
-TYPES = ("sapcontrol", "hana")
+TYPES = ("sapcontrol", "hana", "node_exporter")
 
 
 def _iso(value):
@@ -52,6 +52,10 @@ def validate(data: dict) -> None:
         validate_port(data["type"], int(data["port"]))
     if data["type"] == "hana" and not simulator.is_sim(data["host"]) and not data.get("username"):
         raise CollectorError("HANA collectors need a database user")
+    if data["type"] == "node_exporter" and simulator.is_sim(data["host"]):
+        raise CollectorError("node_exporter does not support the SAP demo simulator")
+    if data["type"] == "node_exporter" and (data.get("username") or data.get("password")):
+        raise CollectorError("node_exporter credentials are not accepted; secure the endpoint at the network or reverse-proxy layer")
     if data.get("abap_schema") and not hana.SCHEMA_RE.match(data["abap_schema"]):
         raise CollectorError("ABAP schema must be an uppercase identifier, e.g. SAPHANADB")
     if not 30 <= int(data.get("interval_seconds") or 300) <= 86400:
@@ -76,6 +80,13 @@ def get(collector_id: int) -> dict:
 def create(system_id: int, data: dict) -> dict:
     data = {**data, "host": data["host"].strip().lower(), "abap_schema": (data.get("abap_schema") or "").strip().upper() or None}
     validate(data)
+    if data["type"] == "node_exporter":
+        with get_db() as connection:
+            existing = connection.execute(select(collectors.c.id).where(
+                collectors.c.system_id == system_id, collectors.c.type == "node_exporter"
+            )).first()
+        if existing:
+            raise CollectorError("Only one node_exporter collector per SAP system is supported until host-level metric dimensions are available")
     password = data.pop("password", None)
     with get_db() as connection:
         row = connection.execute(collectors.insert().values(
@@ -91,6 +102,8 @@ def update_collector(collector_id: int, changes: dict) -> dict:
         changes["abap_schema"] = (changes["abap_schema"] or "").strip().upper() or None
     password = changes.pop("password", None)
     clear_password = changes.pop("clear_password", False)
+    if current["type"] == "node_exporter" and (password or changes.get("username")):
+        raise CollectorError("node_exporter credentials are not accepted; secure the endpoint at the network or reverse-proxy layer")
     validate({**current, **changes})
     if password:
         changes["password_enc"] = vault.encrypt(password)
@@ -218,12 +231,22 @@ def _run_hana(row: dict, system: dict, persist: bool) -> tuple[dict, dict]:
     return {"metrics": metrics, "summary": summary}, {"diagnostics": raw["diagnostics"]}
 
 
+def _run_node_exporter(row: dict, system: dict, persist: bool) -> tuple[dict, dict]:
+    raw = node_exporter.collect(row["host"], int(row["port"]), bool(row["use_tls"]), bool(row["verify_tls"]))
+    metrics = raw["metrics"]
+    summary = {"host": row["host"], "signals": sorted(metrics), "collected_at": raw["collected_at"].isoformat()}
+    if persist:
+        health = "critical" if metrics.get("host.memory_used_pct", 0) >= 95 or metrics.get("host.disk_used_pct", 0) >= 95 else "warning" if metrics.get("host.memory_used_pct", 0) >= 85 or metrics.get("host.disk_used_pct", 0) >= 85 else "healthy"
+        monitors.store(system["id"], "host", "node_exporter", {"metrics": metrics, "summary": summary}, health, raw["collected_at"])
+    return {"metrics": metrics, "summary": summary}, {"diagnostics": [{"call": "GET /metrics", "ok": True, "signals": sorted(metrics)}]}
+
+
 def run(collector_id: int, persist: bool = True) -> dict:
     """Run one collector now. With persist=False it is a connection test (nothing stored or alerted)."""
     row = get(collector_id)
     system = _system(row["system_id"])
     started = time.monotonic()
-    runner = _run_sapcontrol if row["type"] == "sapcontrol" else _run_hana
+    runner = {"sapcontrol": _run_sapcontrol, "hana": _run_hana, "node_exporter": _run_node_exporter}[row["type"]]
     try:
         result, details = runner(row, system, persist)
         status, error = "ok", None
@@ -260,7 +283,7 @@ def test_connection(system_id: int, data: dict) -> dict:
     validate(data)
     system = _system(system_id)
     row = {**data, "id": 0, "system_id": system_id, "password_enc": vault.encrypt(data.get("password"))}
-    runner = _run_sapcontrol if data["type"] == "sapcontrol" else _run_hana
+    runner = {"sapcontrol": _run_sapcontrol, "hana": _run_hana, "node_exporter": _run_node_exporter}[data["type"]]
     started = time.monotonic()
     try:
         result, details = runner(row, system, persist=False)
