@@ -100,9 +100,38 @@ export default function OverviewTab({ system }: { system: SystemDetail }) {
   const RANK: Record<string, number> = { pass: 0, review: 1, block: 2, fail: 2 };
   const transportStatus = [pre?.status, post?.status].filter((x): x is string => !!x)
     .sort((a, b) => (RANK[b] ?? 0) - (RANK[a] ?? 0))[0] ?? "unknown";
+  const liveAvailability = live.data?.monitors.availability?.data.summary;
+  const liveHana = live.data?.monitors.hana?.data;
+  const activeCount = active.data?.length ?? 0;
+  const runningInstances = liveAvailability ? `${liveAvailability.running}/${liveAvailability.instances}` : "–";
+  const diskValue = g.disk_used_pct == null ? "–" : `${g.disk_used_pct}%`;
+  const hanaMemory = liveHana?.memory?.pct == null ? "–" : `${liveHana.memory.pct}%`;
 
   return (
     <>
+      <section className="system-command-center">
+        <div className="system-command-top">
+          <div>
+            <span className="eyebrow">SYSTEM COMMAND CENTER · {system.environment} ENVIRONMENT</span>
+            <h2>{system.sid} operational posture</h2>
+            <p>Live telemetry, platform health and operational risk for this SAP system.</p>
+          </div>
+          <div className="system-command-status"><span className={`system-status-dot ${data.health === "healthy" ? "is-good" : data.health === "critical" ? "is-bad" : data.health === "warning" ? "is-warn" : ""}`} /><Pill value={data.health} /></div>
+        </div>
+        <div className="system-kpi-grid">
+          <div className="system-kpi"><span>Overall health</span><strong>{data.health === "healthy" ? "Healthy" : data.health === "unknown" ? "No data" : data.health}</strong><small>Composite system signal</small></div>
+          <div className="system-kpi"><span>Instances running</span><strong>{runningInstances}</strong><small>{liveAvailability?.system_up ? "SAP system available" : "Latest availability snapshot"}</small></div>
+          <div className={`system-kpi ${activeCount ? "kpi-alert" : ""}`}><span>Active incidents</span><strong>{activeCount}</strong><small>{activeCount ? "Requires operator attention" : "No active incidents"}</small></div>
+          <div className="system-kpi"><span>Disk / HANA memory</span><strong>{diskValue} <i>·</i> {hanaMemory}</strong><small>Disk used · HANA memory used</small></div>
+        </div>
+        <div className="system-command-footer">
+          <span><i className="live-dot" /> Collector telemetry</span>
+          <span>{live.data?.collectors.length ?? 0} configured collectors</span>
+          <span>{live.data?.collectors.filter((c) => c.last_status === "error").length ?? 0} collector errors</span>
+          <span>Certificate posture: <Pill value={c.health} /></span>
+          <span>Capacity posture: <Pill value={g.health} /></span>
+        </div>
+      </section>
       <div className={`banner ${data.health === "critical" ? "error" : data.health === "healthy" ? "ok" : "info"}`}>
         <strong>{system.sid}</strong> overall health: <Pill value={data.health} />
         <span className="muted"> · worst of live availability, open incidents, certificates, capacity forecast, jobs, locks and the last import</span>

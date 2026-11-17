@@ -50,23 +50,32 @@ export default function SystemDetailPage() {
 
   return (
     <>
-      <div className="page-head">
-        <div>
-          <h1>{system.sid} <span className="muted" style={{ fontWeight: 500 }}>· {system.name}</span></h1>
-          <p>
-            <span className="tag">{system.environment}</span>{system.product_label}
-            {system.product_version && ` ${system.product_version}`} · {system.stack} · {system.database}
-            {" "}· landscape {system.landscape} {!system.enabled && <Pill value="disabled" />}
-          </p>
+      <section className="system-masthead">
+        <div className="system-masthead-main">
+          <div className="system-breadcrumb"><NavLink to="/systems">SAP systems</NavLink><span>/</span><NavLink to={`/landscapes/${encodeURIComponent(system.landscape)}`}>{system.landscape}</NavLink><span>/</span><strong>{system.sid}</strong></div>
+          <div className="system-title-row">
+            <div className="system-monogram">{system.sid.slice(0, 1)}</div>
+            <div><span className="eyebrow">SAP SYSTEM WORKSPACE · {system.environment}</span><h1>{system.sid} <span>{system.name}</span></h1></div>
+            <Pill value={system.enabled ? "enabled" : "disabled"} />
+          </div>
+          <div className="system-meta-strip">
+            <span>{system.product_label}{system.product_version ? ` ${system.product_version}` : ""}</span>
+            <i />
+            <span>{system.stack}</span>
+            <i />
+            <span>{system.database}</span>
+            {system.host && <><i /><span>{system.host}</span></>}
+            {system.basis_release && <><i /><span>SAP_BASIS {system.basis_release}</span></>}
+          </div>
         </div>
-        <div className="actions">
+        <div className="system-masthead-actions">
           <RequireRole role="operator">
-            <button className="btn" onClick={() => setEditing(true)}>Edit</button>
+            <button className="btn" onClick={() => setEditing(true)}>Edit system</button>
             <button className="btn danger" onClick={remove}>Delete</button>
           </RequireRole>
         </div>
-      </div>
-      <nav className="tabs">
+      </section>
+      <nav className="system-tabs">
         {tabs.map(([path, label]) => (
           <NavLink key={path} to={`/systems/${id}${path ? `/${path}` : ""}`} end={!path}>{label}</NavLink>
         ))}
