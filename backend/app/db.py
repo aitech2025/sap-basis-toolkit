@@ -430,6 +430,41 @@ configuration_snapshots = Table(
 Index("ix_configuration_snapshots_sys", configuration_snapshots.c.system_id,
       configuration_snapshots.c.captured_at)
 
+# Explicit infrastructure and application dependency inventory.
+# Assets are landscape-scoped; system_id is optional for shared infrastructure.
+topology_assets = Table(
+    "topology_assets", metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("landscape", String(80), nullable=False),
+    Column("system_id", Integer, ForeignKey("sap_systems.id", ondelete="SET NULL")),
+    Column("kind", String(30), nullable=False),  # host | hana | rfc_destination | middleware | web_dispatcher | external_service
+    Column("name", String(160), nullable=False),
+    Column("hostname", String(253)),
+    Column("port", Integer),
+    Column("attributes_json", Text, nullable=False, server_default="{}"),
+    Column("source", String(20), nullable=False, server_default="manual"),  # manual | sapcontrol | hana
+    Column("created_at", DateTime(timezone=True), nullable=False, server_default=text("CURRENT_TIMESTAMP")),
+    Column("updated_at", DateTime(timezone=True), nullable=False, server_default=text("CURRENT_TIMESTAMP")),
+)
+Index("ix_topology_assets_landscape", topology_assets.c.landscape, topology_assets.c.kind)
+Index("ix_topology_assets_system", topology_assets.c.system_id)
+
+topology_links = Table(
+    "topology_links", metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("source_asset_id", Integer, ForeignKey("topology_assets.id", ondelete="CASCADE"), nullable=False),
+    Column("target_asset_id", Integer, ForeignKey("topology_assets.id", ondelete="CASCADE"), nullable=False),
+    Column("relationship", String(30), nullable=False),  # runs_on | uses_database | connects_to | routes_to | depends_on | hosts
+    Column("source", String(20), nullable=False, server_default="manual"),
+    Column("verified_at", DateTime(timezone=True)),
+    Column("notes", Text),
+    Column("created_at", DateTime(timezone=True), nullable=False, server_default=text("CURRENT_TIMESTAMP")),
+)
+Index("uq_topology_link", topology_links.c.source_asset_id, topology_links.c.target_asset_id,
+      topology_links.c.relationship, unique=True)
+Index("ix_topology_links_target", topology_links.c.target_asset_id)
+
+
 # Columns added to pre-existing tables (applied by init_db and Alembic).
 ADDED_COLUMNS = {
     "targets": [("system_id", "INTEGER REFERENCES sap_systems(id) ON DELETE SET NULL")],
