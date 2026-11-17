@@ -34,6 +34,18 @@ Run `alembic upgrade head` before deployment. The baseline creates missing table
 
 Endpoint TLS discovery sees only certificates presented during a network handshake. It cannot inventory all certificates stored in STRUST, including client PSEs and certificates not presented by an endpoint. The included collector is a contract only; a production RFC adapter must be built and tested against the supported SAP_BASIS release and a least-privilege SAP interface. Do not treat the current scaffold as working STRUST integration.
 
+## Multi-system model (v0.5)
+
+- `sap_systems` is the registry (SID + landscape unique). Every module table references it: `targets.system_id` (nullable, SET NULL on delete), `imported_certificates`, `table_size_snapshots`, `capacity_snapshots`, `analysis_runs`, `alert_events` (CASCADE).
+- `services/profiles.py` holds product/stack/database rules, licence models, export guides and housekeeping catalogues. `PROFILE_OVERRIDES_FILE` (JSON) adds products or housekeeping entries.
+- Disabling a system pauses its endpoint checks, PSE alerts and growth alerts without deleting history.
+- `analysis_runs` stores summary counts of stateless analyses (no user names, no uploaded content) for the overview and history views.
+- `GET /api/v1/overview` derives per-system health: worst of certificate status, capacity forecast (≤7 days critical, ≤`GROWTH_ALERT_DAYS` warning) and last import post-check.
+
+## UI
+
+React 18 + TypeScript + Vite in `frontend/`. `npm run build` emits into `backend/app/static`; FastAPI serves assets and falls back to `index.html` for client-side routes (never for `/api/*`). The Docker image builds the UI in a Node stage. No UI component library; single-series charts are hand-built SVG with hover tooltips and a data-table fallback.
+
 ## Toolkit modules (v0.4)
 
 - `services/tabular.py` – tolerant parser for SAP exports (delimiter, header alias, date and number locale detection).

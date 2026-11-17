@@ -5,7 +5,7 @@ from apscheduler.schedulers.blocking import BlockingScheduler
 from sqlalchemy import select
 
 from ..config import CHECK_INTERVAL_MINUTES, GROWTH_EVAL_INTERVAL_MINUTES
-from ..db import get_db, targets
+from ..db import get_db, sap_systems, targets
 from .checks import check_target
 
 logger = logging.getLogger(__name__)
@@ -14,7 +14,11 @@ logger = logging.getLogger(__name__)
 def run_scheduled_checks() -> None:
     with get_db() as connection:
         ids = connection.execute(
-            select(targets.c.id).where(targets.c.enabled.is_(True))
+            select(targets.c.id)
+            .join(sap_systems, sap_systems.c.id == targets.c.system_id, isouter=True)
+            .where(targets.c.enabled.is_(True))
+            # Endpoints of a disabled SAP system are paused; unassigned endpoints keep running.
+            .where((targets.c.system_id.is_(None)) | (sap_systems.c.enabled.is_(True)))
         ).scalars().all()
     for target_id in ids:
         try:

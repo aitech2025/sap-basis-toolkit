@@ -203,7 +203,7 @@ def parse_import_results(content: str) -> dict[str, int]:
     return results
 
 
-def postcheck(content: str, target_system: str, alert: bool = True) -> dict:
+def postcheck(content: str, target_system: str, alert: bool = True, system_id: int | None = None) -> dict:
     results = parse_import_results(content)
     entries = [{"request": tr, "rc": rc, "result": classify_rc(rc)} for tr, rc in sorted(results.items())]
     failed = [e for e in entries if e["rc"] >= 8]
@@ -212,10 +212,11 @@ def postcheck(content: str, target_system: str, alert: bool = True) -> dict:
         for entry in failed:
             severity = "critical" if entry["rc"] >= 12 else "error"
             alerts.extend(send_alert_once(
-                "transports", f"import:{target_system}:{entry['request']}:{entry['rc']}",
+                "transports", f"import:{system_id or target_system}:{entry['request']}:{entry['rc']}",
                 f"{target_system}: import of {entry['request']} ended with RC {entry['rc']}",
                 severity, {"target_system": target_system, "request": entry["request"], "rc": entry["rc"],
                            "next_step": "Check the import log in STMS (Goto > Import History) and SE01 log"},
+                system_id=system_id,
             ))
     return {
         "target_system": target_system,

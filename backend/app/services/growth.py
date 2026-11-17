@@ -9,38 +9,10 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import select
 
 from .. import config
-from ..db import capacity_snapshots, get_db, table_size_snapshots
+from ..db import capacity_snapshots, get_db, sap_systems, table_size_snapshots
+from . import profiles
 from .alerts import send_alert_once
 from .tabular import InputFormatError, parse_number, pick, read_rows, require_columns
-
-# Typical Basis housekeeping. Always validate against your release and retention policy.
-HOUSEKEEPING = {
-    "BALHDR": "Application log: delete expired logs with SLG2 / report SBAL_DELETE (schedule daily).",
-    "BALDAT": "Application log data: delete with SLG2 / SBAL_DELETE; check log expiry dates set by applications.",
-    "BALC": "Application log context: cleaned together with BALHDR/BALDAT via SLG2.",
-    "SOFFCONT1": "SAPoffice/BCS document content: reorganise with RSBCS_REORG and move attachments to a content server.",
-    "SOC3": "SAPoffice content: reorganise with RSBCS_REORG / SAPoffice reorg reports.",
-    "EDIDC": "IDoc control records: archive with archiving object IDOC (SARA); define retention per message type.",
-    "EDIDS": "IDoc status records: archive with archiving object IDOC (SARA).",
-    "EDI40": "IDoc data records: archive with archiving object IDOC (SARA).",
-    "DBTABLOG": "Table change logging: delete old logs with RSTBPDEL (SCU3); review rec/client logging scope.",
-    "CDHDR": "Change documents: archive with archiving object CHANGEDOCU.",
-    "CDPOS": "Change document items: archive with archiving object CHANGEDOCU.",
-    "TST03": "Spool data: schedule RSPO1041 (or RSPO0041) spool reorganisation.",
-    "TSP01": "Spool requests: schedule RSPO1041 spool reorganisation.",
-    "APQD": "Batch input data: delete processed sessions with RSBDCREO.",
-    "APQI": "Batch input queue: delete processed sessions with RSBDCREO.",
-    "TBTCO": "Background job headers: schedule RSBTCDEL2 to delete old job logs.",
-    "TBTCP": "Background job steps: schedule RSBTCDEL2.",
-    "BDCP2": "Change pointers: delete processed pointers with RBDCPCLR2.",
-    "ARFCSDATA": "tRFC payload: investigate stuck LUWs in SM58 before cleanup; do not delete blindly.",
-    "SWWLOGHIST": "Workflow logs: archive with archiving object WORKITEM.",
-    "SWWWIHEAD": "Workflow work items: archive with archiving object WORKITEM.",
-    "SXMSCLUP": "PI/XI message payloads: verify archiving/deletion jobs (SXMS_DELETE / retention in SXMB_ADM).",
-    "SXMSCLUR": "PI/XI message payloads: verify archiving/deletion jobs and retention in SXMB_ADM.",
-    "VBDATA": "Update records: investigate failed updates in SM13; never delete without functional sign-off.",
-    "RSDDSTATLOGGING": "BW statistics: delete old statistics data (RSDDSTAT_DATA_DELETE).",
-}
 
 TABLE_ALIASES = ("TABLE_NAME", "TABLE", "TABNAME", "Table Name", "Object", "Name")
 SIZE_ALIASES = {
@@ -78,22 +50,22 @@ def parse_snapshot(raw: bytes) -> list[dict]:
     return list(parsed.values())
 
 
-def store_snapshot(sap_system_id: str, raw: bytes, captured_at: datetime | None = None) -> dict:
+def store_snapshot(system_id: int, raw: bytes, captured_at: datetime | None = None) -> dict:
     captured_at = captured_at or datetime.now(timezone.utc)
     entries = parse_snapshot(raw)
     with get_db() as connection:
         connection.execute(table_size_snapshots.insert(), [
-            {**entry, "sap_system_id": sap_system_id, "captured_at": captured_at} for entry in entries
+            {**entry, "system_id": system_id, "captured_at": captured_at} for entry in entries
         ])
-    return {"sap_system_id": sap_system_id, "tables": len(entries), "captured_at": captured_at.isoformat(),
+    return {"system_id": system_id, "tables": len(entries), "captured_at": captured_at.isoformat(),
             "total_size_mb": round(sum(e["size_mb"] for e in entries), 2)}
 
 
-def store_capacity(sap_system_id: str, disk_total_mb: float, disk_used_mb: float,
+def store_capacity(system_id: int, disk_total_mb: float, disk_used_mb: float,
                    memory_total_mb: float | None = None, memory_used_mb: float | None = None,
                    captured_at: datetime | None = None) -> dict:
     captured_at = captured_at or datetime.now(timezone.utc)
-    values = dict(sap_system_id=sap_system_id, disk_total_mb=disk_total_mb, disk_used_mb=disk_used_mb,
+    values = dict(system_id=system_id, disk_total_mb=disk_total_mb, disk_used_mb=disk_used_mb,
                   memory_total_mb=memory_total_mb, memory_used_mb=memory_used_mb, captured_at=captured_at)
     with get_db() as connection:
         connection.execute(capacity_snapshots.insert().values(**values))
@@ -127,18 +99,19 @@ def _days_until(current: float, limit: float, rate: float | None) -> float | Non
     return max(0.0, (limit - current) / rate)
 
 
-def build_report(sap_system_id: str, window_days: int = 30, top: int = 10) -> dict:
+def build_report(system_id: int, window_days: int = 30, top: int = 10, product: str = "") -> dict:
+    housekeeping = profiles.housekeeping_catalogue(product)
     since = datetime.now(timezone.utc) - timedelta(days=window_days)
     with get_db() as connection:
         rows = connection.execute(
             select(table_size_snapshots).where(
-                table_size_snapshots.c.sap_system_id == sap_system_id,
+                table_size_snapshots.c.system_id == system_id,
                 table_size_snapshots.c.captured_at >= since,
             ).order_by(table_size_snapshots.c.captured_at)
         ).mappings().all()
         capacity = connection.execute(
             select(capacity_snapshots).where(
-                capacity_snapshots.c.sap_system_id == sap_system_id,
+                capacity_snapshots.c.system_id == system_id,
                 capacity_snapshots.c.captured_at >= since,
             ).order_by(capacity_snapshots.c.captured_at)
         ).mappings().all()
@@ -160,7 +133,7 @@ def build_report(sap_system_id: str, window_days: int = 30, top: int = 10) -> di
             "growth_mb_per_day": round(rate, 3) if rate is not None else None,
             "growth_mb_window": round(latest_size - first_size, 2),
             "growth_pct_window": round((latest_size - first_size) / first_size * 100, 1) if first_size else None,
-            "recommendation": HOUSEKEEPING.get(name),
+            "recommendation": housekeeping.get(name),
         })
     tables.sort(key=lambda t: (t["growth_mb_per_day"] or 0, t["size_mb"]), reverse=True)
 
@@ -190,8 +163,17 @@ def build_report(sap_system_id: str, window_days: int = 30, top: int = 10) -> di
                     latest["memory_used_mb"], latest["memory_total_mb"] * threshold_pct / 100, mem_rate)),
             })
 
+    totals: dict[str, float] = {}
+    for row in rows:
+        key = _aware(row["captured_at"]).isoformat()
+        totals[key] = totals.get(key, 0.0) + row["size_mb"]
     return {
-        "sap_system_id": sap_system_id,
+        "system_id": system_id,
+        "size_history": [{"captured_at": k, "tracked_size_mb": round(v, 2)} for k, v in sorted(totals.items())],
+        "capacity_history": [
+            {"captured_at": _aware(c["captured_at"]).isoformat(), "disk_used_mb": c["disk_used_mb"],
+             "disk_total_mb": c["disk_total_mb"], "memory_used_mb": c["memory_used_mb"],
+             "memory_total_mb": c["memory_total_mb"]} for c in capacity],
         "window_days": window_days,
         "tracked_tables": len(tables),
         "tracked_growth_mb_per_day": round(total_rate, 2),
@@ -205,20 +187,19 @@ def _round(value):
     return round(value, 1) if value is not None else None
 
 
-def known_systems() -> list[str]:
-    with get_db() as connection:
-        a = connection.execute(select(table_size_snapshots.c.sap_system_id).distinct()).scalars().all()
-        b = connection.execute(select(capacity_snapshots.c.sap_system_id).distinct()).scalars().all()
-    return sorted(set(a) | set(b))
-
-
 def evaluate_growth_alerts() -> list[dict]:
     """Alert when disk or memory is forecast to cross the threshold within GROWTH_ALERT_DAYS."""
     raised = []
     week = datetime.now(timezone.utc).strftime("%G-W%V")
-    for system in known_systems():
-        report = build_report(system)
+    with get_db() as connection:
+        systems = connection.execute(
+            select(sap_systems.c.id, sap_systems.c.sid, sap_systems.c.landscape, sap_systems.c.product)
+            .where(sap_systems.c.enabled.is_(True))
+        ).mappings().all()
+    for system in systems:
+        report = build_report(system["id"], product=system["product"])
         forecast = report["capacity_forecast"] or {}
+        label = f"{system['sid']} ({system['landscape']})"
         for resource in ("disk", "memory"):
             days = forecast.get(f"days_until_{resource}_threshold")
             if days is None or days > config.GROWTH_ALERT_DAYS:
@@ -226,11 +207,13 @@ def evaluate_growth_alerts() -> list[dict]:
             severity = "critical" if days <= 7 else "warning"
             top = ", ".join(t["table_name"] for t in report["top_growing_tables"][:5])
             send_alert_once(
-                "table-growth", f"growth:{system}:{resource}:{severity}:{week}",
-                f"{system}: {resource} forecast to reach {forecast['threshold_pct']}% in {days} days",
+                "table-growth", f"growth:{system['id']}:{resource}:{severity}:{week}",
+                f"{label}: {resource} forecast to reach {forecast['threshold_pct']}% in {days} days",
                 severity,
-                {"sap_system_id": system, f"{resource}_used_pct": forecast.get(f"{resource}_used_pct"),
-                 "fastest_growing_tables": top},
+                {"sid": system["sid"], "landscape": system["landscape"],
+                 f"{resource}_used_pct": forecast.get(f"{resource}_used_pct"), "fastest_growing_tables": top},
+                system_id=system["id"],
             )
-            raised.append({"sap_system_id": system, "resource": resource, "days": days, "severity": severity})
+            raised.append({"system_id": system["id"], "sid": system["sid"], "resource": resource,
+                           "days": days, "severity": severity})
     return raised

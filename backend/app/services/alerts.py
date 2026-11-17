@@ -25,7 +25,7 @@ def _channels(payload: dict, fingerprint: str, severity: str):
 
 
 def send_alert_once(module: str, fingerprint: str, summary: str, severity: str = "warning",
-                    details: dict | None = None) -> list[dict]:
+                    details: dict | None = None, system_id: int | None = None) -> list[dict]:
     """Send an alert to every configured channel unless this fingerprint was already delivered."""
     payload = {
         "event": f"sap-basis-toolkit.{module}",
@@ -50,7 +50,7 @@ def send_alert_once(module: str, fingerprint: str, summary: str, severity: str =
         ok, error = sender()
         with get_db() as connection:
             connection.execute(alert_events.insert().values(
-                module=module, fingerprint=fingerprint[:300], channel=channel, severity=severity,
+                system_id=system_id, module=module, fingerprint=fingerprint[:300], channel=channel, severity=severity,
                 summary=payload["summary"], result="sent" if ok else "failed", error=error,
             ))
         outcomes.append({"channel": channel, "result": "sent" if ok else "failed", "error": error})

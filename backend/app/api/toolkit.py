@@ -1,21 +1,31 @@
+"""Multi-system API: system registry, per-system modules, landscape overview and alert history."""
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel, Field
+from sqlalchemy import func, select
 
 from .. import config
+from ..db import (
+    alert_events, certificate_checks, get_db, notification_events, sap_systems, targets,
+)
 from ..security import require_api_key
-from ..services import cert_import, growth, transports, users
+from ..services import cert_import, growth, profiles, systems, transports, users
 from ..services.cert_import import CertificateImportError
+from ..services.systems import SystemConflict, SystemNotFound, SystemValidationError
 from ..services.tabular import InputFormatError, to_csv
 
 router = APIRouter(prefix="/api/v1", dependencies=[Depends(require_api_key)])
 
+CERT_SEVERITY = {"expired": 3, "critical": 3, "unreachable": 3, "blocked": 2, "warning": 2, "untrusted": 2,
+                 "healthy": 0, "pending": 1}
+HEALTH = {0: "healthy", 1: "unknown", 2: "warning", 3: "critical"}
+
 
 async def read_body(request: Request) -> bytes:
     declared = request.headers.get("content-length")
-    if declared and int(declared) > config.MAX_UPLOAD_BYTES:
+    if declared and declared.isdigit() and int(declared) > config.MAX_UPLOAD_BYTES:
         raise HTTPException(413, f"Upload exceeds {config.MAX_UPLOAD_BYTES} bytes")
     body = await request.body()
     if len(body) > config.MAX_UPLOAD_BYTES:
@@ -30,34 +40,186 @@ def _check_text_size(*values: str | None) -> None:
         raise HTTPException(413, f"Upload exceeds {config.MAX_UPLOAD_BYTES} bytes")
 
 
-def _system(sap_system_id: str) -> str:
-    sid = sap_system_id.strip().upper()
-    if not sid.isalnum() or not 3 <= len(sid) <= 8:
-        raise HTTPException(422, "sap_system_id must be 3-8 alphanumeric characters (e.g. PRD)")
-    return sid
+def load_system(system_id: int) -> dict:
+    try:
+        return systems.describe(system_id)
+    except SystemNotFound as exc:
+        raise HTTPException(404, str(exc))
 
 
-# ---------------------------------------------------------------- STRUST import
-@router.post("/certificates/import", status_code=201)
-async def import_strust_certificates(
-    request: Request,
-    sap_system_id: str = Query(..., description="SAP SID, e.g. PRD"),
-    pse_name: str = Query(..., min_length=1, max_length=255, description="e.g. SSL server Standard"),
-):
-    """Upload PEM/DER/Base64 certificates exported from STRUST (public certificates only)."""
+def _require(system: dict, module: str) -> None:
+    capability = system["capabilities"][module]
+    if not capability["supported"]:
+        raise HTTPException(409, f"{module} is not supported for {system['product_label']} on stack "
+                                 f"{system['stack']}: {capability['how_to_export']}")
+
+
+# ------------------------------------------------------------------ metadata & registry
+class SystemIn(BaseModel):
+    sid: str = Field(min_length=3, max_length=3)
+    name: str = Field(min_length=1, max_length=120)
+    product: str
+    stack: str = "ABAP"
+    database: str
+    environment: str
+    landscape: str = Field(default="default", max_length=80)
+    product_version: str | None = Field(default=None, max_length=60)
+    basis_release: str | None = Field(default=None, max_length=20)
+    license_model: str | None = None
+    host: str | None = Field(default=None, max_length=253)
+    default_client: str | None = Field(default=None, max_length=3)
+    description: str | None = Field(default=None, max_length=2000)
+    enabled: bool = True
+
+
+class SystemPatch(BaseModel):
+    sid: str | None = Field(default=None, min_length=3, max_length=3)
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    product: str | None = None
+    stack: str | None = None
+    database: str | None = None
+    environment: str | None = None
+    landscape: str | None = Field(default=None, max_length=80)
+    product_version: str | None = Field(default=None, max_length=60)
+    basis_release: str | None = Field(default=None, max_length=20)
+    license_model: str | None = None
+    host: str | None = Field(default=None, max_length=253)
+    default_client: str | None = Field(default=None, max_length=3)
+    description: str | None = Field(default=None, max_length=2000)
+    enabled: bool | None = None
+
+
+def _registry_errors(fn, *args):
+    try:
+        return fn(*args)
+    except SystemValidationError as exc:
+        raise HTTPException(422, str(exc))
+    except SystemConflict as exc:
+        raise HTTPException(409, str(exc))
+    except SystemNotFound as exc:
+        raise HTTPException(404, str(exc))
+
+
+@router.get("/meta/catalogue")
+def catalogue():
+    """Products, stacks, databases, environments and license models the registry accepts."""
+    return profiles.catalogue()
+
+
+@router.get("/systems")
+def list_systems(enabled: bool | None = None, landscape: str | None = None,
+                 environment: str | None = None, product: str | None = None):
+    return systems.list_systems(enabled, landscape, environment, product)
+
+
+@router.get("/landscapes")
+def list_landscapes():
+    return systems.landscapes()
+
+
+@router.post("/systems", status_code=201)
+def create_system(payload: SystemIn):
+    return _registry_errors(systems.create_system, payload.model_dump())
+
+
+@router.get("/systems/{system_id}")
+def get_system(system_id: int):
+    return load_system(system_id)
+
+
+@router.patch("/systems/{system_id}")
+def update_system(system_id: int, payload: SystemPatch):
+    return _registry_errors(systems.update_system, system_id, payload.model_dump(exclude_unset=True))
+
+
+@router.delete("/systems/{system_id}", status_code=204)
+def delete_system(system_id: int):
+    _registry_errors(systems.delete_system, system_id)
+    return Response(status_code=204)
+
+
+@router.get("/systems/{system_id}/runs")
+def list_runs(system_id: int, module: str | None = None, limit: int = Query(50, ge=1, le=500)):
+    load_system(system_id)
+    return systems.list_runs(system_id, module, limit)
+
+
+# ------------------------------------------------------------------ certificates
+def _endpoint_status(system_id: int | None = None) -> list[dict]:
+    latest_ids = select(
+        certificate_checks.c.target_id, func.max(certificate_checks.c.id).label("check_id")
+    ).group_by(certificate_checks.c.target_id).subquery()
+    query = (
+        select(
+            targets.c.id.label("target_id"), targets.c.name, targets.c.hostname, targets.c.port,
+            targets.c.system_id, sap_systems.c.sid, sap_systems.c.landscape,
+            certificate_checks.c.status, certificate_checks.c.days_remaining, certificate_checks.c.not_after,
+            certificate_checks.c.checked_at, certificate_checks.c.subject, certificate_checks.c.issuer,
+            certificate_checks.c.error,
+        )
+        .select_from(targets)
+        .join(sap_systems, sap_systems.c.id == targets.c.system_id, isouter=True)
+        .join(latest_ids, latest_ids.c.target_id == targets.c.id, isouter=True)
+        .join(certificate_checks, certificate_checks.c.id == latest_ids.c.check_id, isouter=True)
+        .where(targets.c.enabled.is_(True))
+    )
+    if system_id is not None:
+        query = query.where(targets.c.system_id == system_id)
+    with get_db() as connection:
+        rows = connection.execute(query).mappings().all()
+    result = []
+    for row in rows:
+        item = dict(row)
+        item["status"] = item["status"] or "pending"
+        if hasattr(item.get("checked_at"), "isoformat"):
+            item["checked_at"] = item["checked_at"].isoformat()
+        result.append(item)
+    return result
+
+
+def certificate_summary(system_id: int | None = None) -> dict:
+    endpoints = _endpoint_status(system_id)
+    imported = cert_import.list_imported(system_id)
+    counts: dict[str, int] = {}
+    for item in endpoints + imported:
+        counts[item["status"]] = counts.get(item["status"], 0) + 1
+    by_expiry = lambda item: (item["days_remaining"] is None, item["days_remaining"] or 0)  # noqa: E731
+    return {"counts": counts, "endpoints": sorted(endpoints, key=by_expiry),
+            "strust_certificates": sorted(imported, key=by_expiry)}
+
+
+@router.get("/certificates/summary")
+def all_certificates():
+    """Landscape-wide endpoint and STRUST certificate status, soonest expiry first."""
+    return certificate_summary()
+
+
+@router.get("/systems/{system_id}/certificates")
+def system_certificates(system_id: int):
+    load_system(system_id)
+    return certificate_summary(system_id)
+
+
+@router.post("/systems/{system_id}/certificates/import", status_code=201)
+async def import_certificates(request: Request, system_id: int,
+                              pse_name: str = Query(..., min_length=1, max_length=255)):
+    """Upload PEM/DER/Base64 certificates exported from STRUST or Java key storage."""
+    load_system(system_id)
     body = await read_body(request)
     try:
-        return cert_import.import_certificates(body, _system(sap_system_id), pse_name.strip())
+        return cert_import.import_certificates(body, system_id, pse_name.strip())
     except CertificateImportError as exc:
         raise HTTPException(422, str(exc))
 
 
-@router.get("/certificates/imported")
-def list_strust_certificates(sap_system_id: str | None = None):
-    return cert_import.list_imported(_system(sap_system_id) if sap_system_id else None)
+@router.delete("/systems/{system_id}/certificates/{certificate_id}", status_code=204)
+def delete_imported_certificate(system_id: int, certificate_id: int):
+    if not cert_import.delete_imported(system_id, certificate_id):
+        raise HTTPException(404, "Certificate not found for this system")
+    return Response(status_code=204)
 
 
-# ---------------------------------------------------------------- Table growth
+# ------------------------------------------------------------------ table growth
 class CapacityIn(BaseModel):
     disk_total_gb: float = Field(gt=0)
     disk_used_gb: float = Field(ge=0)
@@ -66,64 +228,74 @@ class CapacityIn(BaseModel):
     captured_at: datetime | None = None
 
 
-@router.post("/growth/{sap_system_id}/snapshots", status_code=201)
-async def upload_table_snapshot(request: Request, sap_system_id: str, captured_at: datetime | None = None):
-    """CSV body: table name + size (MB/KB/bytes) [+ row count], e.g. DB02 or HANA M_CS_TABLES export."""
+@router.post("/systems/{system_id}/growth/snapshots", status_code=201)
+async def upload_table_snapshot(request: Request, system_id: int, captured_at: datetime | None = None):
+    """CSV body: table name + size (MB/KB/bytes) [+ row count]; see the system's export guide."""
+    load_system(system_id)
     body = await read_body(request)
     try:
-        return growth.store_snapshot(_system(sap_system_id), body, captured_at)
+        return growth.store_snapshot(system_id, body, captured_at)
     except InputFormatError as exc:
         raise HTTPException(422, str(exc))
 
 
-@router.post("/growth/{sap_system_id}/capacity", status_code=201)
-def record_capacity(sap_system_id: str, payload: CapacityIn):
+@router.post("/systems/{system_id}/growth/capacity", status_code=201)
+def record_capacity(system_id: int, payload: CapacityIn):
+    load_system(system_id)
     if payload.disk_used_gb > payload.disk_total_gb:
         raise HTTPException(422, "disk_used_gb cannot exceed disk_total_gb")
+    if payload.memory_used_gb is not None and payload.memory_total_gb and payload.memory_used_gb > payload.memory_total_gb:
+        raise HTTPException(422, "memory_used_gb cannot exceed memory_total_gb")
     gb = 1024.0
     return growth.store_capacity(
-        _system(sap_system_id), payload.disk_total_gb * gb, payload.disk_used_gb * gb,
+        system_id, payload.disk_total_gb * gb, payload.disk_used_gb * gb,
         payload.memory_total_gb * gb if payload.memory_total_gb else None,
         payload.memory_used_gb * gb if payload.memory_used_gb is not None else None,
         payload.captured_at,
     )
 
 
-@router.get("/growth/systems")
-def growth_systems():
-    return growth.known_systems()
+@router.get("/systems/{system_id}/growth/report")
+def growth_report(system_id: int, window_days: int = Query(30, ge=1, le=730), top: int = Query(10, ge=1, le=100)):
+    system = load_system(system_id)
+    return growth.build_report(system_id, window_days, top, system["product"])
 
 
-@router.get("/growth/{sap_system_id}/report")
-def growth_report(sap_system_id: str, window_days: int = Query(30, ge=1, le=730), top: int = Query(10, ge=1, le=100)):
-    return growth.build_report(_system(sap_system_id), window_days, top)
-
-
-# ---------------------------------------------------------------- Users & licenses
+# ------------------------------------------------------------------ users & licenses
 class UserAnalysisIn(BaseModel):
-    usr02_csv: str = Field(min_length=1, description="USR02/SUIM export")
+    usr02_csv: str = Field(min_length=1, description="USR02/SUIM export (ABAP) or UME user export (Java)")
     usage_csv: str | None = Field(default=None, description="Optional ST03N user/transaction export")
     dormant_days: int | None = Field(default=None, ge=1, le=3650)
 
 
-@router.post("/users/analyze")
-def analyze_users(payload: UserAnalysisIn, format: str = Query("json", pattern="^(json|csv)$")):
-    """Stateless: the export is analysed in memory and not stored."""
+@router.post("/systems/{system_id}/users/analyze")
+def analyze_users(system_id: int, payload: UserAnalysisIn, format: str = Query("json", pattern="^(json|csv)$")):
+    """Stateless: uploads are analysed in memory; only summary counts are kept in run history."""
+    system = load_system(system_id)
     _check_text_size(payload.usr02_csv, payload.usage_csv)
+    capability = system["capabilities"]["users"]
     try:
-        report = users.analyse(payload.usr02_csv.encode(), payload.usage_csv.encode() if payload.usage_csv else None,
-                               dormant_days=payload.dormant_days)
+        report = users.analyse(
+            payload.usr02_csv.encode(), payload.usage_csv.encode() if payload.usage_csv else None,
+            dormant_days=payload.dormant_days, license_model=system["effective_license_model"],
+            license_recommendations=capability["license_recommendations"],
+        )
     except InputFormatError as exc:
         raise HTTPException(422, str(exc))
+    summary = report["summary"]
+    systems.record_run(system_id, "users", "review" if summary["lock_candidates"] or summary["license_downgrades"] else "pass",
+                       {k: summary[k] for k in ("users_analysed", "active_dialog_users", "lock_candidates",
+                                                "never_logged_on", "license_downgrades", "estimated_saving",
+                                                "saving_unit", "license_model")})
     if format == "csv":
         rows = [{k: u[k] for k in ("user", "user_type", "user_group", "last_logon", "days_inactive", "current_license", "reason")}
                 for u in report["lock_candidates"]]
         return PlainTextResponse(to_csv(rows), media_type="text/csv",
-                                 headers={"Content-Disposition": "attachment; filename=lock_candidates.csv"})
+                                 headers={"Content-Disposition": f"attachment; filename={system['sid']}_lock_candidates.csv"})
     return report
 
 
-# ---------------------------------------------------------------- Transports
+# ------------------------------------------------------------------ transports
 class TransportPrecheckIn(BaseModel):
     e071_csv: str = Field(min_length=1)
     e070_csv: str | None = None
@@ -133,25 +305,131 @@ class TransportPrecheckIn(BaseModel):
 
 
 class TransportPostcheckIn(BaseModel):
-    target_system: str = Field(min_length=3, max_length=8)
     log: str = Field(min_length=1, description="STMS import history CSV (TRKORR, RC) or raw tp log text")
     alert: bool = True
 
 
-@router.post("/transports/precheck")
-def transport_precheck(payload: TransportPrecheckIn):
+@router.post("/systems/{system_id}/transports/precheck")
+def transport_precheck(system_id: int, payload: TransportPrecheckIn):
+    """system_id is the import TARGET (e.g. QAS or PRD); E070/E071 come from the source system."""
+    system = load_system(system_id)
+    _require(system, "transports")
     _check_text_size(payload.e071_csv, payload.e070_csv)
     try:
-        return transports.precheck(payload.e071_csv, payload.e070_csv, payload.queue,
-                                   payload.imported_in_target, payload.approved_tables)
+        result = transports.precheck(payload.e071_csv, payload.e070_csv, payload.queue,
+                                     payload.imported_in_target, payload.approved_tables)
     except InputFormatError as exc:
         raise HTTPException(422, str(exc))
+    systems.record_run(system_id, "transports-precheck", result["verdict"],
+                       {"requests": len(result["queue"]), **result["counts"]})
+    return result
 
 
-@router.post("/transports/postcheck")
-def transport_postcheck(payload: TransportPostcheckIn):
+@router.post("/systems/{system_id}/transports/postcheck")
+def transport_postcheck(system_id: int, payload: TransportPostcheckIn):
+    system = load_system(system_id)
+    _require(system, "transports")
     _check_text_size(payload.log)
     try:
-        return transports.postcheck(payload.log, _system(payload.target_system), payload.alert)
+        result = transports.postcheck(payload.log, f"{system['sid']} ({system['landscape']})", payload.alert, system_id)
     except InputFormatError as exc:
         raise HTTPException(422, str(exc))
+    status = "fail" if result["failed"] else "review" if result["warnings"] else "pass"
+    systems.record_run(system_id, "transports-postcheck", status,
+                       {k: result[k] for k in ("requests", "failed", "warnings")})
+    return result
+
+
+# ------------------------------------------------------------------ overview & alerts
+def _latest_runs() -> dict[tuple[int, str], dict]:
+    latest: dict[tuple[int, str], dict] = {}
+    for run in systems.list_runs(limit=500):
+        latest.setdefault((run["system_id"], run["module"]), run)
+    return latest
+
+
+@router.get("/overview")
+def overview(landscape: str | None = None):
+    """Health of every enabled system across all modules."""
+    registry = systems.list_systems(enabled=True, landscape=landscape)
+    certs = certificate_summary()
+    runs = _latest_runs()
+    result = []
+    for system in registry:
+        sid = system["id"]
+        own = [c for c in certs["endpoints"] if c["system_id"] == sid] + \
+              [c for c in certs["strust_certificates"] if c["system_id"] == sid]
+        cert_level = max((CERT_SEVERITY.get(c["status"], 1) for c in own), default=None)
+        days = [c["days_remaining"] for c in own if c["days_remaining"] is not None]
+        forecast = growth.build_report(sid, 30, 3, system["product"])["capacity_forecast"] or {}
+        thresholds = [forecast.get(k) for k in ("days_until_disk_threshold", "days_until_memory_threshold")
+                      if forecast.get(k) is not None]
+        soonest = min(thresholds) if thresholds else None
+        growth_level = None if not forecast else 3 if soonest is not None and soonest <= 7 else \
+            2 if soonest is not None and soonest <= config.GROWTH_ALERT_DAYS else 0
+        post = runs.get((sid, "transports-postcheck"))
+        transport_level = None if not post else {"fail": 3, "review": 2}.get(post["status"], 0)
+        levels = [lvl for lvl in (cert_level, growth_level, transport_level) if lvl is not None]
+        result.append({
+            **{k: system[k] for k in ("id", "sid", "name", "product", "product_label", "stack", "database",
+                                      "environment", "landscape", "effective_license_model")},
+            "health": HEALTH[max(levels)] if levels else "unknown",
+            "certificates": {"count": len(own), "health": HEALTH.get(cert_level, "unknown"),
+                             "soonest_expiry_days": min(days) if days else None},
+            "growth": {"health": HEALTH.get(growth_level, "unknown"),
+                       "disk_used_pct": forecast.get("disk_used_pct"),
+                       "days_until_threshold": soonest},
+            "users": runs.get((sid, "users")),
+            "transports": {"precheck": runs.get((sid, "transports-precheck")), "postcheck": post},
+        })
+    totals: dict[str, int] = {}
+    for item in result:
+        totals[item["health"]] = totals.get(item["health"], 0) + 1
+    return {"totals": totals, "systems": result}
+
+
+@router.get("/alerts")
+def alert_history(system_id: int | None = None, limit: int = Query(100, ge=1, le=500)):
+    """Delivered and failed alerts from all modules, newest first."""
+    with get_db() as connection:
+        query = (
+            select(alert_events.c.id, alert_events.c.system_id, alert_events.c.module, alert_events.c.channel,
+                   alert_events.c.severity, alert_events.c.summary, alert_events.c.sent_at, alert_events.c.result,
+                   alert_events.c.error, sap_systems.c.sid)
+            .join(sap_systems, sap_systems.c.id == alert_events.c.system_id, isouter=True)
+            .order_by(alert_events.c.sent_at.desc(), alert_events.c.id.desc()).limit(limit)
+        )
+        if system_id is not None:
+            query = query.where(alert_events.c.system_id == system_id)
+        module_rows = [dict(r) for r in connection.execute(query).mappings().all()]
+        cert_query = (
+            select(notification_events.c.id, targets.c.system_id, notification_events.c.channel,
+                   notification_events.c.fingerprint, notification_events.c.sent_at, notification_events.c.result,
+                   notification_events.c.error, targets.c.name, targets.c.hostname, sap_systems.c.sid)
+            .join(targets, targets.c.id == notification_events.c.target_id)
+            .join(sap_systems, sap_systems.c.id == targets.c.system_id, isouter=True)
+            .order_by(notification_events.c.sent_at.desc(), notification_events.c.id.desc()).limit(limit)
+        )
+        if system_id is not None:
+            cert_query = cert_query.where(targets.c.system_id == system_id)
+        cert_rows = connection.execute(cert_query).mappings().all()
+    events = [{**r, "id": f"m{r['id']}"} for r in module_rows]
+    for r in cert_rows:
+        # Fingerprints: "unreachable:<anchor>:<channel>" or "<serial>:<90d|..|7d|expired>:<channel>"
+        parts = r["fingerprint"].split(":")
+        if parts[0] == "unreachable":
+            severity, what = "critical", "endpoint unreachable"
+        else:
+            label = parts[1] if len(parts) > 2 else parts[-1]
+            severity = "critical" if label in ("expired", "7d") else "warning"
+            what = "certificate expired" if label == "expired" else f"certificate within {label} of expiry"
+        events.append({
+            "id": f"c{r['id']}", "system_id": r["system_id"], "sid": r["sid"], "module": "certificate-endpoint",
+            "channel": r["channel"], "severity": severity, "summary": f"{r['name']} ({r['hostname']}): {what}",
+            "sent_at": r["sent_at"], "result": r["result"], "error": r["error"],
+        })
+    for e in events:
+        if hasattr(e["sent_at"], "isoformat"):
+            e["sent_at"] = e["sent_at"].isoformat()
+    events.sort(key=lambda e: str(e["sent_at"]), reverse=True)
+    return events[:limit]

@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from sqlalchemy import select
 
 from ..config import ALERT_EMAIL_TO, ALERT_THRESHOLDS_DAYS, ALERT_WEBHOOK_URL, SMTP_HOST
-from ..db import certificate_checks, get_db, notification_events, targets
+from ..db import certificate_checks, get_db, notification_events, sap_systems, targets
 from .certificates import inspect_certificate
 from .. import config
 from .notifications import send_email, send_pagerduty, send_webhook
@@ -13,7 +13,9 @@ from .target_policy import TargetPolicyError
 def check_target(target_id: int) -> dict:
     with get_db() as connection:
         target = connection.execute(
-            select(targets).where(targets.c.id == target_id, targets.c.enabled.is_(True))
+            select(targets, sap_systems.c.sid, sap_systems.c.landscape)
+            .join(sap_systems, sap_systems.c.id == targets.c.system_id, isouter=True)
+            .where(targets.c.id == target_id, targets.c.enabled.is_(True))
         ).mappings().first()
     if target is None:
         raise ValueError("Enabled target not found")
@@ -58,6 +60,7 @@ def _notification_channels(target: dict, result: dict):
     payload = {
         "event": "certificate.monitoring",
         "target_name": target["name"],
+        "sap_system": f"{target['sid']} ({target['landscape']})" if target.get("sid") else None,
         "hostname": target["hostname"],
         "port": target["port"],
         "status": result.get("status"),

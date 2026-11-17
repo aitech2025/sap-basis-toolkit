@@ -1,6 +1,38 @@
 # SAP Basis Toolkit
 
-A lightweight, modular toolkit for SAP Basis operations (SAP Basis Sentinel).
+A multi-system SAP Basis operations platform (SAP Basis Sentinel) with a web UI and REST API. Register every SAP system in your landscape once, from ECC and S/4HANA to BW, CRM, Solution Manager, PI/PO and NetWeaver ABAP or Java, and run the same modules against all of them.
+
+## Supported systems
+
+The toolkit is product-agnostic: product rules live in data ([`profiles.py`](backend/app/services/profiles.py)) and can be extended with a JSON file (`PROFILE_OVERRIDES_FILE`) without code changes.
+
+| Product | Stacks | Databases | Default licensing |
+|---|---|---|---|
+| S/4HANA, BW/4HANA | ABAP | HANA | FUE (S/4HANA), named user (BW/4HANA) |
+| ERP 6.0 (ECC) | ABAP, dual | HANA, Oracle, Db2, MSSQL, MaxDB, ASE | Named user |
+| BW 7.x, CRM, SRM, SCM, GRC, Gateway, other NetWeaver ABAP | ABAP | any | Named user |
+| Solution Manager 7.2 | ABAP, Java, dual | any | Named user |
+| PI/PO, Enterprise Portal, other NetWeaver Java | Java (PI/PO also dual) | any | Named user |
+
+Each system records its SID, landscape (business unit, customer or track), environment (DEV/QAS/PRE/PRD/…), product version, SAP_BASIS release, host and default client. The same SID may exist in different landscapes. Its profile decides:
+
+- **Licence vocabulary**: classic *Professional / Limited Professional / Employee*, or FUE *Advanced / Core / Self-Service* (overridable per system).
+- **Module availability**: e.g. the E070/E071 transport checker applies to ABAP and dual stacks; Java systems are pointed to CTS+/NWDI. Java user analysis takes NWA/UME exports.
+- **Export guide**: database-specific SQL or transactions for each module (HANA `M_CS_TABLES`, Oracle `DBA_SEGMENTS`, SQL Server DMVs, Db2 `ADMINTABINFO`, DB02 for the others; STRUST vs Java key storage).
+- **Housekeeping catalogue**: Basis tables plus product extras (BW error logs and statistics, CRM BDocs, PI/PO message tables).
+
+## Web UI
+
+Served by the API at `/` (built into the Docker image):
+
+- **Landscape overview**: every system grouped by landscape with combined health (certificates, capacity forecast, last import).
+- **Systems**: register, filter, edit and delete systems.
+- **System workspace**: tabs for summary and export guide, certificates (endpoints + STRUST/PSE), table growth (trend charts, forecast, housekeeping), users & licences, transports (pre/post checks) and history (summary-only run log + alerts).
+- **Certificates** and **Alerts**: landscape-wide views.
+
+The API key is entered in *Settings* and kept in browser session storage.
+
+## Modules
 
 | Module | What it does | Input |
 |---|---|---|
@@ -55,9 +87,11 @@ Before each check, DNS is resolved and every returned IP is validated. The socke
 
 These controls are defense in depth, not a replacement for network egress filtering. Restrict API and scheduler container egress to approved networks and ports, and protect DNS infrastructure.
 
-## Local Python development
+## Local development
 
-Requires Python 3.11+.
+Backend (API on :8000):
+
+Requires Python 3.11+ and Node.js 20+.
 
     cd backend
     python -m venv .venv
@@ -67,6 +101,12 @@ Requires Python 3.11+.
     export API_AUTH_TOKEN="replace-with-a-long-random-secret"
     export ALLOWED_TARGET_HOSTS="qa.example.test"
     uvicorn app.main:app --reload
+
+UI (Vite dev server on :5173, proxies `/api` to :8000):
+
+    cd frontend
+    npm ci
+    npm run dev        # or `npm run build` to emit into backend/app/static, served by FastAPI at /
 
 For private SAP targets, also configure their network in `ALLOWED_TARGET_CIDRS`. Environment example files are templates; export their values or use your deployment's environment-file support.
 
@@ -81,20 +121,19 @@ The baseline migration supports fresh and earlier MVP databases. It creates miss
 ## Toolkit quick start (curl)
 
     H="X-API-Key: $API_AUTH_TOKEN"; B=http://localhost:8000/api/v1
-    # Table growth: upload a snapshot (repeat daily/weekly) and capacity, then report
-    curl -XPOST "$B/growth/PRD/snapshots" -H "$H" --data-binary @samples/db02_snapshot_day1.csv
-    curl -XPOST "$B/growth/PRD/capacity" -H "$H" -H 'content-type: application/json' -d '{"disk_total_gb":512,"disk_used_gb":438}'
-    curl "$B/growth/PRD/report?window_days=30" -H "$H"
-    # STRUST certificate inventory
-    curl -XPOST "$B/certificates/import?sap_system_id=PRD&pse_name=SSL%20client%20Standard" -H "$H" --data-binary @client.crt
-    # Users & licenses (JSON body with the CSV text; add ?format=csv for a lock list download)
+    # Register a system (see GET $B/meta/catalogue for products, stacks, databases)
+    curl -XPOST $B/systems -H "$H" -H 'content-type: application/json' \
+      -d '{"sid":"S4P","name":"S/4HANA production","product":"S4HANA","stack":"ABAP","database":"HANA","environment":"PRD","landscape":"Finance"}'
+    S=1  # id returned above
+    curl -XPOST "$B/systems/$S/growth/snapshots" -H "$H" --data-binary @samples/db02_snapshot_day1.csv
+    curl -XPOST "$B/systems/$S/growth/capacity" -H "$H" -H 'content-type: application/json' -d '{"disk_total_gb":512,"disk_used_gb":438}'
+    curl "$B/systems/$S/growth/report?window_days=30" -H "$H"
+    curl -XPOST "$B/systems/$S/certificates/import?pse_name=SSL%20client%20Standard" -H "$H" --data-binary @client.crt
     jq -n --rawfile u samples/usr02.txt --rawfile s samples/st03n_usage.csv '{usr02_csv:$u, usage_csv:$s}' |
-      curl -XPOST "$B/users/analyze" -H "$H" -H 'content-type: application/json' -d @-
-    # Transports
-    jq -n --rawfile a samples/e071.csv --rawfile b samples/e070.csv '{e071_csv:$a, e070_csv:$b, queue:["DEVK900100","DEVK900110","DEVK900120"]}' |
-      curl -XPOST "$B/transports/precheck" -H "$H" -H 'content-type: application/json' -d @-
-    jq -n --rawfile l samples/stms_import_history.csv '{target_system:"QAS", log:$l}' |
-      curl -XPOST "$B/transports/postcheck" -H "$H" -H 'content-type: application/json' -d @-
+      curl -XPOST "$B/systems/$S/users/analyze" -H "$H" -H 'content-type: application/json' -d @-
+    jq -n --rawfile a samples/e071.csv --rawfile b samples/e070.csv '{e071_csv:$a, e070_csv:$b}' |
+      curl -XPOST "$B/systems/$S/transports/precheck" -H "$H" -H 'content-type: application/json' -d @-
+    curl "$B/overview" -H "$H"
 
 Exports may be comma, semicolon, tab or pipe delimited, with SAP (YYYYMMDD), German (DD.MM.YYYY) or ISO dates and German or English decimal separators. Common header variants are recognised (e.g. `BNAME`/`User`, `TRDAT`/`Last Logon`).
 
@@ -104,24 +143,12 @@ If you enable PagerDuty or Slack/Teams, allow egress from the API and scheduler 
 
 ## API
 
-- GET /health (public)
-- POST /api/v1/targets
-- GET /api/v1/targets
-- PATCH /api/v1/targets/{target_id}/disable
-- POST /api/v1/targets/{target_id}/check
-- GET /api/v1/checks
-- PATCH /api/v1/targets/{target_id}/enable
-- GET /api/v1/notifications
-- GET /api/v1/certificates/summary
-- POST /api/v1/certificates/import?sap_system_id=&pse_name= (PEM/DER/Base64 body)
-- GET /api/v1/certificates/imported
-- POST /api/v1/growth/{sid}/snapshots (CSV body)
-- POST /api/v1/growth/{sid}/capacity
-- GET /api/v1/growth/systems
-- GET /api/v1/growth/{sid}/report
-- POST /api/v1/users/analyze
-- POST /api/v1/transports/precheck
-- POST /api/v1/transports/postcheck
-- GET / (dashboard; API key entered in the page)
+Interactive OpenAPI docs: `/docs`. Main groups:
+
+- `GET /health` (public) · `GET /` UI
+- Registry: `GET /api/v1/meta/catalogue`, `GET|POST /api/v1/systems`, `GET|PATCH|DELETE /api/v1/systems/{id}`, `GET /api/v1/landscapes`
+- Landscape: `GET /api/v1/overview`, `GET /api/v1/certificates/summary`, `GET /api/v1/alerts`
+- Endpoints: `POST|GET /api/v1/targets` (with `system_id`), `PATCH /api/v1/targets/{id}`, `.../enable`, `.../disable`, `POST .../check`, `GET /api/v1/checks`
+- Per system (`/api/v1/systems/{id}/…`): `certificates`, `certificates/import`, `certificates/{cert_id}` (DELETE), `growth/snapshots`, `growth/capacity`, `growth/report`, `users/analyze`, `transports/precheck`, `transports/postcheck`, `runs`
 
 All management endpoints require `X-API-Key`. Run tests from `backend` with `pytest -q`.

@@ -1,0 +1,9 @@
+{
+  "products": {
+    "MDG": {"label": "SAP Master Data Governance", "stacks": ["ABAP"], "license_model": "FUE"},
+    "EWM": {"label": "SAP EWM (decentral)", "stacks": ["ABAP"], "databases": ["HANA"], "license_model": "FUE"}
+  },
+  "housekeeping": {
+    "ZAPP_LOG": "Custom application log: run report ZAPP_LOG_CLEANUP (retention 90 days)."
+  }
+}

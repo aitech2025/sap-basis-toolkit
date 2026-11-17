@@ -3,7 +3,7 @@ from pathlib import Path
 
 from sqlalchemy import (
     BigInteger, Boolean, Column, DateTime, Float, ForeignKey, Index, Integer, MetaData, String,
-    Table, Text, create_engine, inspect, text,
+    Table, Text, create_engine, inspect, text, true,
 )
 from sqlalchemy.engine import Connection, Engine
 from sqlalchemy.schema import CreateTable
@@ -23,6 +23,7 @@ targets = Table(
     Column("sap_system_id", String(3)),
     Column("sap_client", String(3)),
     Column("pse_name", String(255)),
+    Column("system_id", Integer, ForeignKey("sap_systems.id", ondelete="SET NULL")),
 )
 Index("uq_targets_hostname_port", targets.c.hostname, targets.c.port, unique=True)
 
@@ -52,10 +53,36 @@ notification_events = Table(
     Column("error", Text),
 )
 
+# Registry of managed SAP systems (ECC, S/4HANA, NetWeaver ABAP/Java, BW, PI/PO, ...).
+sap_systems = Table(
+    "sap_systems", metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("sid", String(8), nullable=False),
+    Column("name", String(120), nullable=False),
+    Column("product", String(30), nullable=False),
+    Column("product_version", String(60)),
+    Column("basis_release", String(20)),
+    Column("stack", String(10), nullable=False),
+    Column("database", String(10), nullable=False),
+    Column("environment", String(10), nullable=False),
+    Column("landscape", String(80), nullable=False, server_default="default"),
+    Column("license_model", String(20)),
+    Column("host", String(253)),
+    Column("default_client", String(3)),
+    Column("description", Text),
+    Column("enabled", Boolean, nullable=False, default=True, server_default=true()),
+    Column("created_at", DateTime(timezone=True), nullable=False, server_default=text("CURRENT_TIMESTAMP")),
+)
+Index("uq_sap_systems_sid_landscape", sap_systems.c.sid, sap_systems.c.landscape, unique=True)
+
+SYSTEM_FK = lambda nullable=False, ondelete="CASCADE": Column(  # noqa: E731
+    "system_id", Integer, ForeignKey("sap_systems.id", ondelete=ondelete), nullable=nullable)
+
 # Generic, module-agnostic alert de-duplication (growth, transports, imported certs).
 alert_events = Table(
     "alert_events", metadata,
     Column("id", Integer, primary_key=True, autoincrement=True),
+    SYSTEM_FK(nullable=True),
     Column("module", String(40), nullable=False),
     Column("fingerprint", String(300), nullable=False),
     Column("channel", String(30), nullable=False),
@@ -67,11 +94,11 @@ alert_events = Table(
 )
 Index("ix_alert_events_fingerprint", alert_events.c.fingerprint, alert_events.c.channel)
 
-# Certificates exported from STRUST/PSEs (public certificates only, never keys).
+# Certificates exported from STRUST/PSEs or Java key storage (public certificates only, never keys).
 imported_certificates = Table(
     "imported_certificates", metadata,
     Column("id", Integer, primary_key=True, autoincrement=True),
-    Column("sap_system_id", String(8), nullable=False),
+    SYSTEM_FK(),
     Column("pse_name", String(255), nullable=False),
     Column("subject", Text, nullable=False),
     Column("issuer", Text, nullable=False),
@@ -81,35 +108,50 @@ imported_certificates = Table(
     Column("sha256_fingerprint", String(64), nullable=False),
     Column("imported_at", DateTime(timezone=True), nullable=False, server_default=text("CURRENT_TIMESTAMP")),
 )
-Index(
-    "uq_imported_cert", imported_certificates.c.sap_system_id, imported_certificates.c.pse_name,
-    imported_certificates.c.sha256_fingerprint, unique=True,
-)
+Index("uq_imported_cert", imported_certificates.c.system_id, imported_certificates.c.pse_name,
+      imported_certificates.c.sha256_fingerprint, unique=True)
 
-# Table growth watchdog snapshots (DB02 / HANA M_CS_TABLES / M_TABLE_PERSISTENCE_STATISTICS exports).
+# Table growth watchdog snapshots.
 table_size_snapshots = Table(
     "table_size_snapshots", metadata,
     Column("id", Integer, primary_key=True, autoincrement=True),
-    Column("sap_system_id", String(8), nullable=False),
+    SYSTEM_FK(),
     Column("table_name", String(128), nullable=False),
     Column("size_mb", Float, nullable=False),
     Column("row_count", BigInteger),
     Column("captured_at", DateTime(timezone=True), nullable=False),
 )
-Index("ix_table_size_sys_tab", table_size_snapshots.c.sap_system_id, table_size_snapshots.c.table_name,
+Index("ix_table_size_sys_tab", table_size_snapshots.c.system_id, table_size_snapshots.c.table_name,
       table_size_snapshots.c.captured_at)
 
 capacity_snapshots = Table(
     "capacity_snapshots", metadata,
     Column("id", Integer, primary_key=True, autoincrement=True),
-    Column("sap_system_id", String(8), nullable=False),
+    SYSTEM_FK(),
     Column("disk_total_mb", Float, nullable=False),
     Column("disk_used_mb", Float, nullable=False),
     Column("memory_total_mb", Float),
     Column("memory_used_mb", Float),
     Column("captured_at", DateTime(timezone=True), nullable=False),
 )
-Index("ix_capacity_sys", capacity_snapshots.c.sap_system_id, capacity_snapshots.c.captured_at)
+Index("ix_capacity_sys", capacity_snapshots.c.system_id, capacity_snapshots.c.captured_at)
+
+# Summary-only history of stateless analyses (no user names or uploaded content).
+analysis_runs = Table(
+    "analysis_runs", metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    SYSTEM_FK(),
+    Column("module", String(40), nullable=False),
+    Column("status", String(20), nullable=False),
+    Column("summary", Text, nullable=False),
+    Column("created_at", DateTime(timezone=True), nullable=False, server_default=text("CURRENT_TIMESTAMP")),
+)
+Index("ix_analysis_runs_sys", analysis_runs.c.system_id, analysis_runs.c.module, analysis_runs.c.created_at)
+
+# Columns added to pre-existing tables (applied by init_db and Alembic).
+ADDED_COLUMNS = {
+    "targets": [("system_id", "INTEGER REFERENCES sap_systems(id) ON DELETE SET NULL")],
+}
 
 _engine: Engine | None = None
 
@@ -201,7 +243,20 @@ def init_db() -> None:
         # Execute table DDL directly: Table.create also traverses FK dependencies
         # and can attempt to recreate indexes on already-existing parent tables.
         create_missing_tables(connection, missing_tables)
+        add_missing_columns(connection)
         ensure_target_uniqueness(connection)
+
+
+def add_missing_columns(connection: Connection) -> None:
+    """Additive, idempotent column upgrades for tables created by earlier releases."""
+    inspector = inspect(connection)
+    for table_name, columns in ADDED_COLUMNS.items():
+        if table_name not in inspector.get_table_names():
+            continue
+        existing = {c["name"] for c in inspector.get_columns(table_name)}
+        for name, ddl in columns:
+            if name not in existing:
+                connection.execute(text(f"ALTER TABLE {table_name} ADD COLUMN {name} {ddl}"))
 
 
 def create_missing_tables(connection: Connection, missing_tables) -> None:

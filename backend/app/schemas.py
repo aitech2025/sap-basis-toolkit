@@ -4,6 +4,7 @@ class TargetCreate(BaseModel):
     name: str = Field(min_length=1, max_length=120)
     hostname: str = Field(min_length=1, max_length=253)
     port: int = Field(default=443, ge=1, le=65535)
+    system_id: int | None = None
     @field_validator("hostname")
     @classmethod
     def normalize_hostname(cls, value: str) -> str:
@@ -34,3 +35,8 @@ class CertificateCheckRead(BaseModel):
     tls_verified: bool
     status: str
     error: str | None = None
+
+
+class TargetPatch(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    system_id: int | None = None

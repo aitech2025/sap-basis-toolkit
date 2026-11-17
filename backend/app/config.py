@@ -63,3 +63,8 @@ PROTECTED_TABLES = tuple(
     ).split(",")
     if v.strip()
 )
+
+# --- Multi-system platform -----------------------------------------------------
+PROFILE_OVERRIDES_FILE = os.getenv("PROFILE_OVERRIDES_FILE", "").strip()
+# Built React UI (vite build output). Served at / when present.
+FRONTEND_DIST = os.getenv("FRONTEND_DIST", os.path.join(os.path.dirname(__file__), "static"))

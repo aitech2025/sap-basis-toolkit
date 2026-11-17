@@ -21,6 +21,14 @@ def setup_test_db(monkeypatch, tmp_path):
     db.reset_engine_for_tests()
 
 
+def make_system(client, sid="PRD", product="S4HANA", stack="ABAP", database="HANA", environment="PRD", **extra):
+    response = client.post("/api/v1/systems", headers=HEADERS, json={
+        "sid": sid, "name": f"{sid} system", "product": product, "stack": stack, "database": database,
+        "environment": environment, **extra})
+    assert response.status_code == 201, response.text
+    return response.json()
+
+
 def capture_alerts(monkeypatch):
     sent = []
     monkeypatch.setattr(config, "ALERT_WEBHOOK_URL", "https://hooks.example.test")
@@ -88,13 +96,15 @@ def test_strust_import_deduplicates_and_alerts(monkeypatch, tmp_path):
     sent = capture_alerts(monkeypatch)
     bundle = make_cert(5, "expiring.example.test") + make_cert(400, "healthy.example.test")
     with TestClient(app) as client:
-        url = "/api/v1/certificates/import?sap_system_id=prd&pse_name=SSL%20client%20Standard"
+        system = make_system(client)
+        url = f"/api/v1/systems/{system['id']}/certificates/import?pse_name=SSL%20client%20Standard"
         first = client.post(url, content=bundle, headers=HEADERS)
         assert first.status_code == 201 and first.json()["imported"] == 2
         again = client.post(url, content=bundle, headers=HEADERS).json()
         assert again["imported"] == 0 and again["duplicates_skipped"] == 2
-        listed = client.get("/api/v1/certificates/imported?sap_system_id=PRD", headers=HEADERS).json()
-        assert [c["status"] for c in listed] == ["critical", "healthy"]
+        listed = client.get(f"/api/v1/systems/{system['id']}/certificates", headers=HEADERS).json()
+        assert [c["status"] for c in listed["strust_certificates"]] == ["critical", "healthy"]
+        assert listed["strust_certificates"][0]["sid"] == "PRD"
         summary = client.get("/api/v1/certificates/summary", headers=HEADERS).json()
         assert summary["counts"]["critical"] == 1
     assert cert_import.evaluate_imported_certificates() == 1
@@ -105,7 +115,8 @@ def test_strust_import_deduplicates_and_alerts(monkeypatch, tmp_path):
 def test_strust_import_rejects_private_keys(monkeypatch, tmp_path):
     setup_test_db(monkeypatch, tmp_path)
     with TestClient(app) as client:
-        response = client.post("/api/v1/certificates/import?sap_system_id=PRD&pse_name=x",
+        system = make_system(client)
+        response = client.post(f"/api/v1/systems/{system['id']}/certificates/import?pse_name=x",
                                content=make_cert(30, key_pem=True), headers=HEADERS)
     assert response.status_code == 422 and "Private key" in response.json()["detail"]
 
@@ -116,6 +127,7 @@ def test_growth_report_forecast_and_alert(monkeypatch, tmp_path):
     sent = capture_alerts(monkeypatch)
     now = datetime.now(timezone.utc)
     with TestClient(app) as client:
+        sys_id = make_system(client, "HDB")["id"]
         for i, day in enumerate((20, 10, 0)):
             at = (now - timedelta(days=day)).isoformat()
             # semicolon-delimited, German decimal comma, HANA-style bytes column for one table
@@ -124,12 +136,13 @@ def test_growth_report_forecast_and_alert(monkeypatch, tmp_path):
                 f"BALDAT;{1000 + i * 500},0;{1000000 + i * 10}\n"
                 f"MARA;{200 + i};5000\n"
             )
-            r = client.post("/api/v1/growth/HDB/snapshots", params={"captured_at": at}, content=csv, headers=HEADERS)
+            r = client.post(f"/api/v1/systems/{sys_id}/growth/snapshots", params={"captured_at": at}, content=csv, headers=HEADERS)
             assert r.status_code == 201, r.text
-            client.post("/api/v1/growth/HDB/capacity", headers=HEADERS, json={
+            client.post(f"/api/v1/systems/{sys_id}/growth/capacity", headers=HEADERS, json={
                 "disk_total_gb": 100, "disk_used_gb": 80 + i * 4, "captured_at": at,
             })
-        report = client.get("/api/v1/growth/HDB/report", headers=HEADERS).json()
+        report = client.get(f"/api/v1/systems/{sys_id}/growth/report", headers=HEADERS).json()
+        overview = client.get("/api/v1/overview", headers=HEADERS).json()
     top = report["top_growing_tables"][0]
     assert top["table_name"] == "BALDAT" and top["growth_mb_per_day"] == 50.0
     assert "SBAL_DELETE" in top["recommendation"]
@@ -137,6 +150,8 @@ def test_growth_report_forecast_and_alert(monkeypatch, tmp_path):
     forecast = report["capacity_forecast"]
     # 88 GB used, 90 GB threshold, growing 0.4 GB/day -> 5 days
     assert forecast["disk_used_pct"] == 88.0 and forecast["days_until_disk_threshold"] == 5.0
+    assert len(report["size_history"]) == 3 and len(report["capacity_history"]) == 3
+    assert overview["systems"][0]["growth"]["health"] == "critical" and overview["totals"] == {"critical": 1}
     raised = growth.evaluate_growth_alerts()
     growth.evaluate_growth_alerts()
     assert raised[0]["severity"] == "critical" and len(sent) == 1
@@ -151,7 +166,8 @@ def test_growth_snapshot_accepts_hana_bytes_and_aggregates_partitions():
 def test_growth_rejects_unusable_upload(monkeypatch, tmp_path):
     setup_test_db(monkeypatch, tmp_path)
     with TestClient(app) as client:
-        r = client.post("/api/v1/growth/HDB/snapshots", content=b"foo,bar\n1,2\n", headers=HEADERS)
+        sys_id = make_system(client)["id"]
+        r = client.post(f"/api/v1/systems/{sys_id}/growth/snapshots", content=b"foo,bar\n1,2\n", headers=HEADERS)
     assert r.status_code == 422 and "table name" in r.json()["detail"]
 
 
@@ -179,28 +195,74 @@ POWER;VA03;20
 """
 
 
-def test_user_license_analysis():
-    report = users.analyse(USR02.encode(), USAGE.encode(), today=date(2026, 11, 17))
+def test_user_license_analysis_classic_named_user():
+    report = users.analyse(USR02.encode(), USAGE.encode(), today=date(2026, 11, 17), license_model="NAMED_USER")
     locks = {u["user"]: u["reason"] for u in report["lock_candidates"]}
     assert set(locks) == {"JSMITH", "GHOST", "CONTRACT"}
     assert "inactive for 320 days" in locks["JSMITH"] and "validity expired" == locks["CONTRACT"]
     changes = {c["user"]: c for c in report["license_changes"]}
-    assert changes["VIEWER"]["recommended_license"] == "Limited (Core)"
-    assert changes["ESSUSER"]["recommended_license"] == "Employee (Self-Service)"
     assert set(changes) == {"VIEWER", "ESSUSER"}  # no recommendation without usage data or for protected users
+    assert changes["VIEWER"]["current_license"] == "Professional"
+    assert changes["VIEWER"]["recommended_license"] == "Limited Professional"
+    assert changes["ESSUSER"]["recommended_license"] == "Employee"
     summary = report["summary"]
     assert summary["excluded"] == {"protected": 1, "already_locked": 1, "non_dialog": 1}
     assert summary["never_logged_on"] == 1  # NEWHIRE is recent, GHOST is not
+    assert summary["saving_unit"] == "relative licence cost"
     assert report["su10_user_list"].splitlines() == ["JSMITH", "GHOST", "CONTRACT"]
 
 
-def test_user_analysis_api_csv_and_validation(monkeypatch, tmp_path):
+def test_user_license_analysis_fue_model():
+    report = users.analyse(USR02.encode(), USAGE.encode(), today=date(2026, 11, 17), license_model="FUE")
+    changes = {c["user"]: c for c in report["license_changes"]}
+    assert changes["VIEWER"]["current_license"] == "Advanced"
+    assert changes["VIEWER"]["recommended_license"] == "Core" and changes["VIEWER"]["saving"] == 0.8
+    assert report["summary"]["saving_unit"] == "FUE"
+    # 3 locked Advanced users (3 FUE) + 0.8 + (0.2 - 0.033)
+    assert report["summary"]["estimated_saving"] == 3.97
+
+
+def test_license_wording_is_normalised():
+    assert users.normalise_license("Professional") == "full"
+    assert users.normalise_license("Limited Professional") == "limited"
+    assert users.normalise_license("Employee") == "self_service"
+    assert users.normalise_license("FUE Core Use") == "limited"
+    assert users.normalise_license("Self-Service") == "self_service"
+
+
+def test_user_analysis_api_uses_system_license_model(monkeypatch, tmp_path):
     setup_test_db(monkeypatch, tmp_path)
     with TestClient(app) as client:
-        csv = client.post("/api/v1/users/analyze?format=csv", json={"usr02_csv": USR02, "dormant_days": 90}, headers=HEADERS)
+        s4 = make_system(client, "S4P")
+        ecc = make_system(client, "ECP", product="ECC", database="ORACLE")
+        r_s4 = client.post(f"/api/v1/systems/{s4['id']}/users/analyze", headers=HEADERS,
+                           json={"usr02_csv": USR02, "usage_csv": USAGE}).json()
+        r_ecc = client.post(f"/api/v1/systems/{ecc['id']}/users/analyze", headers=HEADERS,
+                            json={"usr02_csv": USR02, "usage_csv": USAGE}).json()
+        assert r_s4["summary"]["license_model"] == "FUE" and r_ecc["summary"]["license_model"] == "NAMED_USER"
+        csv = client.post(f"/api/v1/systems/{ecc['id']}/users/analyze?format=csv", json={"usr02_csv": USR02},
+                          headers=HEADERS)
         assert csv.status_code == 200 and csv.text.startswith("user,user_type")
-        bad = client.post("/api/v1/users/analyze", json={"usr02_csv": "A,B\n1,2\n"}, headers=HEADERS)
+        assert "ECP_lock_candidates.csv" in csv.headers["content-disposition"]
+        bad = client.post(f"/api/v1/systems/{ecc['id']}/users/analyze", json={"usr02_csv": "A,B\n1,2\n"}, headers=HEADERS)
         assert bad.status_code == 422 and "last logon" in bad.json()["detail"]
+        runs = client.get(f"/api/v1/systems/{ecc['id']}/runs", headers=HEADERS).json()
+        assert len(runs) == 2 and runs[0]["module"] == "users"
+        assert "JSMITH" not in str(runs)  # history keeps counts only, never user names
+
+
+def test_java_system_uses_ume_export_without_license_recommendations(monkeypatch, tmp_path):
+    setup_test_db(monkeypatch, tmp_path)
+    ume = "Logon ID;Last Successful Logon;Locked\nPORTALUSER;2025-01-02;false\nACTIVE;2026-11-10;false\n"
+    with TestClient(app) as client:
+        java = make_system(client, "EPP", product="PORTAL", stack="JAVA", database="ORACLE")
+        report = client.post(f"/api/v1/systems/{java['id']}/users/analyze", headers=HEADERS,
+                             json={"usr02_csv": ume, "usage_csv": USAGE}).json()
+        assert [u["user"] for u in report["lock_candidates"]] == ["PORTALUSER"]
+        assert report["license_changes"] == []
+        blocked = client.post(f"/api/v1/systems/{java['id']}/transports/precheck", headers=HEADERS,
+                              json={"e071_csv": "TRKORR,OBJECT,OBJ_NAME\nX,PROG,Y\n"})
+        assert blocked.status_code == 409 and "CTS+" in blocked.json()["detail"]
 
 
 # ------------------------------------------------------------------ transports
@@ -252,14 +314,20 @@ def test_transport_postcheck_csv_and_log_text(monkeypatch, tmp_path):
     setup_test_db(monkeypatch, tmp_path)
     sent = capture_alerts(monkeypatch)
     with TestClient(app) as client:
+        qas = make_system(client, "QAS", environment="QAS")
         csv_log = "TRKORR;RC\nDEVK900100;0004\nDEVK900110;0008\nDEVK900110;0000\nDEVK900120;0012\n"
-        result = client.post("/api/v1/transports/postcheck", headers=HEADERS,
-                             json={"target_system": "QAS", "log": csv_log}).json()
+        result = client.post(f"/api/v1/systems/{qas['id']}/transports/postcheck", headers=HEADERS,
+                             json={"log": csv_log}).json()
         assert {r["request"]: r["result"] for r in result["results"]} == {
             "DEVK900100": "warning", "DEVK900110": "error", "DEVK900120": "fatal"}
         assert result["failed"] == 2 and len(sent) == 2
-        client.post("/api/v1/transports/postcheck", headers=HEADERS, json={"target_system": "QAS", "log": csv_log})
+        client.post(f"/api/v1/transports/postcheck", headers=HEADERS)  # legacy path is gone
+        client.post(f"/api/v1/systems/{qas['id']}/transports/postcheck", headers=HEADERS, json={"log": csv_log})
         assert len(sent) == 2  # de-duplicated
+        history = client.get(f"/api/v1/alerts?system_id={qas['id']}", headers=HEADERS).json()
+        assert len(history) == 2 and history[0]["sid"] == "QAS"
+        overview = client.get("/api/v1/overview", headers=HEADERS).json()
+        assert overview["systems"][0]["health"] == "critical"
     text_log = "START IMPORT DEVK900200 ...\nimport of DEVK900200 finished, return code: 8\ntp rc=0 for DEVK900201\n"
     assert transports.parse_import_results(text_log) == {"DEVK900200": 8, "DEVK900201": 0}
 
@@ -267,12 +335,31 @@ def test_transport_postcheck_csv_and_log_text(monkeypatch, tmp_path):
 def test_toolkit_endpoints_require_api_key(monkeypatch, tmp_path):
     setup_test_db(monkeypatch, tmp_path)
     with TestClient(app) as client:
-        assert client.post("/api/v1/users/analyze", json={"usr02_csv": USR02}).status_code == 401
-        assert client.get("/api/v1/growth/HDB/report").status_code == 401
+        assert client.get("/api/v1/systems").status_code == 401
+        assert client.post("/api/v1/systems/1/users/analyze", json={"usr02_csv": USR02}).status_code == 401
+        assert client.get("/api/v1/overview").status_code == 401
 
 
-def test_dashboard_is_served(monkeypatch, tmp_path):
+def test_spa_is_served_with_client_side_routes(monkeypatch, tmp_path):
     setup_test_db(monkeypatch, tmp_path)
+    dist = tmp_path / "dist"
+    (dist / "assets").mkdir(parents=True)
+    (dist / "index.html").write_text("<html>SAP Basis Toolkit</html>")
+    (dist / "assets" / "app.js").write_text("console.log(1)")
+    monkeypatch.setattr(config, "FRONTEND_DIST", str(dist))
+    with TestClient(app) as client:
+        assert "SAP Basis Toolkit" in client.get("/").text
+        assert "SAP Basis Toolkit" in client.get("/systems/3/growth").text  # deep link
+        assert client.get("/assets/app.js").text == "console.log(1)"
+        assert client.get("/assets/missing.js").status_code == 404
+        assert client.get("/../../etc/passwd").status_code == 404 or "root:" not in client.get("/../../etc/passwd").text
+        assert client.get("/api/v1/unknown", headers=HEADERS).status_code == 404
+        assert client.get("/health").json()["status"] == "ok"
+
+
+def test_spa_missing_build_returns_hint(monkeypatch, tmp_path):
+    setup_test_db(monkeypatch, tmp_path)
+    monkeypatch.setattr(config, "FRONTEND_DIST", str(tmp_path / "nope"))
     with TestClient(app) as client:
         r = client.get("/")
-    assert r.status_code == 200 and "SAP Basis Toolkit" in r.text
+    assert r.status_code == 404 and "npm run build" in r.json()["detail"]
