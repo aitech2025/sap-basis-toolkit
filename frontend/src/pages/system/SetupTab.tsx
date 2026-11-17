@@ -1,4 +1,5 @@
 import { CollectorsCard } from "../../components/Collectors";
+import DependencyTopologyCard from "./DependencyTopologyCard";
 import { Card, Pill } from "../../components/ui";
 import type { SystemDetail } from "../../types";
 
@@ -13,6 +14,7 @@ export default function SetupTab({ system }: { system: SystemDetail }) {
   return (
     <>
       <CollectorsCard system={system} />
+      <DependencyTopologyCard system={system} />
       <div className="cols">
         <Card title="System">
           <table>
