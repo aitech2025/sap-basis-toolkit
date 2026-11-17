@@ -8,21 +8,26 @@
 - Configurable expiry thresholds (default 90/60/30/14/7 days).
 - Generic JSON webhook notifications (Slack/Teams incoming webhooks) and SMTP email.
 - Notification event history and successful-alert de-duplication per certificate, threshold and channel; failed deliveries are retried on later checks.
+- Endpoint-unreachable alerts, de-duplicated per outage and re-armed after a successful check.
+- Target disable operation that preserves target and check history.
+- API-key protection for all management endpoints; /health remains public.
 - SQLAlchemy storage supporting SQLite for local development and PostgreSQL for shared deployments.
-- Read-only design; no private keys or certificate secrets are stored.
 
 ## API
 
-- GET /health
+- GET /health (public)
 - POST /api/v1/targets
 - GET /api/v1/targets
+- PATCH /api/v1/targets/{target_id}/disable
 - POST /api/v1/targets/{target_id}/check
 - GET /api/v1/checks?limit=100
 - GET /api/v1/notifications?limit=100
 
+All /api/v1 endpoints require the configured X-API-Key header. If API_AUTH_TOKEN is absent, these endpoints fail closed with HTTP 503.
+
 ## Configuration
 
-Copy backend/.env.example and set environment variables in the process environment. PostgreSQL URL example: postgresql+psycopg://user:password@host:5432/database.
+Set API_AUTH_TOKEN to a long random secret and provide it in the X-API-Key request header. Copy backend/.env.example and set environment variables in the process environment. PostgreSQL URL example: postgresql+psycopg://user:password@host:5432/database.
 
 The scheduler runs every CHECK_INTERVAL_MINUTES (default 360). It performs its first sweep after the first interval; use the API for an immediate check after registering a target.
 
@@ -35,15 +40,16 @@ A typed SAP PSE collector contract is included, but the RFC implementation is de
 ## Operational and security notes
 
 - Deploy inside the customer network to reach private SAP endpoints.
-- Restrict API access at the reverse proxy/network layer until authentication and RBAC are added.
-- Restrict outbound network access to approved target hosts and ports; target registration can otherwise be abused as an SSRF/network-probing primitive.
-- Store SMTP credentials and webhook URLs in a secrets manager or deployment environment, never source control.
+- Restrict outbound network access to approved target hosts and ports; API-key authentication does not replace network segmentation or an egress allowlist. Target registration can otherwise be abused as an SSRF/network-probing primitive.
+- Terminate TLS at a trusted reverse proxy; do not expose API keys over plaintext networks.
+- Store API tokens, SMTP credentials and webhook URLs in a secrets manager or deployment environment, never source control.
+- The single API key is suitable for a controlled MVP, not multi-user identity, tenant isolation or fine-grained RBAC.
 - Use PostgreSQL for multi-instance/production deployments. SQLite is for local development only.
 - Multiple API worker processes each starting an in-process scheduler would create duplicate sweeps. Run one scheduler instance (or a dedicated worker) in production.
 
 ## Next
 
-1. API authentication, tenant isolation and audit trail.
+1. Tenant isolation, user identities/RBAC and audit trail.
 2. Dedicated scheduler worker and retry/backoff policy.
 3. Implement and validate the SAP STRUST/PSE adapter for target SAP_BASIS releases.
 4. Certificate chain inventory and endpoint discovery.

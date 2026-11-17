@@ -13,3 +13,4 @@ SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "")
 SMTP_FROM = os.getenv("SMTP_FROM", "")
 ALERT_EMAIL_TO = tuple(v.strip() for v in os.getenv("ALERT_EMAIL_TO", "").split(",") if v.strip())
 SMTP_STARTTLS = os.getenv("SMTP_STARTTLS", "true").lower() == "true"
+API_AUTH_TOKEN = os.getenv("API_AUTH_TOKEN", "").strip()
