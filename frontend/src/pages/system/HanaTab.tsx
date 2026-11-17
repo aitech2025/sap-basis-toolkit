@@ -9,6 +9,9 @@ type Hana = {
   backups: Record<string, { at: string | null; age_h: number | null }>;
   replication: { host: string; port: number; secondary: string; mode: string; status: string; details: string }[];
   services: { host: string; service: string; active: string }[];
+  active_statements?: { count: number; long_running: number; max_duration_s: number };
+  service_threads?: { count: number; waiting: number };
+  expensive_statements_1h?: { count: number; max_duration_s: number };
 };
 const gb = (b: number | undefined) => (b == null ? "–" : `${fmtNumber(b / 1024 ** 3, 0)} GB`);
 const RATING: Record<number, string> = { 1: "info", 2: "low", 3: "medium", 4: "high", 5: "error" };
@@ -29,6 +32,9 @@ export default function HanaTab({ system }: { system: SystemDetail }) {
           <Tile label="Data volume used" value={h.disk ? `${h.disk.pct}%` : "–"} hint={h.disk ? `${gb(h.disk.used)} of ${gb(h.disk.total)}` : undefined} />
           <Tile label="Last data backup" value={data?.age_h != null ? `${data.age_h} h ago` : "none"} hint={fmtDate(data?.at)} />
           <Tile label="Last log backup" value={log?.age_h != null ? `${Math.round(log.age_h * 60)} min ago` : "none"} hint={fmtDate(log?.at)} />
+          <Tile label="Active statements" value={h.active_statements?.count ?? "n/a"} hint={h.active_statements ? `${h.active_statements.long_running} running ≥30s` : "View or privilege unavailable"} />
+          <Tile label="Waiting threads" value={h.service_threads?.waiting ?? "n/a"} hint={h.service_threads ? `${h.service_threads.count} total service threads` : "View or privilege unavailable"} />
+          <Tile label="Expensive statements (1h)" value={h.expensive_statements_1h?.count ?? "n/a"} hint={h.expensive_statements_1h ? `Max duration ${h.expensive_statements_1h.max_duration_s}s` : "Trace/view may be disabled"} />
         </div>
       )}
       <div className="cols">
