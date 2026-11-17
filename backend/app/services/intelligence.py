@@ -39,7 +39,7 @@ def _linear_forecast(points, horizon_days=30, threshold_pct=85.0):
     """Return a simple linear capacity projection; null when evidence is weak."""
     if len(points) < 3:
         return {"status": "insufficient_data", "points": len(points), "threshold_in_days": None, "reason": "At least three capacity snapshots are required."}
-    origin = points[0][0]
+    origin = _aware(points[0][0])
     xs = [(_aware(ts) - origin).total_seconds() / 86400 for ts, _, _ in points]
     ys = [float(used) for _, used, _ in points]
     mean_x, mean_y = sum(xs) / len(xs), sum(ys) / len(ys)
