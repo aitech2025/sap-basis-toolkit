@@ -25,6 +25,7 @@ BUILTIN_RULES = [
     ("availability.system_up", "System unavailable", "<", None, 1,
      "No running dispatcher/message server instance reported by sapcontrol"),
     ("availability.instances_down", "Instances not running", ">=", 1, None, "One or more instances are not GREEN"),
+    ("hana.system_up", "HANA database down", "<", None, 1, "The HANA instance is not GREEN in its own sapstartsrv"),
     ("collector.failed", "Collector cannot reach the system", ">=", 1, None,
      "A live collector failed; data is stale until it recovers"),
     ("wp.dia_busy_pct", "Dialog work processes busy", ">=", 80, 95, "Share of DIA work processes running"),

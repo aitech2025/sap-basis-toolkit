@@ -32,7 +32,7 @@ def _principal(request: Request) -> Principal:
 
 # ------------------------------------------------------------------------------- collectors
 class CollectorIn(BaseModel):
-    type: str = Field(pattern="^(sapcontrol|hana)$")
+    type: str = Field(pattern="^(sapcontrol|hana|hana_sapcontrol)$")
     host: str = Field(min_length=1, max_length=253)
     port: int = Field(ge=1, le=65535)
     use_tls: bool = True

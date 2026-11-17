@@ -278,7 +278,7 @@ def authorize(request: Request, principal: Principal = Depends(current_principal
         needed = "operator"  # running a configured collector now
     else:
         needed = "admin" if path.startswith(ADMIN_WRITE_PREFIXES) or "/collectors" in path \
-            or path.endswith("/control") else "operator"
+            or path.endswith(("/control", "/abort")) else "operator"
     if not principal.can(needed):
         raise HTTPException(403, f"Your role ({principal.role}) cannot do this; {needed} required")
     return principal

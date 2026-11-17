@@ -28,8 +28,9 @@ export default function Discover() {
   const [form, setForm] = useState<Record<string, string>>({});
   const [roles, setRoles] = useState<Record<string, string>>({});
   const [target, setTarget] = useState<string>("new");
-  const [hana, setHana] = useState({ enabled: false, host: "", port: "30015", username: "", password: "", database_name: "", abap_schema: "" });
+  const [hana, setHana] = useState({ enabled: false, host: "", port: "30015", username: "", password: "", database_name: "", abap_schema: "SAPHANADB" });
   const [result, setResult] = useState<RegisterResult | null>(null);
+  const [dbCtl, setDbCtl] = useState({ enabled: true, username: "", password: "" });
 
   const doScan = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -50,6 +51,7 @@ export default function Discover() {
         product: found.product, database: found.database ?? "", interval_seconds: "300", control_enabled: "",
       });
       setHana((h) => ({ ...h, enabled: false, host: found.db_host ?? "" }));
+      setDbCtl({ enabled: !!found.hana_instance, username: found.hana_instance?.suggested_user ?? "", password: "" });
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -70,6 +72,7 @@ export default function Discover() {
         product: form.product, database: form.database || null, interval_seconds: Number(form.interval_seconds) || 300,
         control_enabled: form.control_enabled === "" ? null : form.control_enabled === "on",
         role_overrides: roles,
+        db_control: dbCtl.enabled && scan.hana_instance ? { username: dbCtl.username, password: dbCtl.password } : null,
         hana: hana.enabled ? { host: hana.host, port: Number(hana.port) || 30015, username: hana.username,
           password: hana.password, database_name: hana.database_name || null, abap_schema: hana.abap_schema || null } : null,
       });
@@ -184,6 +187,24 @@ export default function Discover() {
               ]}
             />
           </Card>
+          {scan.hana_instance && (
+            <Card title={`HANA database ${scan.hana_instance.sid} · HDB${scan.hana_instance.instance_nr} on ${scan.hana_instance.host}`}>
+              <p className="muted small">Found the HANA instance's own SAP Start Service (port {scan.hana_instance.port}). With its OS user,
+                Sentinel monitors database availability and includes HANA in the start/stop procedures (database first on start, last on stop).</p>
+              <div className="form-grid">
+                <label className="field check wide"><input type="checkbox" checked={dbCtl.enabled} onChange={(e) => setDbCtl({ ...dbCtl, enabled: e.target.checked })} />
+                  <span>Monitor and control the HANA instance</span></label>
+                {dbCtl.enabled && (
+                  <>
+                    <label className="field"><span>OS user (&lt;hanasid&gt;adm)</span>
+                      <input value={dbCtl.username} onChange={(e) => setDbCtl({ ...dbCtl, username: e.target.value })} autoComplete="off" /></label>
+                    <label className="field"><span>Password</span>
+                      <input type="password" value={dbCtl.password} onChange={(e) => setDbCtl({ ...dbCtl, password: e.target.value })} autoComplete="new-password" /></label>
+                  </>
+                )}
+              </div>
+            </Card>
+          )}
           <Card title="3 · Register and monitor">
             <div className="form-grid">
               {scan.existing_systems.length > 0 && (

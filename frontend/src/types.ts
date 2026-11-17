@@ -582,6 +582,9 @@ export interface ScanResult {
   suggested_environment: string;
   control_access: boolean | null;
   collector: { host: string; port: number; use_tls: boolean; verify_tls: boolean; username: string | null };
+  hana_instance: {
+    host: string; port: number; instance_nr: string; sid: string; suggested_user: string | null; instances: DiscoveredInstance[];
+  } | null;
   existing_systems: { id: number; sid: string; landscape: string; name: string }[];
   warnings: string[];
   scanned_at: string;
@@ -596,30 +599,66 @@ export interface RegisterResult {
   warnings: string[];
 }
 
+export type StepStatus = "pending" | "running" | "ok" | "warning" | "failed" | "timeout" | "aborted" | "skipped"
+  | "overridden" | "confirmed" | "not_confirmed" | "todo";
+
+export interface ProcedureStep {
+  key: string;
+  kind: "check" | "manual" | "action";
+  title: string;
+  status: StepStatus;
+  detail: string | null;
+  blocking?: boolean;
+  verb?: "start" | "stop";
+  targets?: string[];
+  roles?: string[];
+  instances?: Record<string, string>;
+  started_at?: string;
+  finished_at?: string;
+}
+
+export type ControlScope = "system" | "app" | "db" | "instance";
+
 export interface Operation {
   id: number;
   system_id: number;
   action: "start" | "stop" | "restart";
-  scope: "system" | "instance";
-  options: string | null;
+  scope: ControlScope;
+  scope_label: string;
   hostname: string | null;
   instance_nr: string | null;
   soft_timeout: number | null;
   reason: string;
   requested_by: string;
-  status: "running" | "succeeded" | "failed" | "timeout" | "interrupted";
+  status: "running" | "succeeded" | "failed" | "timeout" | "interrupted" | "aborted";
   message: string | null;
-  progress: { at: string; instances?: Record<string, string>; error?: string }[];
+  steps: ProcedureStep[];
+  checklist: Record<string, boolean>;
+  force: boolean;
+  abort_requested: boolean;
   maintenance_window_id: number | null;
   started_at: string;
   finished_at: string | null;
 }
 
+export interface ControlPlan {
+  action: string;
+  scope: ControlScope;
+  scope_label: string;
+  steps: ProcedureStep[];
+  blocked: boolean;
+  blockers: string[];
+  manual: { key: string; title: string }[];
+}
+
 export interface ControlStatus {
   allowed: boolean;
   reason: string | null;
-  options: string[];
+  scopes: Record<ControlScope, boolean>;
+  notes: string[];
   running: Operation | null;
   timeout_seconds: number;
-  database_note: string;
+  hana_start_timeout_seconds: number;
+  start_sequence: string[];
+  stop_sequence: string[];
 }

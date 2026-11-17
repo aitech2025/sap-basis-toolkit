@@ -7,18 +7,21 @@ import { Card, DataTable, Empty, Pill, fmtDate, useAsync } from "./ui";
 const DEFAULTS = {
   sapcontrol: { port: 50014, interval_seconds: 120, username: "", abap_schema: "" },
   hana: { port: 30015, interval_seconds: 300, username: "", abap_schema: "SAPHANADB" },
+  hana_sapcontrol: { port: 50013, interval_seconds: 120, username: "", abap_schema: "" },
 };
+type CollectorType = keyof typeof DEFAULTS;
+const TYPE_LABEL: Record<string, string> = { sapcontrol: "SAP Start Service", hana: "HANA SQL", hana_sapcontrol: "HANA instance (sapcontrol)" };
 
 export function CollectorsCard({ system }: { system: SystemDetail }) {
   const { can } = useSession();
   const { data, error, reload } = useAsync(() => api.collectors(system.id), [system.id]);
-  const [type, setType] = useState<"sapcontrol" | "hana">("sapcontrol");
+  const [type, setType] = useState<CollectorType>("sapcontrol");
   const [form, setForm] = useState({ host: system.host ?? "", port: 50014, use_tls: true, verify_tls: true, username: "",
                                      password: "", abap_schema: "", interval_seconds: 120 });
   const [message, setMessage] = useState<{ ok: boolean; text: string; details?: string[] } | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
 
-  const pickType = (t: "sapcontrol" | "hana") => {
+  const pickType = (t: CollectorType) => {
     setType(t);
     setForm({ ...form, ...DEFAULTS[t] });
   };
@@ -50,7 +53,7 @@ export function CollectorsCard({ system }: { system: SystemDetail }) {
       {data && !data.length && <Empty>No collectors yet — data comes only from uploads until you add one.</Empty>}
       {!!data?.length && (
         <DataTable<Collector> rows={data} rowKey={(c) => c.id} columns={[
-          { key: "type", label: "Type", render: (c) => <><strong>{c.type === "sapcontrol" ? "SAP Start Service" : "HANA SQL"}</strong>{c.simulated && <span className="tag">demo</span>}</> },
+          { key: "type", label: "Type", render: (c) => <><strong>{TYPE_LABEL[c.type] ?? c.type}</strong>{c.simulated && <span className="tag">demo</span>}</> },
           { key: "host", label: "Endpoint", render: (c) => <code>{c.use_tls ? "https" : "http"}://{c.host}:{c.port}</code> },
           { key: "user", label: "User", render: (c) => c.username ? `${c.username}${c.has_password ? " (password set)" : ""}` : <span className="muted">–</span> },
           { key: "abap_schema", label: "ABAP schema", render: (c) => c.abap_schema ?? "–" },
@@ -99,15 +102,16 @@ export function CollectorsCard({ system }: { system: SystemDetail }) {
           <h3>Add collector</h3>
           <div className="form-grid">
             <label className="field"><span>Type</span>
-              <select value={type} onChange={(e) => pickType(e.target.value as "sapcontrol" | "hana")}>
+              <select value={type} onChange={(e) => pickType(e.target.value as CollectorType)}>
                 <option value="sapcontrol">SAP Start Service (sapcontrol)</option>
                 <option value="hana" disabled={system.database !== "HANA"}>HANA SQL{system.database !== "HANA" ? " (HANA systems only)" : ""}</option>
+                <option value="hana_sapcontrol" disabled={system.database !== "HANA"}>HANA instance — sapcontrol of HDB&lt;NN&gt; (DB availability + start/stop)</option>
               </select></label>
             <label className="field"><span>Host</span><input required value={form.host} onChange={(e) => setForm({ ...form, host: e.target.value })} placeholder={type === "hana" ? "hdb.corp.example.com" : "sapascs.corp.example.com"} />
               <small>Use "simulator" for demo data when enabled on the server.</small></label>
             <label className="field"><span>Port</span><input type="number" required value={form.port} onChange={(e) => setForm({ ...form, port: Number(e.target.value) })} />
-              <small>{type === "sapcontrol" ? "5<NN>13 HTTP / 5<NN>14 HTTPS" : "3<NN>15 tenant / 3<NN>13 SYSTEMDB"}</small></label>
-            <label className="field"><span>{type === "sapcontrol" ? "OS user (<sid>adm)" : "Database user"}</span><input value={form.username} autoComplete="off" onChange={(e) => setForm({ ...form, username: e.target.value })} placeholder={type === "hana" ? "MONITORING_RO" : "s4padm"} /></label>
+              <small>{type === "hana" ? "3<NN>15 tenant / 3<NN>13 SYSTEMDB" : "5<NN>13 HTTP / 5<NN>14 HTTPS" + (type === "hana_sapcontrol" ? " of the HDB instance" : "")}</small></label>
+            <label className="field"><span>{type === "hana" ? "Database user" : type === "hana_sapcontrol" ? "OS user (<hanasid>adm)" : "OS user (<sid>adm)"}</span><input value={form.username} autoComplete="off" onChange={(e) => setForm({ ...form, username: e.target.value })} placeholder={type === "hana" ? "MONITORING_RO" : "s4padm"} /></label>
             <label className="field"><span>Password</span><input type="password" autoComplete="new-password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} /><small>Stored encrypted; never shown again.</small></label>
             {type === "hana" && <label className="field"><span>ABAP schema (optional)</span><input value={form.abap_schema} onChange={(e) => setForm({ ...form, abap_schema: e.target.value.toUpperCase() })} placeholder="SAPHANADB" /><small>Enables dumps, RFC, IDoc, job and import monitors.</small></label>}
             <label className="field"><span>Interval (seconds)</span><input type="number" min={30} max={86400} value={form.interval_seconds} onChange={(e) => setForm({ ...form, interval_seconds: Number(e.target.value) })} /></label>

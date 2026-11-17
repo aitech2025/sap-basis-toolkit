@@ -30,6 +30,11 @@ class HanaIn(BaseModel):
     abap_schema: str | None = Field(default=None, max_length=64)
 
 
+class DbControlIn(BaseModel):
+    username: str | None = Field(default=None, max_length=120)
+    password: str | None = Field(default=None, max_length=512)
+
+
 class RegisterIn(ScanIn):
     expected_sid: str | None = Field(default=None, max_length=3)
     system_id: int | None = None
@@ -48,6 +53,7 @@ class RegisterIn(ScanIn):
     interval_seconds: int = Field(default=300, ge=30, le=86400)
     role_overrides: dict[str, str] = Field(default_factory=dict)
     hana: HanaIn | None = None
+    db_control: DbControlIn | None = None
     start_monitoring: bool = True
 
 
@@ -102,15 +108,27 @@ def refresh(system_id: int):
 
 class ControlIn(BaseModel):
     action: str = Field(pattern="^(start|stop|restart)$")
-    scope: str = Field(default="system", pattern="^(system|instance)$")
-    options: str | None = Field(default="ALL", max_length=10)
+    scope: str = Field(default="system", pattern="^(system|app|db|instance)$")
     hostname: str | None = Field(default=None, max_length=253)
     instance_nr: str | None = Field(default=None, max_length=2)
     soft_timeout: int | None = Field(default=None, ge=0, le=3600)
     confirm_sid: str = Field(min_length=3, max_length=3)
     reason: str = Field(min_length=1, max_length=500)
     maintenance_minutes: int | None = Field(default=None, ge=0, le=1440)
+    checklist: dict[str, bool] = Field(default_factory=dict)
+    force: bool = False
     wait: bool = False
+
+
+def _control(fn, *args):
+    try:
+        return fn(*args)
+    except control.ControlConflict as exc:
+        raise HTTPException(409, str(exc))
+    except control.ControlError as exc:
+        raise HTTPException(422, str(exc))
+    except LookupError as exc:
+        raise HTTPException(404, str(exc))
 
 
 @router.get("/systems/{system_id}/control")
@@ -119,15 +137,34 @@ def control_status(system_id: int):
     return control.capabilities(system_id)
 
 
+@router.get("/systems/{system_id}/control/plan")
+def control_plan(system_id: int, request: Request, action: str, scope: str = "system",
+                 hostname: str | None = None, instance_nr: str | None = None):
+    """The ordered procedure with read-only pre-checks evaluated (admins only: it uses the stored credentials)."""
+    if not request.state.principal.can("admin"):
+        raise HTTPException(403, "Only admins can plan start/stop procedures")
+    load_system(system_id)
+    return _control(control.evaluate_plan, system_id, action, scope, hostname, instance_nr)
+
+
 @router.post("/systems/{system_id}/control", status_code=202)
 def control_request(system_id: int, payload: ControlIn, request: Request):
     load_system(system_id)
-    try:
-        return control.request(system_id, payload.model_dump(), request.state.principal.username)
-    except control.ControlConflict as exc:
-        raise HTTPException(409, str(exc))
-    except control.ControlError as exc:
-        raise HTTPException(422, str(exc))
+    return _control(control.request, system_id, payload.model_dump(), request.state.principal.username)
+
+
+@router.post("/operations/{operation_id}/abort")
+def abort_operation(operation_id: int, request: Request):
+    return _control(control.abort, operation_id, request.state.principal.username)
+
+
+class ConfirmIn(BaseModel):
+    done: bool = True
+
+
+@router.post("/operations/{operation_id}/steps/{step_key}/confirm")
+def confirm_step(operation_id: int, step_key: str, payload: ConfirmIn, request: Request):
+    return _control(control.confirm_step, operation_id, step_key, request.state.principal.username, payload.done)
 
 
 @router.get("/systems/{system_id}/operations")

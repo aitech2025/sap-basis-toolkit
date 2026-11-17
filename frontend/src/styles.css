@@ -231,3 +231,26 @@ ul.plain { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
 .inst-chip.RED { color: var(--bad); background: var(--bad-bg); }
 .danger-note { color: var(--bad); font-weight: 600; }
 td .actions { flex-wrap: nowrap; gap: 4px; }
+.scope-grid { display: grid; gap: 8px; margin-bottom: 12px; }
+.scope-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 10px 12px; border: 1px solid var(--line, #e3e6ec); border-radius: 8px; flex-wrap: wrap; }
+.scope-row.disabled { opacity: .55; }
+details.sequence { margin: 4px 0 12px; }
+details.sequence summary { cursor: pointer; font-weight: 600; font-size: 13px; }
+.seq-cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin-top: 8px; font-size: 13px; }
+.seq-cols h4 { margin: 0 0 4px; }
+.seq-cols ol { margin: 0; padding-left: 20px; }
+.procedure { border-top: 1px solid var(--line, #e3e6ec); padding-top: 12px; margin-top: 4px; }
+.procedure-head { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; }
+ol.steps { list-style: none; padding: 0; margin: 8px 0 0; display: grid; gap: 6px; }
+.step-row { display: flex; gap: 10px; align-items: flex-start; font-size: 13px; }
+.step-row.manual .step-body strong { font-weight: 550; }
+.step-icon { width: 20px; height: 20px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; flex: none; font-size: 12px; font-weight: 700; background: var(--surface-2); }
+.step-icon.good, .step-status.good { color: var(--good); } .step-icon.good { background: var(--good-bg); }
+.step-icon.warn, .step-status.warn { color: var(--warn); } .step-icon.warn { background: var(--warn-bg); }
+.step-icon.bad, .step-status.bad { color: var(--bad); } .step-icon.bad { background: var(--bad-bg); }
+.step-icon.accent { background: var(--accent-soft); }
+.step-status { font-size: 12px; margin: 0 6px; color: var(--muted); }
+.step-body { display: grid; gap: 3px; min-width: 0; }
+.chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.small-head { font-size: 13px; margin: 12px 0 6px; }
+dialog.wide-dialog { width: min(760px, 96vw); }
