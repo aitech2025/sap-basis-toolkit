@@ -247,6 +247,14 @@ def scan(host: str, username: str | None = None, password: str | None = None, us
     if product["product"] in ("S4HANA", "BW4HANA") and database is None:
         database = "HANA"
 
+    hana_instance = None
+    if database == "HANA" and db_host:
+        try:
+            hana_instance = detect_hana(db_host.lower(), use_tls, verify_tls)
+        except DiscoveryError as exc:
+            warnings.append(f"HANA instance not found for start/stop ({exc}); you can add it later as a "
+                            "'HANA instance (sapcontrol)' collector.")
+
     control_access = None
     if username:
         try:
@@ -275,7 +283,7 @@ def scan(host: str, username: str | None = None, password: str | None = None, us
         "suggested_environment": suggest_environment(sid), "control_access": control_access,
         "collector": {"host": host, "port": port, "use_tls": use_tls, "verify_tls": verify_tls,
                       "username": username or None},
-        "existing_systems": existing, "warnings": warnings, "scanned_at": datetime.now(timezone.utc).isoformat(),
+        "hana_instance": hana_instance, "existing_systems": existing, "warnings": warnings, "scanned_at": datetime.now(timezone.utc).isoformat(),
     }
 
 
@@ -323,7 +331,7 @@ def upsert_instances(system_id: int, instances: list[dict], overrides: dict | No
                                                                  instance_nr=inst["instance_nr"], **values))
 
 
-def sync_from_collection(system_id: int, raw_instances: list[dict]) -> None:
+def sync_from_collection(system_id: int, raw_instances: list[dict], force_role: str | None = None) -> None:
     """Keep the inventory current from each sapcontrol collection (new instances get a features-based role)."""
     with get_db() as connection:
         known = {(r["hostname"], r["instance_nr"]): dict(r) for r in connection.execute(
@@ -339,6 +347,9 @@ def sync_from_collection(system_id: int, raw_instances: list[dict]) -> None:
                "start_priority": prev["start_priority"] if prev else None}
         rows.append(row)
     assign_roles(rows)
+    if force_role:
+        for row in rows:
+            row["role"], row["role_source"] = force_role, "features"
     for row in rows:
         prev = known.get((row["hostname"], row["instance_nr"]))
         if prev and prev["role_source"] in ("manual", "instance_name", "inferred"):
@@ -390,19 +401,40 @@ def refresh(system_id: int) -> list[dict]:
 
 
 def control_client(collector_row: dict) -> sapcontrol.SapControlClient:
-    from . import vault
-    endpoint = sapcontrol.Endpoint(collector_row["host"], collector_row["port"], bool(collector_row["use_tls"]),
-                                   bool(collector_row["verify_tls"]), collector_row["username"],
-                                   vault.decrypt(collector_row["password_enc"]))
-    if simulator.is_sim(collector_row["host"]):
-        with get_db() as connection:
-            system = dict(connection.execute(select(sap_systems).where(sap_systems.c.id == collector_row["system_id"]))
-                          .mappings().one())
-        transport = simulator.sapcontrol_transport(simulator.seed_for(collector_row["host"], runner._seed(system)),
-                                                   java=system["stack"] == "JAVA")
-    else:
-        transport = sapcontrol.http_transport
-    return sapcontrol.SapControlClient(endpoint, transport)
+    with get_db() as connection:
+        system = dict(connection.execute(select(sap_systems).where(sap_systems.c.id == collector_row["system_id"]))
+                      .mappings().one())
+    return runner.sapcontrol_client(collector_row, system)
+
+
+def detect_hana(db_host: str, use_tls: bool, verify_tls: bool) -> dict:
+    """Find the HANA instance's own sapstartsrv on the database host (HDB<NN>)."""
+    numbers = probe(db_host, use_tls)
+    transport = _transport(db_host)
+    for nr in numbers:
+        port = int(f"5{nr}{'14' if use_tls else '13'}")
+        client = sapcontrol.SapControlClient(sapcontrol.Endpoint(db_host, port, use_tls, verify_tls, None, None), transport)
+        try:
+            props = _props(client, client.endpoint)
+        except CollectorError:
+            continue
+        if not (props.get("INSTANCE_NAME") or "").upper().startswith("HDB"):
+            continue
+        try:
+            raw = client.call("GetSystemInstanceList")
+        except CollectorError:
+            raw = [{"hostname": props.get("SAPLOCALHOST") or db_host, "instanceNr": nr, "features": "HDB",
+                    "dispstatus": "SAPControl-GRAY"}]
+        instances = [{"hostname": (i.get("hostname") or "").lower(), "instance_nr": str(i.get("instanceNr", "")).zfill(2),
+                      "instance_name": f"HDB{str(i.get('instanceNr', '')).zfill(2)}", "role": "HANA", "role_source": "features",
+                      "features": i.get("features", ""), "http_port": int(i.get("httpPort") or 0) or None,
+                      "https_port": int(i.get("httpsPort") or 0) or None, "start_priority": i.get("startPriority"),
+                      "status": (i.get("dispstatus") or "").replace("SAPControl-", "") or "GRAY"} for i in raw]
+        hana_sid = (props.get("SAPSYSTEMNAME") or "").upper()
+        return {"host": db_host, "port": port, "instance_nr": nr, "sid": hana_sid, "use_tls": use_tls,
+                "verify_tls": verify_tls, "suggested_user": f"{hana_sid.lower()}adm" if hana_sid else None,
+                "instances": instances}
+    raise DiscoveryError(f"No HANA sapstartsrv (HDB<NN>) answered on {db_host}")
 
 
 # ----------------------------------------------------------------------------- register
@@ -459,6 +491,27 @@ def register(data: dict) -> dict:
     except CollectorError as exc:
         raise DiscoveryError(f"Collector: {exc}") from exc
     created_collectors = [sc]
+    db_ctl = data.get("db_control")
+    if db_ctl and found.get("hana_instance"):
+        hi = found["hana_instance"]
+        upsert_instances(system["id"], hi["instances"])
+        with get_db() as connection:
+            existing_db = connection.execute(select(collectors).where(collectors.c.system_id == system["id"],
+                                                                      collectors.c.type == "hana_sapcontrol")).mappings().first()
+        cfg = {"host": hi["host"], "port": hi["port"], "use_tls": hi["use_tls"], "verify_tls": hi["verify_tls"],
+               "username": db_ctl.get("username") or hi.get("suggested_user"),
+               "interval_seconds": int(data.get("interval_seconds") or 300)}
+        try:
+            if existing_db:
+                changes = dict(cfg)
+                if db_ctl.get("password"):
+                    changes["password"] = db_ctl["password"]
+                created_collectors.append(runner.update_collector(existing_db["id"], changes))
+            else:
+                created_collectors.append(runner.create(system["id"], {"type": "hana_sapcontrol", **cfg,
+                                                                       "password": db_ctl.get("password")}))
+        except CollectorError as exc:
+            raise DiscoveryError(f"HANA instance collector: {exc}") from exc
     hana_cfg = data.get("hana")
     if hana_cfg and hana_cfg.get("host"):
         try:

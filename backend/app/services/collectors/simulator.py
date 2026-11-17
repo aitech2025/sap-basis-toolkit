@@ -71,7 +71,26 @@ def sim_kind(sid: str) -> str:
     return "s4"
 
 
+def is_db_seed(seed: str) -> bool:
+    return seed.startswith(SIM_HOST + "-") and seed.endswith("-db")
+
+
+def db_host_for(sid: str) -> str:
+    return f"{SIM_HOST}-{sid.lower()}-db"
+
+
+def db_running(app_seed: str) -> bool | None:
+    """State of the simulated HANA belonging to an application seed (None: never contacted)."""
+    db_seed = f"{app_seed}-db"
+    if db_seed not in _STATE:
+        return None
+    return all(v == "GREEN" for v in _state(db_seed, False)["status"].values())
+
+
 def _layout(seed: str, java: bool) -> list[dict]:
+    if is_db_seed(seed):
+        sid = sim_sid(seed)
+        return [{"nr": "00", "hostname": f"hdb{sid.lower()}", "name": "HDB00", "features": "HDB|HDB_WORKER", "prio": "0.3"}]
     p = profile(seed)
     central = "SCS" if java else "ASCS"
     rows = [
@@ -88,7 +107,8 @@ def _state(seed: str, java: bool) -> dict:
     with _STATE_LOCK:
         if seed not in _STATE:
             p = profile(seed)
-            down_nr = f"{p['instances'] - 1:02d}" if p["fragile"] and _rng(f"{seed}:down").random() < 0.5 else None
+            down_nr = (f"{p['instances'] - 1:02d}" if p["fragile"] and not is_db_seed(seed)
+                       and _rng(f"{seed}:down").random() < 0.5 else None)
             _STATE[seed] = {"layout": _layout(seed, java),
                             "status": {row["nr"]: ("GRAY" if row["nr"] == down_nr else "GREEN") for row in _layout(seed, java)},
                             "pending": []}
@@ -139,7 +159,7 @@ def sapcontrol_transport(seed: str, java: bool = False):
     p = profile(seed)
     named = seed.startswith(SIM_HOST + "-")
     sid = sim_sid(seed) if named else "SIM"
-    kind = "java" if java else sim_kind(sid if named else "S4")
+    kind = "hana" if is_db_seed(seed) else ("java" if java else sim_kind(sid if named else "S4"))
     java = java or kind == "java"
 
     def transport(endpoint, method: str, body: str) -> str:
@@ -163,14 +183,15 @@ def sapcontrol_transport(seed: str, java: bool = False):
                  "httpsPort": int(f"5{x['nr']}14"), "startPriority": x["prio"], "features": x["features"],
                  "dispstatus": f"SAPControl-{state['status'][x['nr']]}"} for x in state["layout"]]))
         if method == "GetInstanceProperties":
-            props = [("SAPSYSTEMNAME", sid), ("SAPSYSTEM", instance_nr), ("INSTANCE_NAME", row["name"]),
+            props = [("SAPSYSTEMNAME", f"{sid[:2]}H" if kind == "hana" else sid), ("SAPSYSTEM", instance_nr), ("INSTANCE_NAME", row["name"]),
                      ("SAPLOCALHOST", row["hostname"]), ("StartPriority", row["prio"])]
             return _envelope(method, "<properties>" + "".join(
                 f"<item><property>{k}</property><propertytype>Attribute</propertytype><value>{v}</value></item>" for k, v in props)
                 + "</properties>")
         if method == "ParameterValue":
             name = body.split("<parameter>", 1)[1].split("</parameter>", 1)[0] if "<parameter>" in body else ""
-            value = {"dbms/type": DBMS.get(kind, "hdb"), "SAPDBHOST": f"hdb{sid.lower()}",
+            value = {"dbms/type": DBMS.get(kind, "hdb"),
+                     "SAPDBHOST": db_host_for(sid) if named and DBMS.get(kind, "hdb") == "hdb" else f"db{sid.lower()}",
                      "SAPSYSTEMNAME": sid}.get(name, "")
             return _envelope(method, f"<value>{value}</value>")
         if method == "ABAPGetComponentList":
@@ -179,8 +200,14 @@ def sapcontrol_transport(seed: str, java: bool = False):
             return _envelope(method, _items("component", [
                 {"component": c, "release": rel, "patchlevel": pl, "componenttype": "S", "description": c}
                 for c, rel, pl in COMPONENTS.get(kind, COMPONENTS["s4"])]))
+        # Application servers cannot connect when the (simulated) database is down: they end RED.
+        db_down = named and kind not in ("hana",) and db_running(seed) is False
+        app_target = "RED" if db_down and ("ABAP" in row["features"] or "J2EE" in row["features"]) else "GREEN"
         if method in ("Start", "Stop", "RestartInstance"):
-            steps = {"Start": [(3, "GREEN")], "Stop": [(3, "GRAY")], "RestartInstance": [(2, "GRAY"), (5, "GREEN")]}[method]
+            steps = {"Start": [(3, app_target)], "Stop": [(3, "GRAY")],
+                     "RestartInstance": [(2, "GRAY"), (5, app_target)]}[method]
+            if kind == "hana":
+                steps = {"Start": [(6, "GREEN")], "Stop": [(4, "GRAY")], "RestartInstance": [(4, "GRAY"), (10, "GREEN")]}[method]
             _schedule(seed, java, [instance_nr], steps)
             return _envelope(method, "")
         if method in ("StartSystem", "StopSystem", "RestartSystem"):
@@ -198,7 +225,10 @@ def sapcontrol_transport(seed: str, java: bool = False):
                 _schedule(seed, java, central, [(4, "GRAY"), (6, "GREEN")])
             return _envelope(method, "")
         if method == "GetProcessList":
-            if "MESSAGESERVER" in row["features"]:
+            if kind == "hana":
+                procs = [("hdbdaemon", "HDB Daemon"), ("hdbnameserver", "HDB Nameserver"), ("hdbindexserver", "HDB Indexserver-" + sid[:2] + "H"),
+                         ("hdbcompileserver", "HDB Compileserver"), ("hdbpreprocessor", "HDB Preprocessor"), ("hdbwebdispatcher", "HDB Web Dispatcher")]
+            elif "MESSAGESERVER" in row["features"]:
                 procs = [("msg_server", "MessageServer"), ("enq_server", "Enqueue Server 2")]
             elif "ENQREP" in row["features"]:
                 procs = [("enq_replicator", "Enqueue Replicator 2")]
@@ -265,7 +295,16 @@ class SimulatedHana:
         self.now = datetime.now(timezone.utc)
 
     def query(self, name: str, sql: str, params: tuple = ()) -> list[dict]:
+        if is_db_seed(self.seed) and self.seed in _STATE and not all(
+                v == "GREEN" for v in _state(self.seed, False)["status"].values()):
+            raise ConnectionError("Connection refused: SAP HANA is not running")
         r, p, now = self.r, self.p, self.now
+        if name == "ping":
+            return [{"OK": 1}]
+        if name == "pending_updates":
+            return [{"N": 0}]
+        if name == "running_jobs":
+            return [{"N": r.randint(0, 3)}]
         gb = 1024 ** 3
         if name == "version":
             return [{"VERSION": "2.00.079.00.1720500000"}]

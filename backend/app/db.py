@@ -400,7 +400,7 @@ system_operations = Table(
     Column("id", Integer, primary_key=True, autoincrement=True),
     SYSTEM_FK(),
     Column("action", String(10), nullable=False),        # start | stop | restart
-    Column("scope", String(10), nullable=False),         # system | instance
+    Column("scope", String(10), nullable=False),         # system (SAP + DB) | app | db | instance
     Column("options", String(40)),                       # system scope: ALL | ABAP | J2EE | SCS | DIALOG ...
     Column("hostname", String(253)),
     Column("instance_nr", String(2)),
@@ -411,6 +411,10 @@ system_operations = Table(
     Column("message", Text),
     Column("progress", Text),                            # JSON list of {at, instances:{name: status}}
     Column("maintenance_window_id", Integer),
+    Column("steps", Text),                               # JSON procedure steps (checks, manual confirmations, actions)
+    Column("checklist", Text),                           # JSON manual confirmations given with the request
+    Column("force", Boolean),                            # proceed despite blocking pre-checks
+    Column("abort_requested", Boolean),
     Column("started_at", DateTime(timezone=True), nullable=False),
     Column("finished_at", DateTime(timezone=True)),
 )
@@ -469,6 +473,7 @@ Index("ix_topology_links_target", topology_links.c.target_asset_id)
 ADDED_COLUMNS = {
     "targets": [("system_id", "INTEGER REFERENCES sap_systems(id) ON DELETE SET NULL")],
     "sap_systems": [("timezone", "VARCHAR(64)"), ("control_enabled", "BOOLEAN")],
+    "system_operations": [("steps", "TEXT"), ("checklist", "TEXT"), ("force", "BOOLEAN"), ("abort_requested", "BOOLEAN")],
 }
 
 _engine: Engine | None = None

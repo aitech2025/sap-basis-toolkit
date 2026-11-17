@@ -16,7 +16,8 @@ from ..tabular import parse_sap_datetime
 from . import CollectorError, hana, node_exporter, sapcontrol, simulator, validate_port
 
 logger = logging.getLogger(__name__)
-TYPES = ("sapcontrol", "hana", "node_exporter")
+TYPES = ("sapcontrol", "hana", "hana_sapcontrol", "node_exporter")
+# hana_sapcontrol: the HANA instance's own sapstartsrv (5<NN>13/14, <hanasid>adm) for DB availability and start/stop.
 
 
 def _iso(value):
@@ -49,7 +50,7 @@ def validate(data: dict) -> None:
         if not config.SIMULATOR_ENABLED:
             raise CollectorError("The demo simulator is disabled (SIMULATOR_ENABLED=false)")
     else:
-        validate_port(data["type"], int(data["port"]))
+        validate_port("sapcontrol" if data["type"] == "hana_sapcontrol" else data["type"], int(data["port"]))
     if data["type"] == "hana" and not simulator.is_sim(data["host"]) and not data.get("username"):
         raise CollectorError("HANA collectors need a database user")
     if data["type"] == "node_exporter" and simulator.is_sim(data["host"]):
@@ -163,14 +164,53 @@ def _run_sapcontrol(row: dict, system: dict, persist: bool) -> tuple[dict, dict]
     return {"metrics": metrics, "summary": summary}, {"diagnostics": raw["diagnostics"]}
 
 
+def sapcontrol_client(row: dict, system: dict) -> sapcontrol.SapControlClient:
+    endpoint = sapcontrol.Endpoint(row["host"], row["port"], bool(row["use_tls"]), bool(row["verify_tls"]),
+                                   row["username"], vault.decrypt(row["password_enc"]))
+    transport = (simulator.sapcontrol_transport(simulator.seed_for(row["host"], _seed(system)), java=system["stack"] == "JAVA")
+                 if simulator.is_sim(row["host"]) else sapcontrol.http_transport)
+    return sapcontrol.SapControlClient(endpoint, transport)
+
+
+def hana_client(row: dict, system: dict):
+    """SQL client for a 'hana' collector row (simulated for simulator hosts)."""
+    if simulator.is_sim(row["host"]):
+        return simulator.SimulatedHana(simulator.seed_for(row["host"], _seed(system)))
+    return hana.HanaClient(row["host"], row["port"], row["username"] or "", vault.decrypt(row["password_enc"]) or "",
+                           bool(row["use_tls"]), bool(row["verify_tls"]))
+
+
+def _run_hana_sapcontrol(row: dict, system: dict, persist: bool) -> tuple[dict, dict]:
+    """HANA instance availability from the database's own sapstartsrv."""
+    client = sapcontrol_client(row, system)
+    raw = client.call("GetSystemInstanceList")
+    if not raw:
+        raise CollectorError("GetSystemInstanceList returned no HANA instances")
+    diagnostics, instances = [], []
+    for inst in raw:
+        name = f"{(inst.get('hostname') or '').lower()}_{str(inst.get('instanceNr', '')).zfill(2)}"
+        status = (inst.get("dispstatus") or "").replace("SAPControl-", "")
+        entry = {"hostname": (inst.get("hostname") or "").lower(), "instance_nr": str(inst.get("instanceNr", "")).zfill(2),
+                 "features": inst.get("features", ""), "status": status}
+        try:
+            procs = client.call("GetProcessList", endpoint=client.instance_endpoint(inst))
+            entry["processes"] = [{"name": p.get("name"), "status": (p.get("dispstatus") or "").replace("SAPControl-", "")} for p in procs]
+            diagnostics.append({"instance": name, "call": "GetProcessList", "ok": True, "rows": len(procs)})
+        except CollectorError as exc:
+            diagnostics.append({"instance": name, "call": "GetProcessList", "ok": False, "error": str(exc)})
+        instances.append(entry)
+    down = sum(1 for i in instances if i["status"] != "GREEN")
+    metrics = {"hana.system_up": 0.0 if down else 1.0, "hana.instances_down": float(down)}
+    if persist:
+        from .. import discovery
+        discovery.sync_from_collection(system["id"], instances, force_role="HANA")
+    return {"metrics": metrics, "summary": {"hana_instances": len(instances), "hana_down": down}}, {"diagnostics": diagnostics}
+
+
 def _run_hana(row: dict, system: dict, persist: bool) -> tuple[dict, dict]:
     zone = system_zone(system)
-    if simulator.is_sim(row["host"]):
-        client, source = simulator.SimulatedHana(simulator.seed_for(row["host"], _seed(system))), "simulator"
-    else:
-        client = hana.HanaClient(row["host"], row["port"], row["username"] or "", vault.decrypt(row["password_enc"]) or "",
-                                 bool(row["use_tls"]), bool(row["verify_tls"]))
-        source = "hana"
+    client = hana_client(row, system)
+    source = "simulator" if simulator.is_sim(row["host"]) else "hana"
     try:
         raw = hana.collect(client, row["abap_schema"], zone)
     finally:
@@ -241,12 +281,16 @@ def _run_node_exporter(row: dict, system: dict, persist: bool) -> tuple[dict, di
     return {"metrics": metrics, "summary": summary}, {"diagnostics": [{"call": "GET /metrics", "ok": True, "signals": sorted(metrics)}]}
 
 
+RUNNERS = {"sapcontrol": _run_sapcontrol, "hana": _run_hana, "hana_sapcontrol": _run_hana_sapcontrol,
+           "node_exporter": _run_node_exporter}
+
+
 def run(collector_id: int, persist: bool = True) -> dict:
     """Run one collector now. With persist=False it is a connection test (nothing stored or alerted)."""
     row = get(collector_id)
     system = _system(row["system_id"])
     started = time.monotonic()
-    runner = {"sapcontrol": _run_sapcontrol, "hana": _run_hana, "node_exporter": _run_node_exporter}[row["type"]]
+    runner = RUNNERS[row["type"]]
     try:
         result, details = runner(row, system, persist)
         status, error = "ok", None
@@ -283,7 +327,7 @@ def test_connection(system_id: int, data: dict) -> dict:
     validate(data)
     system = _system(system_id)
     row = {**data, "id": 0, "system_id": system_id, "password_enc": vault.encrypt(data.get("password"))}
-    runner = {"sapcontrol": _run_sapcontrol, "hana": _run_hana, "node_exporter": _run_node_exporter}[data["type"]]
+    runner = RUNNERS[data["type"]]
     started = time.monotonic()
     try:
         result, details = runner(row, system, persist=False)

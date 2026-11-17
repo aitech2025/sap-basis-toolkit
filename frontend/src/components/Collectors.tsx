@@ -8,18 +8,21 @@ const DEFAULTS = {
   sapcontrol: { port: 50014, interval_seconds: 120, username: "", abap_schema: "" },
   hana: { port: 30015, interval_seconds: 300, username: "", abap_schema: "SAPHANADB" },
   node_exporter: { port: 9100, interval_seconds: 60, username: "", abap_schema: "", use_tls: false, verify_tls: false },
+  hana_sapcontrol: { port: 50013, interval_seconds: 120, username: "", abap_schema: "", use_tls: false, verify_tls: false },
 };
+type CollectorType = keyof typeof DEFAULTS;
+const TYPE_LABEL: Record<string, string> = { sapcontrol: "SAP Start Service", hana: "HANA SQL", hana_sapcontrol: "HANA instance (sapcontrol)", node_exporter: "node_exporter" };
 
 export function CollectorsCard({ system }: { system: SystemDetail }) {
   const { can } = useSession();
   const { data, error, reload } = useAsync(() => api.collectors(system.id), [system.id]);
-  const [type, setType] = useState<"sapcontrol" | "hana" | "node_exporter">("sapcontrol");
+  const [type, setType] = useState<CollectorType>("sapcontrol");
   const [form, setForm] = useState({ host: system.host ?? "", port: 50014, use_tls: true, verify_tls: true, username: "",
                                      password: "", abap_schema: "", interval_seconds: 120 });
   const [message, setMessage] = useState<{ ok: boolean; text: string; details?: string[] } | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
 
-  const pickType = (t: "sapcontrol" | "hana" | "node_exporter") => {
+  const pickType = (t: CollectorType) => {
     setType(t);
     setForm({ ...form, ...DEFAULTS[t] });
   };
@@ -51,7 +54,7 @@ export function CollectorsCard({ system }: { system: SystemDetail }) {
       {data && !data.length && <Empty>No collectors yet — data comes only from uploads until you add one.</Empty>}
       {!!data?.length && (
         <DataTable<Collector> rows={data} rowKey={(c) => c.id} columns={[
-          { key: "type", label: "Type", render: (c) => <><strong>{c.type === "sapcontrol" ? "SAP Start Service" : c.type === "hana" ? "HANA SQL" : "node_exporter"}</strong>{c.simulated && <span className="tag">demo</span>}</> },
+          { key: "type", label: "Type", render: (c) => <><strong>{TYPE_LABEL[c.type] ?? c.type}</strong>{c.simulated && <span className="tag">demo</span>}</> },
           { key: "host", label: "Endpoint", render: (c) => <code>{c.use_tls ? "https" : "http"}://{c.host}:{c.port}</code> },
           { key: "user", label: "User", render: (c) => c.username ? `${c.username}${c.has_password ? " (password set)" : ""}` : <span className="muted">–</span> },
           { key: "abap_schema", label: "ABAP schema", render: (c) => c.abap_schema ?? "–" },
@@ -100,16 +103,17 @@ export function CollectorsCard({ system }: { system: SystemDetail }) {
           <h3>Add collector</h3>
           <div className="form-grid">
             <label className="field"><span>Type</span>
-              <select value={type} onChange={(e) => pickType(e.target.value as "sapcontrol" | "hana" | "node_exporter")}>
+              <select value={type} onChange={(e) => pickType(e.target.value as CollectorType)}>
                 <option value="sapcontrol">SAP Start Service (sapcontrol)</option>
                 <option value="hana" disabled={system.database !== "HANA"}>HANA SQL{system.database !== "HANA" ? " (HANA systems only)" : ""}</option>
+                <option value="hana_sapcontrol" disabled={system.database !== "HANA"}>HANA instance — sapcontrol of HDB&lt;NN&gt; (DB availability + start/stop)</option>
                 <option value="node_exporter">Host metrics (Prometheus node_exporter)</option>
               </select></label>
             <label className="field"><span>Host</span><input required value={form.host} onChange={(e) => setForm({ ...form, host: e.target.value })} placeholder={type === "hana" ? "hdb.corp.example.com" : "sapascs.corp.example.com"} />
               <small>Use "simulator" for demo data when enabled on the server.</small></label>
             <label className="field"><span>Port</span><input type="number" required value={form.port} onChange={(e) => setForm({ ...form, port: Number(e.target.value) })} />
-              <small>{type === "sapcontrol" ? "5<NN>13 HTTP / 5<NN>14 HTTPS" : type === "hana" ? "3<NN>15 tenant / 3<NN>13 SYSTEMDB" : "9100 (node_exporter)"}</small></label>
-            {type !== "node_exporter" && <><label className="field"><span>{type === "sapcontrol" ? "OS user (<sid>adm)" : "Database user"}</span><input value={form.username} autoComplete="off" onChange={(e) => setForm({ ...form, username: e.target.value })} placeholder={type === "hana" ? "MONITORING_RO" : "s4padm"} /></label>
+              <small>{type === "hana" ? "3<NN>15 tenant / 3<NN>13 SYSTEMDB" : type === "node_exporter" ? "9100 (node_exporter)" : "5<NN>13 HTTP / 5<NN>14 HTTPS" + (type === "hana_sapcontrol" ? " of the HDB instance" : "")}</small></label>
+            {type !== "node_exporter" && <><label className="field"><span>{type === "hana" ? "Database user" : type === "hana_sapcontrol" ? "OS user (<hanasid>adm)" : "OS user (<sid>adm)"}</span><input value={form.username} autoComplete="off" onChange={(e) => setForm({ ...form, username: e.target.value })} placeholder={type === "hana" ? "MONITORING_RO" : "s4padm"} /></label>
             <label className="field"><span>Password</span><input type="password" autoComplete="new-password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} /><small>Stored encrypted; never shown again.</small></label></>}
             {type === "node_exporter" && <p className="muted small">No credentials are sent. Restrict port 9100 to Sentinel or expose it through a trusted TLS reverse proxy.</p>}
             {type === "hana" && <label className="field"><span>ABAP schema (optional)</span><input value={form.abap_schema} onChange={(e) => setForm({ ...form, abap_schema: e.target.value.toUpperCase() })} placeholder="SAPHANADB" /><small>Enables dumps, RFC, IDoc, job and import monitors.</small></label>}
