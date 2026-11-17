@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { api } from "../api";
-import { Card, DataTable, ErrorBanner, Pill, Tile, fmtDate, useAsync } from "../components/ui";
+import { DataTable, ErrorBanner, Pill, fmtDate, useAsync } from "../components/ui";
 import type { Incident } from "../types";
 
 export const ago = (iso: string | null | undefined) => {
@@ -42,7 +42,7 @@ export default function Incidents() {
   const rows = (data ?? []).filter((incident) => {
     const needle = query.trim().toLowerCase();
     if (!needle) return true;
-    return [incident.title, incident.sid, incident.landscape, incident.module, incident.metric, incident.assignee]
+    return [incident.title, incident.sid, incident.landscape, incident.metric, incident.assignee]
       .some((value) => String(value ?? "").toLowerCase().includes(needle));
   }).sort((a, b) => {
     const rank: Record<string, number> = { critical: 0, warning: 1, info: 2 };
