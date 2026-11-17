@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { api } from "../api";
 import { SystemForm } from "../components/SystemForm";
+import { RequireRole } from "../components/session";
 import { Card, DataTable, ErrorBanner, Pill, useAsync } from "../components/ui";
 import type { SapSystem } from "../types";
 
@@ -24,7 +25,10 @@ export default function Systems() {
     <>
       <div className="page-head">
         <div><h1>Systems</h1><p>Register ECC, S/4HANA, BW, NetWeaver ABAP/Java and other SAP systems.</p></div>
-        <button className="btn primary" onClick={() => setParams({ new: "1" })}>Add system</button>
+        <div className="actions">
+          <RequireRole role="admin"><Link className="btn primary" to="/discover">Discover from host</Link></RequireRole>
+          <button className="btn" onClick={() => setParams({ new: "1" })}>Add manually</button>
+        </div>
       </div>
       <ErrorBanner error={error || catalogue.error} />
       <Card>

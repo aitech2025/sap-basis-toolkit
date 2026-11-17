@@ -69,6 +69,12 @@ Endpoint TLS discovery sees only certificates presented during a network handsha
 - **Incidents (`services/incidents.py`):** built-in plus scoped rules; evaluation per collector run (open/escalate/de-escalate/auto-resolve); module alerts mapped to incidents; maintenance windows suppress notifications; PagerDuty trigger/resolve.
 - **Health:** the overview health of each system is the worst of live availability, open incidents, certificates, capacity forecast, jobs, locks and the last import. Stale data is ignored.
 
+## Discovery and lifecycle control (v1.1)
+
+- **Discovery (`services/discovery.py`):** policy check → parallel TCP probe of `5<NN>13/14` → `GetInstanceProperties` + `GetSystemInstanceList` → role classification (instance name, then features) → `ParameterValue(dbms/type)` and `ABAPGetComponentList` for database and product → `AccessCheck`. `register` rescans on the server, then upserts `sap_systems`, `sap_instances` (manual roles are kept) and collectors, and runs the first collection. The sapcontrol collector re-syncs `sap_instances` on every run.
+- **Control (`services/control.py`):** `system_operations` rows, one running per system (409 otherwise). A worker thread issues `StartSystem`/`StopSystem`/`RestartSystem` (with options) or the instance-level `Start`/`Stop`/`RestartInstance`, then polls `GetSystemInstanceList` until the goal state, RED, or timeout. Startup marks orphaned operations `interrupted`. Authorization: `/discovery/*` and `POST …/control` are admin; per-system `control_enabled` (NULL = on except PRD) can only be changed by admins.
+- **Simulator:** `simulator-<sid>` hosts keep per-host state (ASCS/SCS, ERS, PAS/AAS) and answer the discovery and control methods with timed state transitions.
+
 ## UI
 
 React 18 + TypeScript + Vite in `frontend/`. `npm run build` emits into `backend/app/static`; FastAPI serves assets and falls back to `index.html` for client-side routes (never for `/api/*`). The Docker image builds the UI in a Node stage. No UI component library; single-series charts are hand-built SVG with hover tooltips and a data-table fallback.

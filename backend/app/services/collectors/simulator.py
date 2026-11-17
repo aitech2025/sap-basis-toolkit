@@ -5,6 +5,8 @@ per system and per 5-minute bucket so charts and incidents behave like a live la
 enable in production: the data is fake.
 """
 import random
+import threading
+import time
 from datetime import datetime, timedelta, timezone
 from xml.sax.saxutils import escape
 
@@ -33,38 +35,186 @@ def profile(seed: str) -> dict:
     return {"busy": r.random(), "fragile": r.random() < 0.35, "instances": 2 + r.randint(0, 1)}
 
 
+_STATE: dict[str, dict] = {}
+_STATE_LOCK = threading.Lock()
+# Seconds for simulated state transitions; tests shrink this.
+TRANSITION_SCALE = 1.0
+
+
+def is_sim(host: str | None) -> bool:
+    """'simulator' or 'simulator-<sid>' (the SID variant drives discovery demos)."""
+    return bool(host) and (host == SIM_HOST or host.startswith(SIM_HOST + "-"))
+
+
+def seed_for(host: str, system_seed: str) -> str:
+    """Named simulator hosts keep one identity across discovery and collection."""
+    return host.lower() if host.startswith(SIM_HOST + "-") else system_seed
+
+
+def reset_state() -> None:
+    with _STATE_LOCK:
+        _STATE.clear()
+
+
+def sim_sid(host: str) -> str:
+    return host.split("-", 1)[1].upper()[:3] if "-" in host else "SIM"
+
+
+def sim_kind(sid: str) -> str:
+    """Product family the simulated SID pretends to be."""
+    if sid.startswith(("EP", "PI", "J")):
+        return "java"
+    if sid.startswith("EC"):
+        return "ecc"
+    if sid.startswith("BW"):
+        return "bw4"
+    return "s4"
+
+
+def _layout(seed: str, java: bool) -> list[dict]:
+    p = profile(seed)
+    central = "SCS" if java else "ASCS"
+    rows = [
+        {"nr": "10", "hostname": f"sap{central.lower()}", "name": f"{central}10", "features": "MESSAGESERVER|ENQUE", "prio": "1"},
+        {"nr": "11", "hostname": "sapers", "name": "ERS11", "features": "ENQREP", "prio": "0.5"},
+    ]
+    for i in range(p["instances"]):
+        rows.append({"nr": f"{i:02d}", "hostname": f"sapapp{i + 1}", "name": f"{'J' if java else 'D'}{i:02d}",
+                     "features": "J2EE|IGS" if java else "ABAP|GATEWAY|ICMAN|IGS", "prio": "3"})
+    return rows
+
+
+def _state(seed: str, java: bool) -> dict:
+    with _STATE_LOCK:
+        if seed not in _STATE:
+            p = profile(seed)
+            down_nr = f"{p['instances'] - 1:02d}" if p["fragile"] and _rng(f"{seed}:down").random() < 0.5 else None
+            _STATE[seed] = {"layout": _layout(seed, java),
+                            "status": {row["nr"]: ("GRAY" if row["nr"] == down_nr else "GREEN") for row in _layout(seed, java)},
+                            "pending": []}
+        state = _STATE[seed]
+        now = time.monotonic()
+        due = sorted((e for e in state["pending"] if e[0] <= now), key=lambda e: e[0])
+        for _, nr, status in due:
+            state["status"][nr] = status
+        state["pending"] = [e for e in state["pending"] if e[0] > now]
+        return state
+
+
+def _schedule(seed: str, java: bool, nrs: list[str], steps: list[tuple[float, str]]) -> None:
+    state = _state(seed, java)
+    with _STATE_LOCK:
+        now = time.monotonic()
+        state["pending"] = [e for e in state["pending"] if e[1] not in nrs]
+        for nr in nrs:
+            state["status"][nr] = "YELLOW"
+            for delay, status in steps:
+                state["pending"].append((now + delay * TRANSITION_SCALE, nr, status))
+
+
+def _option_targets(layout: list[dict], body: str) -> list[str]:
+    option = body.split("<options>", 1)[1].split("</options>", 1)[0] if "<options>" in body else "SAPControl-ALL-INSTANCES"
+    def has(row, feats):
+        return bool(set(row["features"].split("|")) & feats)
+    selectors = {
+        "SAPControl-ALL-INSTANCES": lambda r: True,
+        "SAPControl-SCS-INSTANCES": lambda r: has(r, {"MESSAGESERVER", "ENQUE", "ENQREP"}),
+        "SAPControl-DIALOG-INSTANCES": lambda r: has(r, {"ABAP", "J2EE"}),
+        "SAPControl-ABAP-INSTANCES": lambda r: has(r, {"ABAP"}),
+        "SAPControl-J2EE-INSTANCES": lambda r: has(r, {"J2EE"}),
+        "SAPControl-ENQREP-INSTANCES": lambda r: has(r, {"ENQREP"}),
+    }
+    return [r["nr"] for r in layout if selectors.get(option, lambda r: True)(r)]
+
+
+COMPONENTS = {
+    "s4": [("SAP_BASIS", "758", "0002"), ("SAP_ABA", "75I", "0002"), ("S4CORE", "108", "0002"), ("SAP_UI", "758", "0004")],
+    "ecc": [("SAP_BASIS", "750", "0027"), ("SAP_ABA", "750", "0027"), ("SAP_APPL", "618", "0024"), ("EA-FIN", "618", "0024")],
+    "bw4": [("SAP_BASIS", "754", "0008"), ("DW4CORE", "200", "0012"), ("SAP_UI", "754", "0007")],
+}
+DBMS = {"s4": "hdb", "ecc": "ora", "bw4": "hdb", "java": "hdb"}
+
+
 def sapcontrol_transport(seed: str, java: bool = False):
     p = profile(seed)
-    # central services on instance 10 (ports 51013/51014), application servers on 00, 01, 02
-    down_nr = p["instances"] - 1 if p["fragile"] and _rng(f"{seed}:down").random() < 0.5 else None
+    named = seed.startswith(SIM_HOST + "-")
+    sid = sim_sid(seed) if named else "SIM"
+    kind = "java" if java else sim_kind(sid if named else "S4")
+    java = java or kind == "java"
 
     def transport(endpoint, method: str, body: str) -> str:
         r = _rng(f"{seed}:{endpoint.port}:{method}")
         now = datetime.now(timezone.utc)
-        instance_nr = int(str(endpoint.port)[1:3])
+        instance_nr = str(endpoint.port)[1:3]
+        state = _state(seed, java)
+        layout = {row["nr"]: row for row in state["layout"]}
+        if instance_nr not in layout:
+            raise ConnectionError(f"Connection refused ({endpoint.host}:{endpoint.port})")
+        row = layout[instance_nr]
+        green = state["status"][instance_nr] == "GREEN"
+        if method in ("Start", "Stop", "RestartInstance", "StartSystem", "StopSystem", "RestartSystem", "AccessCheck") \
+                and not endpoint.username:
+            return _fault("Permission denied")
+        if method == "AccessCheck":
+            return _envelope(method, "")
         if method == "GetSystemInstanceList":
-            rows = [{"hostname": "sapscs" if java else "sapascs", "instanceNr": 10, "httpPort": 51013, "httpsPort": 51014,
-                     "startPriority": "1", "features": "MESSAGESERVER|ENQUE", "dispstatus": "SAPControl-GREEN"}]
-            for i in range(p["instances"]):
-                down = i == down_nr
-                rows.append({"hostname": f"sapapp{i + 1}", "instanceNr": i, "httpPort": int(f"50{i}13"), "httpsPort": int(f"50{i}14"),
-                             "startPriority": "3", "features": "J2EE|IGS" if java else "ABAP|GATEWAY|ICMAN|IGS",
-                             "dispstatus": "SAPControl-GRAY" if down else "SAPControl-GREEN"})
-            return _envelope(method, _items("instance", rows))
+            return _envelope(method, _items("instance", [
+                {"hostname": x["hostname"], "instanceNr": int(x["nr"]), "httpPort": int(f"5{x['nr']}13"),
+                 "httpsPort": int(f"5{x['nr']}14"), "startPriority": x["prio"], "features": x["features"],
+                 "dispstatus": f"SAPControl-{state['status'][x['nr']]}"} for x in state["layout"]]))
+        if method == "GetInstanceProperties":
+            props = [("SAPSYSTEMNAME", sid), ("SAPSYSTEM", instance_nr), ("INSTANCE_NAME", row["name"]),
+                     ("SAPLOCALHOST", row["hostname"]), ("StartPriority", row["prio"])]
+            return _envelope(method, "<properties>" + "".join(
+                f"<item><property>{k}</property><propertytype>Attribute</propertytype><value>{v}</value></item>" for k, v in props)
+                + "</properties>")
+        if method == "ParameterValue":
+            name = body.split("<parameter>", 1)[1].split("</parameter>", 1)[0] if "<parameter>" in body else ""
+            value = {"dbms/type": DBMS.get(kind, "hdb"), "SAPDBHOST": f"hdb{sid.lower()}",
+                     "SAPSYSTEMNAME": sid}.get(name, "")
+            return _envelope(method, f"<value>{value}</value>")
+        if method == "ABAPGetComponentList":
+            if "ABAP" not in row["features"] or not green:
+                return _fault("ABAP component list not available")
+            return _envelope(method, _items("component", [
+                {"component": c, "release": rel, "patchlevel": pl, "componenttype": "S", "description": c}
+                for c, rel, pl in COMPONENTS.get(kind, COMPONENTS["s4"])]))
+        if method in ("Start", "Stop", "RestartInstance"):
+            steps = {"Start": [(3, "GREEN")], "Stop": [(3, "GRAY")], "RestartInstance": [(2, "GRAY"), (5, "GREEN")]}[method]
+            _schedule(seed, java, [instance_nr], steps)
+            return _envelope(method, "")
+        if method in ("StartSystem", "StopSystem", "RestartSystem"):
+            targets = _option_targets(state["layout"], body)
+            central = [n for n in targets if layout[n]["prio"] in ("0.5", "1")]
+            apps = [n for n in targets if n not in central]
+            if method == "StartSystem":
+                _schedule(seed, java, central, [(2, "GREEN")])
+                _schedule(seed, java, apps, [(5, "GREEN")])
+            elif method == "StopSystem":
+                _schedule(seed, java, apps, [(2, "GRAY")])
+                _schedule(seed, java, central, [(4, "GRAY")])
+            else:
+                _schedule(seed, java, apps, [(2, "GRAY"), (8, "GREEN")])
+                _schedule(seed, java, central, [(4, "GRAY"), (6, "GREEN")])
+            return _envelope(method, "")
         if method == "GetProcessList":
-            if instance_nr == 10:
+            if "MESSAGESERVER" in row["features"]:
                 procs = [("msg_server", "MessageServer"), ("enq_server", "Enqueue Server 2")]
+            elif "ENQREP" in row["features"]:
+                procs = [("enq_replicator", "Enqueue Replicator 2")]
             elif java:
                 procs = [("jstart", "J2EE Server"), ("igswd_mt", "IGS Watchdog"), ("icman", "ICM")]
             else:
                 procs = [("disp+work", "Dispatcher"), ("igswd_mt", "IGS Watchdog"), ("gwrd", "Gateway"), ("icman", "ICM")]
-            stopped = instance_nr == down_nr
+            status = state["status"][instance_nr]
+            text = {"GREEN": "Running", "YELLOW": "Starting/stopping", "GRAY": "Stopped", "RED": "Stopped"}[status]
             return _envelope(method, _items("process", [
-                {"name": n, "description": d, "dispstatus": "SAPControl-GRAY" if stopped else "SAPControl-GREEN",
-                 "textstatus": "Stopped" if stopped else "Running",
-                 "starttime": "" if stopped else (now - timedelta(days=12)).strftime("%Y %m %d %H:%M:%S"),
-                 "elapsedtime": "" if stopped else "288:10:02", "pid": "" if stopped else r.randint(1000, 99999)} for n, d in procs]))
+                {"name": n, "description": d, "dispstatus": f"SAPControl-{status}", "textstatus": text,
+                 "starttime": (now - timedelta(days=12)).strftime("%Y %m %d %H:%M:%S") if green else "",
+                 "elapsedtime": "288:10:02" if green else "", "pid": r.randint(1000, 99999) if green else ""} for n, d in procs]))
         if method == "ABAPGetWPTable":
+            if not green:
+                return _fault("DpAttachStartService failed")
             rows, no = [], 0
             for typ, count in (("DIA", 16), ("UPD", 3), ("UP2", 1), ("BTC", 6), ("SPO", 1)):
                 for _ in range(count):
@@ -81,6 +231,8 @@ def sapcontrol_transport(seed: str, java: bool = False):
                     no += 1
             return _envelope(method, _items("workprocess", rows))
         if method == "ABAPReadSyslog":
+            if not green:
+                return _fault("DpAttachStartService failed")
             msgs = [("Information", "Q0I", "Operating system call recv failed (error no. 104)"),
                     ("Error", "AB0", "Run-time error \"TIME_OUT\" occurred"),
                     ("Error", "D01", "Transaction Canceled 00 671 ( ARCHIVE_INFO_NOT_FOUND )"),
@@ -96,6 +248,11 @@ def sapcontrol_transport(seed: str, java: bool = False):
             return _envelope(method, _items("log", rows))
         return _envelope(method, "")
     return transport
+
+
+def _fault(text: str) -> str:
+    return ('<SOAP-ENV:Envelope xmlns:SOAP-ENV="http://schemas.xmlsoap.org/soap/envelope/"><SOAP-ENV:Body><SOAP-ENV:Fault>'
+            f'<faultcode>SOAP-ENV:Server</faultcode><faultstring>{escape(text)}</faultstring></SOAP-ENV:Fault></SOAP-ENV:Body></SOAP-ENV:Envelope>')
 
 
 class SimulatedHana:

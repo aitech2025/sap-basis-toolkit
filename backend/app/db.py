@@ -71,6 +71,7 @@ sap_systems = Table(
     Column("default_client", String(3)),
     Column("description", Text),
     Column("timezone", String(64)),
+    Column("control_enabled", Boolean),   # NULL = default (off for PRD, on otherwise)
     Column("enabled", Boolean, nullable=False, default=True, server_default=true()),
     Column("created_at", DateTime(timezone=True), nullable=False, server_default=text("CURRENT_TIMESTAMP")),
 )
@@ -362,10 +363,50 @@ maintenance_windows = Table(
 )
 Index("ix_maintenance_window", maintenance_windows.c.starts_at, maintenance_windows.c.ends_at)
 
+# ---------------------------------------------------------------- discovery & lifecycle control
+sap_instances = Table(
+    "sap_instances", metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    SYSTEM_FK(),
+    Column("hostname", String(253), nullable=False),
+    Column("instance_nr", String(2), nullable=False),
+    Column("instance_name", String(40)),            # ASCS01, ERS02, D00, DVEBMGS00, J00, HDB00, W00 ...
+    Column("role", String(20), nullable=False),     # ASCS | SCS | ERS | PAS | AAS | JAVA | HANA | WEBDISP | SMDA | GATEWAY | OTHER
+    Column("role_source", String(20), nullable=False, server_default="features"),  # instance_name | features | inferred | manual
+    Column("features", String(200)),
+    Column("http_port", Integer),
+    Column("https_port", Integer),
+    Column("start_priority", String(10)),
+    Column("status", String(10)),                   # green | yellow | red | gray
+    Column("last_seen_at", DateTime(timezone=True)),
+)
+Index("uq_sap_instances", sap_instances.c.system_id, sap_instances.c.hostname, sap_instances.c.instance_nr, unique=True)
+
+system_operations = Table(
+    "system_operations", metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    SYSTEM_FK(),
+    Column("action", String(10), nullable=False),        # start | stop | restart
+    Column("scope", String(10), nullable=False),         # system | instance
+    Column("options", String(40)),                       # system scope: ALL | ABAP | J2EE | SCS | DIALOG ...
+    Column("hostname", String(253)),
+    Column("instance_nr", String(2)),
+    Column("soft_timeout", Integer),
+    Column("reason", Text, nullable=False),
+    Column("requested_by", String(64), nullable=False),
+    Column("status", String(12), nullable=False),        # running | succeeded | failed | timeout | interrupted
+    Column("message", Text),
+    Column("progress", Text),                            # JSON list of {at, instances:{name: status}}
+    Column("maintenance_window_id", Integer),
+    Column("started_at", DateTime(timezone=True), nullable=False),
+    Column("finished_at", DateTime(timezone=True)),
+)
+Index("ix_system_operations", system_operations.c.system_id, system_operations.c.started_at)
+
 # Columns added to pre-existing tables (applied by init_db and Alembic).
 ADDED_COLUMNS = {
     "targets": [("system_id", "INTEGER REFERENCES sap_systems(id) ON DELETE SET NULL")],
-    "sap_systems": [("timezone", "VARCHAR(64)")],
+    "sap_systems": [("timezone", "VARCHAR(64)"), ("control_enabled", "BOOLEAN")],
 }
 
 _engine: Engine | None = None

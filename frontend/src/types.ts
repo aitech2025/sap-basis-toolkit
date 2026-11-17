@@ -38,6 +38,8 @@ export interface SapSystem {
   description: string | null;
   timezone: string | null;
   enabled: boolean;
+  /** null = default (allowed except for PRD). */
+  control_enabled: boolean | null;
   created_at: string;
 }
 
@@ -539,4 +541,85 @@ export interface MonitorDetail {
   latest: MonitorSnapshot | null;
   series: Record<string, { ts: string; value: number }[]>;
   uploadable: boolean;
+}
+
+// ------------------------------------------------------------------ discovery & lifecycle control
+export type InstanceRole = "ASCS" | "SCS" | "ERS" | "PAS" | "AAS" | "JAVA" | "HANA" | "WEBDISP" | "SMDA" | "GATEWAY" | "OTHER";
+
+export interface DiscoveredInstance {
+  hostname: string;
+  instance_nr: string;
+  instance_name: string | null;
+  role: InstanceRole;
+  role_source: "instance_name" | "features" | "inferred" | "manual";
+  features: string;
+  http_port: number | null;
+  https_port: number | null;
+  start_priority: string | null;
+  status: string;
+  reachable?: boolean;
+}
+
+export interface SapInstance extends DiscoveredInstance {
+  id: number;
+  system_id: number;
+  role_label: string;
+  last_seen_at: string | null;
+}
+
+export interface ScanResult {
+  host: string;
+  sid: string;
+  instances: DiscoveredInstance[];
+  stack: string;
+  database: string | null;
+  db_host: string | null;
+  product: string;
+  product_version: string | null;
+  basis_release: string | null;
+  product_evidence: string | null;
+  components: { component: string; release: string; patchlevel: string }[];
+  suggested_environment: string;
+  control_access: boolean | null;
+  collector: { host: string; port: number; use_tls: boolean; verify_tls: boolean; username: string | null };
+  existing_systems: { id: number; sid: string; landscape: string; name: string }[];
+  warnings: string[];
+  scanned_at: string;
+}
+
+export interface RegisterResult {
+  system: SapSystem;
+  created: boolean;
+  instances: SapInstance[];
+  collectors: Collector[];
+  first_runs: { collector_id: number; status: string; error: string | null }[];
+  warnings: string[];
+}
+
+export interface Operation {
+  id: number;
+  system_id: number;
+  action: "start" | "stop" | "restart";
+  scope: "system" | "instance";
+  options: string | null;
+  hostname: string | null;
+  instance_nr: string | null;
+  soft_timeout: number | null;
+  reason: string;
+  requested_by: string;
+  status: "running" | "succeeded" | "failed" | "timeout" | "interrupted";
+  message: string | null;
+  progress: { at: string; instances?: Record<string, string>; error?: string }[];
+  maintenance_window_id: number | null;
+  started_at: string;
+  finished_at: string | null;
+}
+
+export interface ControlStatus {
+  allowed: boolean;
+  reason: string | null;
+  options: string[];
+  running: Operation | null;
+  timeout_seconds: number;
+  database_note: string;
 }

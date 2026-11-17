@@ -7,6 +7,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from . import auth, config
 from .api.auth_routes import public as auth_public_router
 from .api.auth_routes import router as auth_router
+from .api.lifecycle import router as lifecycle_router
 from .api.monitoring import router as monitoring_router
 from .api.routes import router
 from .api.toolkit import router as toolkit_router
@@ -20,6 +21,8 @@ async def lifespan(app: FastAPI):
     auth.bootstrap_admin()
     from .services import incidents
     incidents.seed_builtin_rules()
+    from .services import control
+    control.mark_interrupted()
     yield
 
 
@@ -29,7 +32,7 @@ app = FastAPI(
         "Multi-system SAP Basis toolkit for ECC, S/4HANA, BW, NetWeaver ABAP/Java and more: certificate "
         "monitoring, table growth watchdog, user & license optimizer and transport checker."
     ),
-    version="1.0.0",
+    version="1.1.0",
     lifespan=lifespan,
 )
 app.include_router(auth_public_router)
@@ -37,6 +40,7 @@ app.include_router(auth_router)
 app.include_router(router)
 app.include_router(toolkit_router)
 app.include_router(monitoring_router)
+app.include_router(lifecycle_router)
 
 
 @app.middleware("http")

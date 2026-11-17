@@ -38,19 +38,19 @@ def view(row) -> dict:
     item["last_run_at"] = _iso(row["last_run_at"])
     item["created_at"] = _iso(row["created_at"])
     item["diagnostics"] = json.loads(row["last_details"]) if row["last_details"] else []
-    item["simulated"] = row["host"] == simulator.SIM_HOST
+    item["simulated"] = simulator.is_sim(row["host"])
     return item
 
 
 def validate(data: dict) -> None:
     if data["type"] not in TYPES:
         raise CollectorError(f"type must be one of {', '.join(TYPES)}")
-    if data["host"] == simulator.SIM_HOST:
+    if simulator.is_sim(data["host"]):
         if not config.SIMULATOR_ENABLED:
             raise CollectorError("The demo simulator is disabled (SIMULATOR_ENABLED=false)")
     else:
         validate_port(data["type"], int(data["port"]))
-    if data["type"] == "hana" and data["host"] != simulator.SIM_HOST and not data.get("username"):
+    if data["type"] == "hana" and not simulator.is_sim(data["host"]) and not data.get("username"):
         raise CollectorError("HANA collectors need a database user")
     if data.get("abap_schema") and not hana.SCHEMA_RE.match(data["abap_schema"]):
         raise CollectorError("ABAP schema must be an uppercase identifier, e.g. SAPHANADB")
@@ -122,10 +122,10 @@ def _run_sapcontrol(row: dict, system: dict, persist: bool) -> tuple[dict, dict]
     zone = system_zone(system)
     endpoint = sapcontrol.Endpoint(row["host"], row["port"], bool(row["use_tls"]), bool(row["verify_tls"]),
                                    row["username"], vault.decrypt(row["password_enc"]))
-    transport = (simulator.sapcontrol_transport(_seed(system), java=system["stack"] == "JAVA") if row["host"] == simulator.SIM_HOST
+    transport = (simulator.sapcontrol_transport(simulator.seed_for(row["host"], _seed(system)), java=system["stack"] == "JAVA") if simulator.is_sim(row["host"])
                  else sapcontrol.http_transport)
     raw = sapcontrol.collect(sapcontrol.SapControlClient(endpoint, transport), zone)
-    source = "simulator" if row["host"] == simulator.SIM_HOST else "sapcontrol"
+    source = "simulator" if simulator.is_sim(row["host"]) else "sapcontrol"
     metrics: dict[str, float] = {}
     summary: dict = {}
     data, m, h = monitors.build_availability(raw["instances"])
@@ -133,6 +133,8 @@ def _run_sapcontrol(row: dict, system: dict, persist: bool) -> tuple[dict, dict]
     summary["availability"] = data["summary"]
     if persist:
         monitors.store(system["id"], "availability", source, data, h, raw["collected_at"])
+        from .. import discovery
+        discovery.sync_from_collection(system["id"], raw["instances"])
     if raw["workprocesses"]:
         data, m, h = monitors.build_workprocesses(raw["workprocesses"])
         metrics.update(m)
@@ -150,8 +152,8 @@ def _run_sapcontrol(row: dict, system: dict, persist: bool) -> tuple[dict, dict]
 
 def _run_hana(row: dict, system: dict, persist: bool) -> tuple[dict, dict]:
     zone = system_zone(system)
-    if row["host"] == simulator.SIM_HOST:
-        client, source = simulator.SimulatedHana(_seed(system)), "simulator"
+    if simulator.is_sim(row["host"]):
+        client, source = simulator.SimulatedHana(simulator.seed_for(row["host"], _seed(system))), "simulator"
     else:
         client = hana.HanaClient(row["host"], row["port"], row["username"] or "", vault.decrypt(row["password_enc"]) or "",
                                  bool(row["use_tls"]), bool(row["verify_tls"]))

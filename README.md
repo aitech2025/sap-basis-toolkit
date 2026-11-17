@@ -2,6 +2,8 @@
 
 An end-to-end SAP monitoring and Basis operations platform (SAP Basis Sentinel) with a web UI and REST API. Register every SAP system in your landscape once, from ECC and S/4HANA to BW, CRM, Solution Manager, PI/PO and NetWeaver ABAP or Java. Then:
 
+- **Auto-discovery:** enter a hostname or IP and the `<sid>adm` login. Sentinel finds the SAP Start Service, reads the SID, product, release and database, and maps every instance (ASCS/SCS, ERS, PAS, AAS, Java, Web Dispatcher). It then registers the system and starts monitoring.
+- **Start / stop / restart:** whole systems (in start-priority order) or single instances through sapstartsrv. Includes live progress, SID confirmation, a mandatory reason, an audit trail, an optional maintenance window, and production opt-in.
 - **Live monitoring:** availability, instances and work processes through the SAP Start Service (sapcontrol); HANA memory/CPU/disk, alerts, backups and system replication through read-only HANA SQL; and ABAP short dumps, system log, update errors, tRFC/qRFC and IDocs.
 - **Incident management:** configurable alert rules (global, landscape or system), an incident lifecycle (open → acknowledged → resolved, with assignment, comments and timeline), auto-resolve, maintenance windows, and Slack/Teams/PagerDuty/email notifications.
 - **Basis operations:** certificate expiry, table growth forecasts, user and licence optimisation, transport pre/post checks and landscape routes, background job failures and long-running locks.
@@ -34,8 +36,9 @@ Served by the API at `/` (built into the Docker image):
 
 - **Landscape overview**: every system grouped by landscape with combined health (certificates, capacity forecast, last import).
 - **Landscapes**: each landscape drawn as product lanes (e.g. S/4HANA, BW/4HANA, ECC, Portal) across DEV → QAS → (TRN/PRE) → PRD columns, with the transport routes as arrows. Arrows carry the transport layer and the result of the last import into the target (OK, RC 4 warnings, RC ≥ 8 failed). Hover a system to trace its routes. Branches such as two development tracks or a training system are supported. Routes can be added manually or proposed automatically (*Suggest routes*: one system per tier → DEV → QAS → PRE → PRD).
+- **Discover system**: host + credentials → detected SID, product, database and instance roles → register and monitor.
 - **Systems**: register, filter, edit and delete systems.
-- **System workspace** (opened by clicking any system tile, table row, diagram node or SID link): an *Overview* dashboard of that system with a card per feature (certificates, table growth & capacity, users & licences, transports with its route path, transport history, background jobs, SAP locks), recent alerts and analyses. Each card opens its tab. Tabs: setup and export guide, certificates (endpoints + STRUST/PSE), table growth (trend charts, forecast, housekeeping), users & licences, transports (pre/post checks) and history (summary-only run log + alerts).
+- **System workspace** (opened by clicking any system tile, table row, diagram node or SID link): an *Overview* dashboard of that system with a card per feature (certificates, table growth & capacity, users & licences, transports with its route path, transport history, background jobs, SAP locks), recent alerts and analyses. Each card opens its tab. Tabs include *Instances & control* (instance inventory with roles and status, start/stop/restart, operation history), setup and export guide, certificates (endpoints + STRUST/PSE), table growth (trend charts, forecast, housekeeping), users & licences, transports (pre/post checks) and history (summary-only run log + alerts).
 - **Certificates** and **Alerts**: landscape-wide views.
 
 The API key is entered in *Settings* and kept in browser session storage.

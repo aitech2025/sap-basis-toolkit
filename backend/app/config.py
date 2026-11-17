@@ -98,3 +98,11 @@ HANA_GROWTH_SNAPSHOT_HOURS = int(os.getenv("HANA_GROWTH_SNAPSHOT_HOURS", "24"))
 QUERY_OVERRIDES_FILE = os.getenv("QUERY_OVERRIDES_FILE", "").strip()
 # Demo mode: collectors with host "simulator" produce synthetic data. Never enable in production.
 SIMULATOR_ENABLED = os.getenv("SIMULATOR_ENABLED", "false").lower() == "true"
+
+# --- Discovery & lifecycle control --------------------------------------------------
+DISCOVERY_PROBE_TIMEOUT_SECONDS = float(os.getenv("DISCOVERY_PROBE_TIMEOUT_SECONDS", "0.8"))
+DISCOVERY_MAX_PARALLEL = int(os.getenv("DISCOVERY_MAX_PARALLEL", "48"))
+# Global switch for start/stop/restart from Sentinel (per-system switch also required).
+CONTROL_ENABLED = os.getenv("CONTROL_ENABLED", "true").lower() == "true"
+CONTROL_TIMEOUT_SECONDS = int(os.getenv("CONTROL_TIMEOUT_SECONDS", "1200"))
+CONTROL_POLL_SECONDS = float(os.getenv("CONTROL_POLL_SECONDS", "5"))

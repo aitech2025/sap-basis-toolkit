@@ -11,6 +11,7 @@ import HanaTab from "./system/HanaTab";
 import InterfacesTab from "./system/InterfacesTab";
 import GrowthTab from "./system/GrowthTab";
 import HistoryTab from "./system/HistoryTab";
+import InstancesTab from "./system/InstancesTab";
 import JobsTab from "./system/JobsTab";
 import LocksTab from "./system/LocksTab";
 import OverviewTab from "./system/OverviewTab";
@@ -36,7 +37,7 @@ export default function SystemDetailPage() {
   if (!system || system.id !== id) return <p className="muted">Loading…</p>;
   const abap = system.stack !== "JAVA";
   const tabs = [
-    ["", "Overview"], ["availability", "Availability"],
+    ["", "Overview"], ["instances", "Instances & control"], ["availability", "Availability"],
     ...(abap ? [["errors", "Errors"], ["interfaces", "Interfaces"]] : []),
     ...(system.database === "HANA" ? [["hana", "HANA"]] : []),
     ["certificates", "Certificates"], ["growth", "Table growth"],
@@ -74,6 +75,7 @@ export default function SystemDetailPage() {
       <Routes key={system.id}>
         <Route index element={<OverviewTab system={system} />} />
         <Route path="setup" element={<SetupTab system={system} />} />
+        <Route path="instances" element={<InstancesTab system={system} />} />
         <Route path="availability" element={<AvailabilityTab system={system} />} />
         <Route path="errors" element={<ErrorsTab system={system} />} />
         <Route path="interfaces" element={<InterfacesTab system={system} />} />

@@ -1,13 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api";
 import type { Catalogue, SapSystem, SystemInput } from "../types";
+import { useSession } from "./session";
 import { ErrorBanner } from "./ui";
 
 const TIMEZONES = ["UTC", "Asia/Kolkata", "Asia/Singapore", "Asia/Tokyo", "Asia/Dubai", "Australia/Sydney", "Europe/London",
   "Europe/Berlin", "Europe/Paris", "Europe/Zurich", "America/New_York", "America/Chicago", "America/Los_Angeles", "America/Sao_Paulo"];
 const EMPTY: Partial<SystemInput> = {
   sid: "", name: "", product: "S4HANA", stack: "ABAP", database: "HANA", environment: "DEV", landscape: "default",
-  product_version: "", basis_release: "", license_model: null, host: "", default_client: "", description: "", timezone: "", enabled: true,
+  product_version: "", basis_release: "", license_model: null, host: "", default_client: "", description: "", timezone: "", enabled: true, control_enabled: null,
 };
 
 export function SystemForm({ open, initial, catalogue, landscapes, onClose, onSaved }: {
@@ -19,6 +20,7 @@ export function SystemForm({ open, initial, catalogue, landscapes, onClose, onSa
   onSaved: (s: SapSystem) => void;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
+  const { can } = useSession();
   const [form, setForm] = useState<Partial<SystemInput>>(EMPTY);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -59,6 +61,7 @@ export function SystemForm({ open, initial, catalogue, landscapes, onClose, onSa
       if (["id", "product_label", "effective_license_model", "created_at", "capabilities"].includes(k)) continue;
       (body as Record<string, unknown>)[k] = v === "" ? null : v;
     }
+    if (!can("admin")) delete body.control_enabled;  // admin-only setting
     try {
       const saved = initial ? await api.updateSystem(initial.id, body) : await api.createSystem(body);
       onSaved(saved);
@@ -121,6 +124,13 @@ export function SystemForm({ open, initial, catalogue, landscapes, onClose, onSa
               <small>Time zone SAP reports job, lock and import times in (default UTC).</small></label>
             <label className="field wide"><span>Description</span>
               <textarea rows={2} value={form.description ?? ""} onChange={(e) => set("description", e.target.value)} /></label>
+            {can("admin") && (
+              <label className="field"><span>Start / stop from Sentinel</span>
+                <select value={form.control_enabled === null || form.control_enabled === undefined ? "" : form.control_enabled ? "on" : "off"}
+                        onChange={(e) => set("control_enabled", e.target.value === "" ? null : e.target.value === "on")}>
+                  <option value="">Default (allowed except PRD)</option><option value="on">Allowed</option><option value="off">Not allowed</option>
+                </select></label>
+            )}
             <label className="field" style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
               <input type="checkbox" checked={!!form.enabled} onChange={(e) => set("enabled", e.target.checked)} />
               <span>Monitoring enabled</span></label>

@@ -48,6 +48,15 @@ def parse_items(xml_text: str) -> list[dict]:
     return items
 
 
+def parse_value(xml_text: str) -> str | None:
+    parse_items(xml_text)  # raises on faults
+    root = ET.fromstring(xml_text)
+    for el in root.iter():
+        if _local(el.tag) == "value":
+            return (el.text or "").strip()
+    return None
+
+
 @dataclass
 class Endpoint:
     host: str
@@ -114,6 +123,11 @@ class SapControlClient:
     def call(self, method: str, params: str = "", endpoint: Endpoint | None = None) -> list[dict]:
         body = ENVELOPE.format(body=f"<ns1:{method}>{params}</ns1:{method}>")
         return parse_items(self.transport(endpoint or self.endpoint, method, body))
+
+    def call_value(self, method: str, params: str = "", endpoint: Endpoint | None = None) -> str | None:
+        """Methods that return a scalar (e.g. ParameterValue -> <value>)."""
+        body = ENVELOPE.format(body=f"<ns1:{method}>{params}</ns1:{method}>")
+        return parse_value(self.transport(endpoint or self.endpoint, method, body))
 
     def instance_endpoint(self, instance: dict) -> Endpoint:
         port = int(instance.get("httpsPort") or 0) if self.endpoint.use_tls else int(instance.get("httpPort") or 0)

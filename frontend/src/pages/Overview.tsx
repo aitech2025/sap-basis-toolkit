@@ -58,7 +58,8 @@ export default function OverviewPage() {
             <option value="">All landscapes</option>
             {landscapes.data?.map((l) => <option key={l.landscape} value={l.landscape}>{l.landscape} ({l.systems})</option>)}
           </select>
-          <Link to="/systems?new=1" className="btn primary">Add system</Link>
+          <Link to="/discover" className="btn primary">Discover system</Link>
+          <Link to="/systems?new=1" className="btn">Add manually</Link>
         </div>
       </div>
       <ErrorBanner error={error} />
@@ -72,7 +73,7 @@ export default function OverviewPage() {
         </div>
       )}
       {!loading && data && !data.systems.length && (
-        <Empty>No systems registered yet. <Link to="/systems?new=1">Register your first SAP system</Link> — ECC, S/4HANA, BW, NetWeaver ABAP or Java.</Empty>
+        <Empty>No systems registered yet. <Link to="/discover">Discover your first SAP system</Link> from its host and &lt;sid&gt;adm login, or <Link to="/systems?new=1">add one manually</Link> — ECC, S/4HANA, BW, NetWeaver ABAP or Java.</Empty>
       )}
       {[...groups.entries()].map(([name, list]) => (
         <section className="landscape" key={name}>

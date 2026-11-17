@@ -265,8 +265,8 @@ def current_principal(
     return principal
 
 
-# Paths whose mutations need admin (credentials, rules, users); everything else needs operator.
-ADMIN_WRITE_PREFIXES = ("/api/v1/users", "/api/v1/collectors", "/api/v1/rules")
+# Paths whose mutations need admin (credentials, rules, users, discovery, start/stop); everything else needs operator.
+ADMIN_WRITE_PREFIXES = ("/api/v1/users", "/api/v1/collectors", "/api/v1/rules", "/api/v1/discovery")
 ADMIN_READ_PREFIXES = ("/api/v1/users", "/api/v1/audit")
 
 
@@ -277,7 +277,8 @@ def authorize(request: Request, principal: Principal = Depends(current_principal
     elif path.startswith("/api/v1/collectors/") and path.endswith("/run"):
         needed = "operator"  # running a configured collector now
     else:
-        needed = "admin" if path.startswith(ADMIN_WRITE_PREFIXES) or "/collectors" in path else "operator"
+        needed = "admin" if path.startswith(ADMIN_WRITE_PREFIXES) or "/collectors" in path \
+            or path.endswith("/control") else "operator"
     if not principal.can(needed):
         raise HTTPException(403, f"Your role ({principal.role}) cannot do this; {needed} required")
     return principal

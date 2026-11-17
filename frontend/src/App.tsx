@@ -6,6 +6,7 @@ import Account from "./pages/Account";
 import Alerts from "./pages/Alerts";
 import Audit from "./pages/Audit";
 import Certificates from "./pages/Certificates";
+import Discover from "./pages/Discover";
 import IncidentDetail from "./pages/IncidentDetail";
 import Incidents from "./pages/Incidents";
 import LandscapeDetail from "./pages/LandscapeDetail";
@@ -41,6 +42,7 @@ function Shell() {
         <NavLink to="/incidents">Incidents <IncidentBadge /></NavLink>
         <NavLink to="/landscapes">Landscapes</NavLink>
         <NavLink to="/systems">Systems</NavLink>
+        <RequireRole role="admin"><NavLink to="/discover">Discover system</NavLink></RequireRole>
         <NavLink to="/certificates">Certificates</NavLink>
         <div className="nav-section">Operations</div>
         <NavLink to="/maintenance">Maintenance windows</NavLink>
@@ -65,6 +67,7 @@ function Shell() {
           <Route path="/landscapes" element={<Landscapes />} />
           <Route path="/landscapes/:name" element={<LandscapeDetail />} />
           <Route path="/systems" element={<Systems />} />
+          <Route path="/discover" element={<RequireRole role="admin" fallback={<p className="muted">Discovery needs the admin role.</p>}><Discover /></RequireRole>} />
           <Route path="/systems/:id/*" element={<SystemDetailPage />} />
           <Route path="/certificates" element={<Certificates />} />
           <Route path="/maintenance" element={<Maintenance />} />

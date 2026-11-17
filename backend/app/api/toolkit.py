@@ -72,6 +72,7 @@ class SystemIn(BaseModel):
     timezone: str | None = Field(default=None, max_length=64)
     description: str | None = Field(default=None, max_length=2000)
     enabled: bool = True
+    control_enabled: bool | None = None
 
 
 class SystemPatch(BaseModel):
@@ -90,6 +91,7 @@ class SystemPatch(BaseModel):
     timezone: str | None = Field(default=None, max_length=64)
     description: str | None = Field(default=None, max_length=2000)
     enabled: bool | None = None
+    control_enabled: bool | None = None
 
 
 def _registry_errors(fn, *args):
@@ -121,7 +123,10 @@ def list_landscapes():
 
 
 @router.post("/systems", status_code=201)
-def create_system(payload: SystemIn):
+def create_system(payload: SystemIn, request: Request):
+    principal = getattr(request.state, "principal", None)
+    if payload.control_enabled is not None and not (principal and principal.can("admin")):
+        raise HTTPException(403, "Only admins can change whether start/stop is allowed")
     return _registry_errors(systems.create_system, payload.model_dump())
 
 
@@ -131,7 +136,10 @@ def get_system(system_id: int):
 
 
 @router.patch("/systems/{system_id}")
-def update_system(system_id: int, payload: SystemPatch):
+def update_system(system_id: int, payload: SystemPatch, request: Request):
+    principal = getattr(request.state, "principal", None)
+    if "control_enabled" in payload.model_fields_set and not (principal and principal.can("admin")):
+        raise HTTPException(403, "Only admins can change whether start/stop is allowed")
     return _registry_errors(systems.update_system, system_id, payload.model_dump(exclude_unset=True))
 
 

@@ -27,6 +27,7 @@ class SystemConflict(ValueError):
 def _serialize(row) -> dict:
     item = dict(row)
     item["enabled"] = bool(item["enabled"])
+    item["control_enabled"] = None if item.get("control_enabled") is None else bool(item["control_enabled"])
     if hasattr(item.get("created_at"), "isoformat"):
         item["created_at"] = item["created_at"].isoformat()
     prod = profiles.product(item["product"]) or {}

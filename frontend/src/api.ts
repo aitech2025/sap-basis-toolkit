@@ -1,6 +1,6 @@
 import type {
   AlertEvent, Catalogue, CertificateSummary, GrowthReport, Overview, PostcheckResult, PrecheckResult, Run,
-  AuditEntry, Collector, ImportHistory, Incident, IncidentCounts, JobReport, LockReport, MaintenanceWindow, Me, MonitorDetail, MonitorsResponse, RouteProposal, Rule, RuleMetric, User, SapSystem, SystemDetail, SystemInput, SystemOverviewData, SystemRoutes, Topology, TransportRoute, UserReport,
+  AuditEntry, Collector, ControlStatus, ImportHistory, Operation, RegisterResult, SapInstance, ScanResult, Incident, IncidentCounts, JobReport, LockReport, MaintenanceWindow, Me, MonitorDetail, MonitorsResponse, RouteProposal, Rule, RuleMetric, User, SapSystem, SystemDetail, SystemInput, SystemOverviewData, SystemRoutes, Topology, TransportRoute, UserReport,
 } from "./types";
 
 const KEY_STORAGE = "sapBasisToolkit.apiKey";
@@ -140,6 +140,17 @@ export const api = {
   uploadMonitor: (systemId: number, monitor: string, csv: string) =>
     request<{ health: string; metrics: Record<string, number> }>(`/api/v1/systems/${systemId}/monitors/${monitor}/upload`, { method: "POST", body: csv }),
 
+  discoveryScan: (body: Record<string, unknown>) => request<ScanResult>("/api/v1/discovery/scan", json("POST", body)),
+  discoveryRegister: (body: Record<string, unknown>) => request<RegisterResult>("/api/v1/discovery/register", json("POST", body)),
+  instances: (systemId: number) => request<SapInstance[]>(`/api/v1/systems/${systemId}/instances`),
+  refreshInstances: (systemId: number) => request<SapInstance[]>(`/api/v1/systems/${systemId}/instances/refresh`, { method: "POST" }),
+  setInstanceRole: (systemId: number, instanceId: number, role: string) =>
+    request<SapInstance>(`/api/v1/systems/${systemId}/instances/${instanceId}`, json("PATCH", { role })),
+  instanceRoles: () => request<{ role: string; label: string }[]>("/api/v1/meta/instance-roles"),
+  controlStatus: (systemId: number) => request<ControlStatus>(`/api/v1/systems/${systemId}/control`),
+  control: (systemId: number, body: Record<string, unknown>) => request<Operation>(`/api/v1/systems/${systemId}/control`, json("POST", body)),
+  operations: (systemId: number) => request<Operation[]>(`/api/v1/systems/${systemId}/operations`),
+  operation: (id: number) => request<Operation>(`/api/v1/operations/${id}`),
   health: () => fetch("/health").then((r) => r.ok),
   catalogue: () => request<Catalogue>("/api/v1/meta/catalogue"),
   overview: (landscape?: string) =>

@@ -216,3 +216,18 @@ tr.clickable:focus-visible { outline: 2px solid var(--accent); outline-offset: -
 .collector-form { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--line); }
 .collector-form h3 { margin-bottom: 10px; }
 @media (max-width: 860px) { .timeline li { grid-template-columns: 1fr; gap: 2px; } }
+
+/* discovery & lifecycle control */
+.banner.warn { background: var(--warn-bg); color: var(--warn); }
+ul.plain { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+.role { display: inline-block; min-width: 52px; text-align: center; padding: 1px 6px; border-radius: 5px; font-size: 12px; font-weight: 650;
+  background: var(--accent-soft); color: var(--ink); letter-spacing: .02em; }
+.op-timeline { display: grid; gap: 6px; margin-top: 10px; }
+.op-timeline .step { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 12.5px; }
+.op-timeline time { color: var(--muted); min-width: 70px; font-variant-numeric: tabular-nums; }
+.inst-chip { padding: 1px 6px; border-radius: 5px; background: var(--surface-2); font-size: 12px; }
+.inst-chip.GREEN { color: var(--good); background: var(--good-bg); }
+.inst-chip.YELLOW { color: var(--warn); background: var(--warn-bg); }
+.inst-chip.RED { color: var(--bad); background: var(--bad-bg); }
+.danger-note { color: var(--bad); font-weight: 600; }
+td .actions { flex-wrap: nowrap; gap: 4px; }
