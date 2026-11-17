@@ -66,7 +66,7 @@ def test_topology_rejects_secret_attributes_and_cross_landscape_links(monkeypatc
         cross = client.post("/api/v1/topology/links", headers=HEADERS, json={
             "source_asset_id": a["id"], "target_asset_id": b["id"], "relationship": "depends_on",
         })
-        assert cross.status_code == 422 and "same landscape" in cross.json()["detail"]
+        assert cross.status_code == 422 and "one landscape" in cross.json()["detail"]
 
 
 def test_topology_writes_require_admin(monkeypatch, tmp_path):
