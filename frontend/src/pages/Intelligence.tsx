@@ -1,23 +1,43 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api";
-import { ErrorBanner } from "../components/ui";
+import { RefreshCw, Sparkles } from "lucide-react";
+import { Card, DataTable, Empty, ErrorBanner, PageHeader, Tile } from "../components/ui";
+import { Badge } from "../components/ui/badge";
+import { Button } from "../components/ui/button";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "../components/ui/dialog";
+import { Skeleton } from "../components/ui/skeleton";
+import { cn } from "../lib/utils";
 import type { AnomaliesResponse, AvailabilityResponse, CapacityForecastResponse, IncidentCorrelationResponse, RootCauseResponse } from "../types/intelligence";
 
 const WINDOWS = [{ label: "24 hours", value: 24 }, { label: "7 days", value: 168 }, { label: "30 days", value: 720 }];
-const fmt = (value: number | null | undefined, suffix = "") => value == null ? "—" : `${value.toLocaleString(undefined, { maximumFractionDigits: 1 })}${suffix}`;
+const fmt = (value: number | null | undefined, suffix = "") => value == null ? "–" : `${value.toLocaleString(undefined, { maximumFractionDigits: 1 })}${suffix}`;
 const date = (value: string | null | undefined) => value ? new Date(value).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" }) : "Not observed";
 
+const SEVERITY: Record<string, "bad" | "warn" | "idle" | "good"> = { critical: "bad", warning: "warn", high: "good", medium: "warn", low: "idle" };
+
 function ForecastValue({ label, data }: { label: string; data: CapacityForecastResponse["systems"][number]["forecasts"]["disk"] }) {
-  const state = data.status === "threshold_projected" ? "warning" : data.status === "insufficient_data" ? "muted" : "normal";
-  return <div className="intelligence-forecast-cell">
-    <span>{label}</span>
-    <strong className={state}>{data.status === "insufficient_data" ? "Insufficient history" : data.status === "stable_or_declining" ? "Stable / declining" : data.status === "threshold_projected" ? "Threshold approaching" : "Projected"}</strong>
-    {data.projected_utilisation_pct != null && <small>{fmt(data.projected_utilisation_pct, "%")} in {data.horizon_days} days</small>}
-    {data.threshold_in_days != null && <small>{data.threshold_in_days === 0 ? "Threshold already reached" : `85% threshold in ~${data.threshold_in_days} days`}</small>}
-    {data.reason && <small>{data.reason}</small>}
-    {data.daily_change_mb != null && <small>{fmt(data.daily_change_mb, " MB/day")} trend</small>}
-  </div>;
+  const state = data.status === "threshold_projected" ? "text-warn" : data.status === "insufficient_data" ? "text-muted-foreground" : "text-foreground";
+  return (
+    <div className="min-w-0 space-y-0.5 text-xs text-muted-foreground">
+      <div>{label}</div>
+      <div className={cn("text-sm font-semibold", state)}>
+        {data.status === "insufficient_data" ? "Not enough history" : data.status === "stable_or_declining" ? "Stable or declining" : data.status === "threshold_projected" ? "Threshold approaching" : "Growing"}
+      </div>
+      {data.projected_utilisation_pct != null && <div>{fmt(data.projected_utilisation_pct, "%")} in {data.horizon_days} days</div>}
+      {data.threshold_in_days != null && <div>{data.threshold_in_days === 0 ? "Threshold already reached" : `85% in about ${data.threshold_in_days} days`}</div>}
+      {data.daily_change_mb != null && <div>{fmt(data.daily_change_mb, " MB/day")}</div>}
+      {data.reason && <div>{data.reason}</div>}
+    </div>
+  );
+}
+
+function Section({ title, note, method, children }: { title: string; note?: string; method: string; children: React.ReactNode }) {
+  return (
+    <Card title={title} description={method} actions={note && <span className="text-xs text-muted-foreground">{note}</span>}>
+      {children}
+    </Card>
+  );
 }
 
 export default function Intelligence() {
@@ -32,6 +52,7 @@ export default function Intelligence() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
+  const [showAll, setShowAll] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -63,77 +84,141 @@ export default function Intelligence() {
     finally { setRootCauseLoading(false); }
   };
 
-  return <div className="intelligence-page">
-    <div className="dashboard-heading">
-      <div><div className="eyebrow">OBSERVABILITY <span className="eyebrow-dot" /> INTELLIGENT OPERATIONS</div>
-        <h1>Intelligent operations</h1>
-        <p>Explainable anomaly signals, observed availability, capacity projections and incident context.</p>
+  const windowLabel = WINDOWS.find((w) => w.value === hours)?.label;
+  return (
+    <>
+      <PageHeader title="Intelligence" description="Explainable signals computed from recorded telemetry: observed availability, anomalies, capacity outlook and incident context."
+        actions={<>
+          <select aria-label="Analysis window" className="filter-select !w-auto" value={hours} onChange={(e) => setHours(Number(e.target.value))}>
+            {WINDOWS.map((w) => <option key={w.value} value={w.value}>Last {w.label}</option>)}
+          </select>
+          <Button variant="outline" disabled={loading} onClick={() => setRefreshKey((v) => v + 1)}><RefreshCw className={cn(loading && "animate-spin")} />Refresh</Button>
+        </>} />
+      <ErrorBanner error={error} />
+      <div className="tiles !grid-cols-2 lg:!grid-cols-4">
+        <Tile label="Systems observed" value={`${availability?.systems.filter((s) => s.samples > 0).length ?? "–"}/${availability?.systems.length ?? "–"}`} hint={`${totalSamples.toLocaleString()} availability samples`} />
+        <Tile label="Anomaly signals" value={anomaliesList.length} tone={anomaliesList.some((a) => a.severity === "critical") ? "bad" : anomaliesList.length ? "warn" : undefined} hint="Deviations from the 7-day baseline" />
+        <Tile label="Capacity outlook" value={forecastCount} tone={thresholdCount ? "warn" : undefined} hint={`${thresholdCount} system${thresholdCount === 1 ? "" : "s"} heading for 85%`} />
+        <Tile label="Incidents with context" value={correlationCount} hint="Metric changes near the incident" />
       </div>
-      <div className="dashboard-actions">
-        <label className="filter-select"><span>ANALYSIS WINDOW</span><select value={hours} onChange={(e) => setHours(Number(e.target.value))}>{WINDOWS.map((w) => <option key={w.value} value={w.value}>{w.label}</option>)}</select></label>
-        <button className="btn refresh-btn" disabled={loading} onClick={() => setRefreshKey((v) => v + 1)}>↻ <span>Refresh</span></button>
+
+      <div className="grid gap-4 xl:grid-cols-2 [&>.card]:mb-0">
+        <Section title="Observed availability" note={`Last ${windowLabel}`}
+          method="Share of collected samples in which the system was up. Not a wall-clock SLA: periods without collection are excluded, and maintenance overlaps are listed but not subtracted.">
+          {availability?.systems.length ? (
+            <DataTable rows={availability.systems} rowKey={(r) => r.system_id} columns={[
+              { key: "sid", label: "System", render: (r) => <><Link to={`/systems/${r.system_id}`} className="font-mono font-semibold">{r.sid}</Link><div className="text-xs text-muted-foreground">{r.landscape}</div></> },
+              { key: "pct", label: "Availability", numeric: true, render: (r) => r.observed_availability_pct == null ? <span className="text-muted-foreground">No data</span>
+                : <span className={cn("font-semibold", r.observed_availability_pct < 99 ? "text-warn" : "")}>{fmt(r.observed_availability_pct, "%")}</span> },
+              { key: "samples", label: "Up / down", numeric: true, render: (r) => `${r.up_samples} / ${r.down_samples}` },
+              { key: "maint", label: "Maint.", numeric: true, render: (r) => r.maintenance_windows_overlapping_period },
+              { key: "last", label: "Last sample", render: (r) => <span className="text-xs">{date(r.last_observed_at)}</span> },
+            ]} />
+          ) : <Empty>No availability samples yet. They appear once a sapcontrol collector has run.</Empty>}
+        </Section>
+
+        <Section title="Anomalies" note={`7-day baseline, last ${Math.min(hours, 24)} h`}
+          method="Median/MAD robust score. A signal needs at least 12 baseline samples and a score of 3.5 or more. Treat signals as leads to investigate, not as incidents.">
+          {anomaliesList.length ? (
+            <DataTable rows={anomaliesList} rowKey={(a) => `${a.system_id}-${a.metric}`} columns={[
+              { key: "sev", label: "Severity", render: (a) => <Badge variant={SEVERITY[a.severity] ?? "idle"} className="capitalize">{a.severity}</Badge> },
+              { key: "sid", label: "System", render: (a) => <Link to={`/systems/${a.system_id}`} className="font-mono font-semibold">{a.sid}</Link> },
+              { key: "metric", label: "Metric", render: (a) => <code className="text-xs">{a.metric}</code> },
+              { key: "latest", label: "Latest", numeric: true, render: (a) => <><span className="font-semibold">{fmt(a.latest_value)}</span><div className="text-xs text-muted-foreground">median {fmt(a.baseline_median)}</div></> },
+              { key: "z", label: "Score", numeric: true, render: (a) => <span className={a.direction === "high" ? "text-bad" : "text-primary"}>{a.robust_z_score > 0 ? "+" : ""}{a.robust_z_score}</span> },
+            ]} />
+          ) : <Empty>{loading ? "Evaluating telemetry…" : "No anomalies. Signals need enough baseline history and a clear deviation."}</Empty>}
+        </Section>
+
+        <Section title="Capacity outlook" note="90-day history, 85% threshold"
+          method="Linear trend from recorded capacity snapshots; needs at least three snapshots over time. Projections are directional estimates, not exhaustion dates.">
+          {capacity?.systems.length ? (
+            <div className="divide-y rounded-lg border">
+              {capacity.systems.map((s) => (
+                <div key={s.system_id} className="grid gap-3 p-3 sm:grid-cols-[minmax(0,0.8fr)_minmax(0,1fr)_minmax(0,1fr)]">
+                  <div className="min-w-0"><Link to={`/systems/${s.system_id}`} className="font-mono font-semibold">{s.sid}</Link>
+                    <div className="truncate text-xs text-muted-foreground">{s.landscape}, {s.environment}</div></div>
+                  <ForecastValue label="Disk" data={s.forecasts.disk} />
+                  <ForecastValue label="Memory" data={s.forecasts.memory} />
+                </div>
+              ))}
+            </div>
+          ) : <Empty>No capacity snapshots yet. Forecasts appear after disk and memory snapshots have been recorded.</Empty>}
+        </Section>
+
+        <div className="xl:col-span-2">
+        <Section title="Incident context" note="30 minutes either side of opening"
+          method="Metrics that changed around the time an incident opened. Timing alone does not prove cause; run root-cause analysis for ranked hypotheses.">
+          {correlations?.incidents.length ? (
+            <div className="grid gap-3 lg:grid-cols-2">
+              {correlations.incidents.slice(0, showAll ? undefined : 6).map((i) => (
+                <div key={i.incident_id} className="rounded-lg border p-3">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Badge variant={SEVERITY[i.severity] ?? "idle"} className="capitalize">{i.severity}</Badge>
+                    <Link to={`/incidents/${i.incident_id}`} className="min-w-0 flex-1 truncate font-medium text-foreground">#{i.incident_id} {i.title}</Link>
+                    <Button size="sm" variant="outline" disabled={rootCauseLoading || !i.system_id} onClick={() => void runRootCause(i.incident_id)}>
+                      <Sparkles />Root cause
+                    </Button>
+                  </div>
+                  <div className="mt-1 text-xs text-muted-foreground">{i.sid ?? "Platform"}, opened {date(i.opened_at)}</div>
+                  {i.related_metrics.length ? (
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      {i.related_metrics.slice(0, 6).map((m) => (
+                        <span key={m.metric} className="rounded border bg-muted/50 px-2 py-0.5 text-xs">
+                          <code>{m.metric}</code> <span className={cn("font-semibold", (m.change ?? 0) > 0 ? "text-bad" : "")}>{m.change == null ? "n/a" : `${m.change > 0 ? "+" : ""}${fmt(m.change)}`}</span>
+                        </span>
+                      ))}
+                    </div>
+                  ) : <p className="mt-2 text-xs text-muted-foreground">No metric samples in the window.</p>}
+                </div>
+              ))}
+            </div>
+          ) : <Empty>No incidents in this window.</Empty>}
+          {(correlations?.incidents.length ?? 0) > 6 && (
+            <Button variant="ghost" size="sm" className="mt-3" onClick={() => setShowAll((v) => !v)}>
+              {showAll ? "Show fewer" : `Show all ${correlations!.incidents.length} incidents`}
+            </Button>
+          )}
+        </Section>
+        </div>
       </div>
-    </div>
-    <ErrorBanner error={error} />
-    <div className="analytics-kpis">
-      <div className="analytics-kpi"><span>Observed systems</span><strong>{availability?.systems.filter((s) => s.samples > 0).length ?? "—"}/{availability?.systems.length ?? "—"}</strong><small>{totalSamples.toLocaleString()} availability samples</small></div>
-      <div className="analytics-kpi"><span>Anomaly signals</span><strong>{anomaliesList.length}</strong><small>Robust baseline deviations</small></div>
-      <div className="analytics-kpi"><span>Capacity forecasts</span><strong>{forecastCount}</strong><small>{thresholdCount} systems approaching 85%</small></div>
-      <div className="analytics-kpi"><span>Incident context</span><strong>{correlationCount}</strong><small>Incidents with nearby metric evidence</small></div>
-    </div>
 
-    <section className="panel intelligence-section">
-      <div className="panel-heading"><div><span className="eyebrow">AVAILABILITY OBSERVATION</span><h2>System availability</h2></div><span className="panel-note">{WINDOWS.find((w) => w.value === hours)?.label}</span></div>
-      <p className="intelligence-disclaimer">Observed sample ratio only—not wall-clock SLA. Missing collection intervals are excluded, not assumed available. Maintenance overlaps are shown separately and not subtracted.</p>
-      {availability?.systems.length ? <div className="intelligence-table-wrap"><table className="intelligence-table"><thead><tr><th>System</th><th>Observed availability</th><th>Up / down samples</th><th>Maintenance overlaps</th><th>Last observation</th></tr></thead><tbody>
-        {availability.systems.map((s) => <tr key={s.system_id}><td><Link to={`/systems/${s.system_id}`}><strong>{s.sid}</strong></Link><small>{s.name} · {s.landscape}</small></td><td>{s.observed_availability_pct == null ? <span className="muted">No data</span> : <strong>{fmt(s.observed_availability_pct, "%")}</strong>}</td><td>{s.up_samples} / {s.down_samples} <small>({s.samples} total)</small></td><td>{s.maintenance_windows_overlapping_period}</td><td>{date(s.last_observed_at)}</td></tr>)}
-      </tbody></table></div> : <div className="analytics-empty"><strong>No availability observations</strong><p>Enable a collector and wait for actual system availability samples.</p></div>}
-    </section>
-
-    <section className="panel intelligence-section">
-      <div className="panel-heading"><div><span className="eyebrow">STATISTICAL SIGNALS</span><h2>Anomaly detection</h2></div><span className="panel-note">7-day baseline · last {Math.min(hours, 24)}h recent window</span></div>
-      <p className="intelligence-disclaimer">Median/MAD robust scoring. A signal requires at least 12 baseline observations and a robust score of 3.5 or more. These are investigation leads, not confirmed incidents.</p>
-      {anomaliesList.length ? <div className="intelligence-anomaly-list">{anomaliesList.map((a) => <article className="intelligence-anomaly" key={`${a.system_id}-${a.metric}`}>
-        <div><span className={`severity-pill ${a.severity}`}>{a.severity}</span><Link to={`/systems/${a.system_id}`}><strong>{a.sid}</strong></Link><span>{a.metric}</span></div>
-        <div><strong>{fmt(a.latest_value)}</strong><small>Latest · baseline median {fmt(a.baseline_median)}</small></div>
-        <div><strong>{a.robust_z_score > 0 ? "+" : ""}{a.robust_z_score} robust z</strong><small>{a.direction === "high" ? "Above" : "Below"} baseline · {a.recent_samples} recent samples</small></div>
-        <small>{date(a.observed_at)}</small>
-      </article>)}</div> : <div className="analytics-empty"><strong>{loading ? "Evaluating telemetry…" : "No anomaly signals detected"}</strong><p>Signals appear only when enough historical baseline observations exist and the latest recent value deviates materially.</p></div>}
-    </section>
-
-    <section className="panel intelligence-section">
-      <div className="panel-heading"><div><span className="eyebrow">CAPACITY PLANNING</span><h2>30-day capacity outlook</h2></div><span className="panel-note">90-day history · 85% threshold</span></div>
-      <p className="intelligence-disclaimer">Linear trend projection from recorded capacity snapshots. At least three snapshots spanning time are required; projections are directional estimates, not guaranteed exhaustion dates.</p>
-      {capacity?.systems.length ? <div className="intelligence-forecast-list">{capacity.systems.map((s) => <article className="intelligence-forecast" key={s.system_id}>
-        <div className="intelligence-forecast-system"><Link to={`/systems/${s.system_id}`}><strong>{s.sid}</strong></Link><span>{s.name}</span><small>{s.landscape} · {s.environment}</small></div>
-        <ForecastValue label="Disk" data={s.forecasts.disk} />
-        <ForecastValue label="Memory" data={s.forecasts.memory} />
-      </article>)}</div> : <div className="analytics-empty"><strong>No capacity snapshots available</strong><p>Capacity forecasts will appear after the host capacity collector records historical disk and memory snapshots.</p></div>}
-    </section>
-
-    <section className="panel intelligence-section">
-      <div className="panel-heading"><div><span className="eyebrow">INCIDENT CONTEXT</span><h2>Related telemetry around incidents</h2></div><span className="panel-note">±30 minutes around opening</span></div>
-      <p className="intelligence-disclaimer">Shows metric changes temporally near incident creation. Temporal association is not proof of causation or automated root-cause determination.</p>
-      {correlations?.incidents.length ? <div className="intelligence-correlation-list">{correlations.incidents.map((i) => <article className="intelligence-correlation" key={i.incident_id}>
-        <div className="intelligence-correlation-head"><span className={`severity-pill ${i.severity}`}>{i.severity}</span><Link to={`/incidents/${i.incident_id}`}><strong>#{i.incident_id} · {i.title}</strong></Link><small>{i.sid ?? "Platform"} · {date(i.opened_at)}</small><button className="btn" disabled={rootCauseLoading || !i.system_id} onClick={() => void runRootCause(i.incident_id)}>{rootCauseLoading ? "Analysing…" : "Run RCA"}</button></div>
-        {i.related_metrics.length ? <div className="intelligence-evidence">{i.related_metrics.map((m) => <div key={m.metric}><span>{m.metric}</span><strong>{m.change == null ? "Not enough paired samples" : `${m.change > 0 ? "+" : ""}${fmt(m.change)}`}</strong><small>{m.before_samples} before / {m.after_samples} after</small></div>)}</div> : <p className="muted">No metric observations found within the correlation window.</p>}
-      </article>)}</div> : <div className="analytics-empty"><strong>No incidents in this analysis window</strong><p>Incident context will appear when incidents have been recorded alongside metric observations.</p></div>}
-    </section>
-
-      {rootCauseError && <div className="intelligence-rca-error">{rootCauseError}</div>}
-      {rootCause && <div className="intelligence-rca">
-        <div className="intelligence-rca-heading"><div><span className="eyebrow">EVIDENCE-BASED DIAGNOSTICS</span><h3>Root cause hypotheses · #{rootCause.incident.id} {rootCause.incident.sid ? `· ${rootCause.incident.sid}` : ""}</h3></div><button className="btn" onClick={() => setRootCause(null)}>Close</button></div>
-        <p className="intelligence-disclaimer">{rootCause.interpretation}</p>
-        {rootCause.hypotheses.length ? <div className="intelligence-rca-hypotheses">{rootCause.hypotheses.map((h) => <article key={h.domain}>
-          <div className="intelligence-rca-hypothesis-head"><strong>{h.title}</strong><span className={`severity-pill ${h.confidence}`}>{h.confidence} evidence</span><strong>{h.score}/10</strong></div>
-          <p>{h.reason}</p>
-          <div className="intelligence-evidence">{h.supporting_signals.map((s) => <div key={s.metric}><span>{s.metric}</span><strong>{fmt(s.latest_value)} <small>/ threshold {fmt(s.threshold)}</small></strong><small>{s.change == null ? "No paired baseline" : `Change ${s.change > 0 ? "+" : ""}${fmt(s.change)}`}</small></div>)}</div>
-          <ul>{h.recommended_checks.map((r) => <li key={r}>{r}</li>)}</ul>
-        </article>)}</div> : <div className="analytics-empty"><strong>No supporting hypothesis could be ranked</strong><p>Check telemetry coverage and collector health before drawing conclusions.</p></div>}
-        <div className="intelligence-rca-coverage"><strong>Evidence coverage</strong><span>{rootCause.coverage.metrics_observed} metrics · {rootCause.coverage.monitor_snapshots_in_window ?? 0} monitor snapshots · {rootCause.coverage.monitors_observed?.join(", ") || "no monitor snapshots"}</span></div>
-        {rootCause.limitations.map((limitation) => <p className="intelligence-disclaimer" key={limitation}>• {limitation}</p>)}
-      </div>}
-
-    <div className="dashboard-footer"><span>Sentinel · Intelligent operations</span><span>All insights are computed from recorded telemetry; no missing values are fabricated.</span></div>
-  </div>;
+      <Dialog open={rootCauseLoading || !!rootCause || !!rootCauseError} onOpenChange={(o) => { if (!o) { setRootCause(null); setRootCauseError(null); } }}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Root-cause hypotheses{rootCause ? ` for incident #${rootCause.incident.id}${rootCause.incident.sid ? ` on ${rootCause.incident.sid}` : ""}` : ""}</DialogTitle>
+            <DialogDescription>{rootCause?.interpretation ?? "Ranking contributing domains from metrics around the incident."}</DialogDescription>
+          </DialogHeader>
+          {rootCauseLoading && <div className="space-y-2"><Skeleton className="h-20" /><Skeleton className="h-20" /></div>}
+          {rootCauseError && <div className="banner error">{rootCauseError}</div>}
+          {rootCause && (
+            <div className="space-y-3">
+              {rootCause.hypotheses.length ? rootCause.hypotheses.map((h, idx) => (
+                <article key={h.domain} className="rounded-lg border p-4">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="flex h-6 w-6 items-center justify-center rounded-full bg-accent text-xs font-semibold text-accent-foreground">{idx + 1}</span>
+                    <strong className="flex-1">{h.title}</strong>
+                    <Badge variant={SEVERITY[h.confidence] ?? "idle"} className="capitalize">{h.confidence} evidence</Badge>
+                    <span className="text-sm font-semibold tabular-nums">{h.score}/10</span>
+                  </div>
+                  <p className="mt-2 text-sm text-muted-foreground">{h.reason}</p>
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    {h.supporting_signals.map((sig) => (
+                      <span key={sig.metric} className="rounded border bg-muted/50 px-2 py-0.5 text-xs"><code>{sig.metric}</code> {fmt(sig.latest_value)} / {fmt(sig.threshold)}</span>
+                    ))}
+                  </div>
+                  <ul className="mt-3 list-disc space-y-1 pl-5 text-sm">{h.recommended_checks.map((r) => <li key={r}>{r}</li>)}</ul>
+                </article>
+              )) : <Empty>No hypothesis could be ranked. Check telemetry coverage and collector health first.</Empty>}
+              <p className="text-xs text-muted-foreground">
+                Evidence: {rootCause.coverage.metrics_observed} metrics, {rootCause.coverage.monitor_snapshots_in_window ?? 0} monitor snapshots
+                {rootCause.coverage.monitors_observed?.length ? ` (${rootCause.coverage.monitors_observed.join(", ")})` : ""}.
+              </p>
+              {rootCause.limitations.length > 0 && <ul className="list-disc space-y-0.5 pl-5 text-xs text-muted-foreground">{rootCause.limitations.map((l) => <li key={l}>{l}</li>)}</ul>}
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+    </>
+  );
 }

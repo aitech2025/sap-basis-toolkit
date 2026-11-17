@@ -1,18 +1,28 @@
 import { Fragment, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../../api";
-import { Card, DataTable, Empty, ErrorBanner, Pill, fmtDate, fmtNumber, useAsync } from "../../components/ui";
+import { ArrowRight } from "lucide-react";
+import { Card, DataTable, Empty, ErrorBanner, Pill, Tile, fmtDate, fmtNumber, statusTone, useAsync } from "../../components/ui";
+import { Skeleton } from "../../components/ui/skeleton";
+import { cn } from "../../lib/utils";
 import type { MonitorsResponse, SystemDetail } from "../../types";
 import { IncidentTable } from "../Incidents";
+
+const EDGE: Record<string, string> = { good: "bg-good", warn: "bg-warn", bad: "bg-bad", idle: "bg-idle/40" };
+const toneOf = (h: string | null | undefined) => {
+  const t = statusTone(h);
+  return t === "idle" ? undefined : t;
+};
 
 function ModuleCard({ to, title, status, children, cta }: {
   to: string; title: string; status: string; children: ReactNode; cta: string;
 }) {
   return (
-    <Link to={to} className="module-card">
-      <div className="module-head"><h3>{title}</h3><Pill value={status} /></div>
-      <div className="module-body">{children}</div>
-      <span className="module-cta">{cta} →</span>
+    <Link to={to} className="group relative flex min-w-0 flex-col overflow-hidden rounded-lg border bg-card p-4 pl-5 text-foreground shadow-[0_1px_2px_hsl(var(--shadow)/0.06)] transition-colors hover:border-primary/40 hover:no-underline">
+      <span aria-hidden="true" className={cn("absolute inset-y-0 left-0 w-1", EDGE[statusTone(status)])} />
+      <div className="mb-2 flex items-start justify-between gap-2"><h3>{title}</h3><Pill value={status} /></div>
+      <div className="space-y-1 text-[13px] [&_p]:m-0">{children}</div>
+      <span className="mt-auto inline-flex items-center gap-1 pt-3 text-xs font-medium text-primary">{cta}<ArrowRight className="h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5" /></span>
     </Link>
   );
 }
@@ -30,10 +40,13 @@ function LiveRow({ system, base, live }: { system: SystemDetail; base: string; l
   const collectorErrors = live.collectors.filter((c) => c.last_status === "error");
   return (
     <>
-      <h2 className="section-title">Live status {!live.collectors.length && <Link className="small" to={`${base}/setup`} style={{ fontWeight: 500 }}>· set up a live collector →</Link>}</h2>
+      <div className="mb-3 mt-8 flex items-baseline justify-between gap-3">
+        <h2 className="text-base">Live monitoring</h2>
+        {!live.collectors.length && <Link className="text-sm" to={`${base}/setup`}>Set up a live collector</Link>}
+      </div>
       {collectorErrors.map((c) => <div key={c.id} className="banner error">Collector {c.type} ({c.host}) failed: {c.last_error}</div>)}
       {!has && live.collectors.length > 0 && <div className="banner info">Collectors are configured; the first results appear after their next run.</div>}
-      <div className="module-grid live">
+      <div className="mb-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
         <ModuleCard to={`${base}/availability`} title="Availability" status={m.availability ? (av?.system_up ? m.availability.health : "critical") : "unknown"} cta="Instances & work processes">
           {av ? (
             <>
@@ -92,7 +105,7 @@ export default function OverviewTab({ system }: { system: SystemDetail }) {
   const active = useAsync(() => api.incidents(`?status=active&system_id=${system.id}`), [system.id]);
   const base = `/systems/${system.id}`;
   if (error) return <ErrorBanner error={error} />;
-  if (!data) return <p className="muted">Loading {system.sid}…</p>;
+  if (!data) return <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">{[0, 1, 2, 3, 4].map((i) => <Skeleton key={i} className="h-[88px]" />)}</div>;
 
   const caps = data.system.capabilities;
   const c = data.certificates, g = data.growth, u = data.users?.summary, pre = data.transports.precheck, post = data.transports.postcheck;
@@ -109,33 +122,27 @@ export default function OverviewTab({ system }: { system: SystemDetail }) {
 
   return (
     <>
-      <section className="system-command-center">
-        <div className="system-command-top">
-          <div>
-            <span className="eyebrow">SYSTEM COMMAND CENTER · {system.environment} ENVIRONMENT</span>
-            <h2>{system.sid} operational posture</h2>
-            <p>Live telemetry, platform health and operational risk for this SAP system.</p>
-          </div>
-          <div className="system-command-status"><span className={`system-status-dot ${data.health === "healthy" ? "is-good" : data.health === "critical" ? "is-bad" : data.health === "warning" ? "is-warn" : ""}`} /><Pill value={data.health} /></div>
-        </div>
-        <div className="system-kpi-grid">
-          <div className="system-kpi"><span>Overall health</span><strong>{data.health === "healthy" ? "Healthy" : data.health === "unknown" ? "No data" : data.health}</strong><small>Composite system signal</small></div>
-          <div className="system-kpi"><span>Instances running</span><strong>{runningInstances}</strong><small>{liveAvailability?.system_up ? "SAP system available" : "Latest availability snapshot"}</small></div>
-          <div className={`system-kpi ${activeCount ? "kpi-alert" : ""}`}><span>Active incidents</span><strong>{activeCount}</strong><small>{activeCount ? "Requires operator attention" : "No active incidents"}</small></div>
-          <div className="system-kpi"><span>Disk / HANA memory</span><strong>{diskValue} <i>·</i> {hanaMemory}</strong><small>Disk used · HANA memory used</small></div>
-        </div>
-        <div className="system-command-footer">
-          <span><i className="live-dot" /> Collector telemetry</span>
-          <span>{live.data?.collectors.length ?? 0} configured collectors</span>
-          <span>{live.data?.collectors.filter((c) => c.last_status === "error").length ?? 0} collector errors</span>
-          <span>Certificate posture: <Pill value={c.health} /></span>
-          <span>Capacity posture: <Pill value={g.health} /></span>
-        </div>
-      </section>
-      <div className={`banner ${data.health === "critical" ? "error" : data.health === "healthy" ? "ok" : "info"}`}>
-        <strong>{system.sid}</strong> overall health: <Pill value={data.health} />
-        <span className="muted"> · worst of live availability, open incidents, certificates, capacity forecast, jobs, locks and the last import</span>
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+        <Tile label="Overall health" value={<span className="capitalize">{data.health === "unknown" ? "No data" : data.health}</span>}
+              tone={toneOf(data.health)} hint="Worst of all monitored signals" />
+        <Tile label="Instances running" value={runningInstances}
+              tone={liveAvailability ? (liveAvailability.system_up && liveAvailability.running === liveAvailability.instances ? "good" : liveAvailability.system_up ? "warn" : "bad") : undefined}
+              hint={liveAvailability ? (liveAvailability.system_up ? "System available" : "System NOT available") : "No availability data"} />
+        <Tile label="Active incidents" value={activeCount} tone={activeCount ? "bad" : "good"} hint={activeCount ? "Needs attention" : "Nothing open"} />
+        <Tile label="Disk used" value={diskValue} tone={toneOf(g.health)}
+              hint={g.days_until_threshold != null ? `${g.days_until_threshold} days to threshold` : "Capacity forecast"} />
+        <Tile label="HANA memory" value={hanaMemory} hint={system.database === "HANA" ? "Used of allocation limit" : `${system.database} database`} />
       </div>
+      {live.data && (
+        <div className="mt-3 flex flex-wrap items-center gap-x-5 gap-y-1.5 text-xs text-muted-foreground">
+          <span>{live.data.collectors.length} collector{live.data.collectors.length === 1 ? "" : "s"} configured</span>
+          {live.data.collectors.some((x) => x.last_status === "error") && (
+            <span className="text-bad">{live.data.collectors.filter((x) => x.last_status === "error").length} collector error(s)</span>
+          )}
+          <span className="flex items-center gap-1.5">Certificates <Pill value={c.health} /></span>
+          <span className="flex items-center gap-1.5">Capacity <Pill value={g.health} /></span>
+        </div>
+      )}
 
       <LiveRow system={system} base={base} live={live.data} />
       {!!active.data?.length && (
@@ -143,8 +150,8 @@ export default function OverviewTab({ system }: { system: SystemDetail }) {
           <IncidentTable rows={active.data.slice(0, 8)} showSystem={false} />
         </Card>
       )}
-      <h2 className="section-title">Operations</h2>
-      <div className="module-grid">
+      <h2 className="mb-3 mt-8 text-base">Operations</h2>
+      <div className="mb-6 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
         <ModuleCard to={`${base}/certificates`} title="Certificates" status={c.count ? c.health : "unknown"} cta="Manage certificates">
           {c.count ? (
             <>
