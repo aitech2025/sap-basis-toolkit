@@ -52,6 +52,10 @@ def validate(data: dict) -> None:
         validate_port(data["type"], int(data["port"]))
     if data["type"] == "hana" and not simulator.is_sim(data["host"]) and not data.get("username"):
         raise CollectorError("HANA collectors need a database user")
+    if data["type"] == "node_exporter" and simulator.is_sim(data["host"]):
+        raise CollectorError("node_exporter does not support the SAP demo simulator")
+    if data["type"] == "node_exporter" and data.get("username"):
+        raise CollectorError("node_exporter credentials are not accepted; secure the endpoint at the network or reverse-proxy layer")
     if data.get("abap_schema") and not hana.SCHEMA_RE.match(data["abap_schema"]):
         raise CollectorError("ABAP schema must be an uppercase identifier, e.g. SAPHANADB")
     if not 30 <= int(data.get("interval_seconds") or 300) <= 86400:
@@ -218,7 +222,17 @@ def _run_hana(row: dict, system: dict, persist: bool) -> tuple[dict, dict]:
     return {"metrics": metrics, "summary": summary}, {"diagnostics": raw["diagnostics"]}
 
 
-def _run_node_exporter(row: dict, system: dict, persist: bool) -> tuple[dict, dict]:\n    raw = node_exporter.collect(row["host"], int(row["port"]), bool(row["use_tls"]), bool(row["verify_tls"]))\n    metrics = raw["metrics"]\n    summary = {"signals": sorted(metrics), "collected_at": raw["collected_at"].isoformat()}\n    if persist:\n        health = "critical" if metrics.get("host.memory_used_pct", 0) >= 95 or metrics.get("host.disk_used_pct", 0) >= 95 else "warning" if metrics.get("host.memory_used_pct", 0) >= 85 or metrics.get("host.disk_used_pct", 0) >= 85 else "healthy"\n        monitors.store(system["id"], "host", "node_exporter", {"metrics": metrics, "summary": summary}, health, raw["collected_at"])\n    return {"metrics": metrics, "summary": summary}, {"diagnostics": [{"call": "GET /metrics", "ok": True, "signals": sorted(metrics)}]}\n\n\ndef run(collector_id: int, persist: bool = True) -> dict:
+def _run_node_exporter(row: dict, system: dict, persist: bool) -> tuple[dict, dict]:
+    raw = node_exporter.collect(row["host"], int(row["port"]), bool(row["use_tls"]), bool(row["verify_tls"]))
+    metrics = raw["metrics"]
+    summary = {"signals": sorted(metrics), "collected_at": raw["collected_at"].isoformat()}
+    if persist:
+        health = "critical" if metrics.get("host.memory_used_pct", 0) >= 95 or metrics.get("host.disk_used_pct", 0) >= 95 else "warning" if metrics.get("host.memory_used_pct", 0) >= 85 or metrics.get("host.disk_used_pct", 0) >= 85 else "healthy"
+        monitors.store(system["id"], "host", "node_exporter", {"metrics": metrics, "summary": summary}, health, raw["collected_at"])
+    return {"metrics": metrics, "summary": summary}, {"diagnostics": [{"call": "GET /metrics", "ok": True, "signals": sorted(metrics)}]}
+
+
+def run(collector_id: int, persist: bool = True) -> dict:
     """Run one collector now. With persist=False it is a connection test (nothing stored or alerted)."""
     row = get(collector_id)
     system = _system(row["system_id"])
@@ -260,7 +274,7 @@ def test_connection(system_id: int, data: dict) -> dict:
     validate(data)
     system = _system(system_id)
     row = {**data, "id": 0, "system_id": system_id, "password_enc": vault.encrypt(data.get("password"))}
-    runner = _run_sapcontrol if data["type"] == "sapcontrol" else _run_hana
+    runner = {"sapcontrol": _run_sapcontrol, "hana": _run_hana, "node_exporter": _run_node_exporter}[data["type"]]
     started = time.monotonic()
     try:
         result, details = runner(row, system, persist=False)
