@@ -32,6 +32,8 @@ SIGNALS = {
     "availability.instances_down": ("SAP instance availability", "Availability", 1, "high"),
     "availability.system_up": ("SAP system availability", "Availability", 1, "low"),
     "collector.failed": ("Collector connectivity failure", "Connectivity", 1, "high"),
+    "host.memory_used_pct": ("Host memory pressure", "Host", 85, "high"),
+    "host.disk_used_pct": ("Host root-filesystem pressure", "Host", 85, "high"),
 }
 RECOMMENDATIONS = {
     "HANA": [
@@ -58,6 +60,11 @@ RECOMMENDATIONS = {
         "Validate collector reachability, TLS, DNS and network path from the customer-side connector.",
         "Check SAP start service and HANA endpoint availability independently of the monitoring agent.",
         "Treat missing telemetry as unknown health until a successful collection confirms system state.",
+    ],
+    "Host": [
+        "Check host memory pressure, swap activity and top resident processes around the incident window.",
+        "Check root filesystem capacity, inode utilisation and recent log or trace growth.",
+        "Correlate host evidence with the SAP instance on that host; confirm the collector is attached to the correct SAP system.",
     ],
 }
 
@@ -175,6 +182,7 @@ def analyze(incident_id: int) -> dict:
                 "Interfaces": "RFC, qRFC or IDoc processing disruption",
                 "Availability": "SAP instance or system availability degradation",
                 "Connectivity": "Monitoring or endpoint connectivity disruption",
+                "Host": "Operating-system memory or filesystem pressure",
             }[domain],
             "score": score, "confidence": confidence,
             "supporting_signals": [{"metric": s["metric"], "label": s["label"],
@@ -189,7 +197,7 @@ def analyze(incident_id: int) -> dict:
     monitored = {s.monitor for s in snapshots}
     coverage = {
         "system_metrics": True, "metrics_observed": len(grouped),
-        "expected_domains": ["HANA", "ABAP", "Interfaces", "Availability", "Connectivity"],
+        "expected_domains": ["HANA", "ABAP", "Interfaces", "Availability", "Connectivity", "Host"],
         "domains_with_supporting_signals": sorted(present_domains),
         "monitor_snapshots_in_window": len(snapshot_evidence),
         "monitors_observed": sorted(monitored),
@@ -202,7 +210,7 @@ def analyze(incident_id: int) -> dict:
         limitations.append("No monitor snapshots were recorded in the incident window.")
     if len(metrics) > MAX_METRIC_ROWS:
         limitations.append("Metric evidence was capped; rerun with a narrower window after investigation.")
-    limitations.append("OS CPU, network latency, RFC response-time and application dependency telemetry are not yet collected as first-class signals.")
+    limitations.append("Host memory and root-filesystem evidence is available only when a node_exporter collector is configured; CPU percentage, network throughput and disk I/O rates are not yet collected.")
     limitations.append("Only evidence from the incident's registered SAP system is correlated; shared infrastructure dependencies are not inferred.")
     return {
         "incident": {"id": incident_id, "title": incident["title"], "severity": incident["severity"],
