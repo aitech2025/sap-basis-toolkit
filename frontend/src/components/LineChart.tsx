@@ -37,7 +37,7 @@ export function LineChart({ points, unit, height = 180, threshold, label }: {
   }, [points, threshold, height]);
 
   if (points.length < 2) {
-    return <p className="muted">Upload at least two snapshots to see a trend.</p>;
+    return <p className="muted">Collect at least two observations to see a trend.</p>;
   }
   const path = points.map((p, i) => `${i ? "L" : "M"}${geo.x(p.t).toFixed(1)},${geo.y(p.v).toFixed(1)}`).join(" ");
   const fmt = (v: number) => v.toLocaleString(undefined, { maximumFractionDigits: 1 });
