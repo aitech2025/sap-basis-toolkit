@@ -4,6 +4,7 @@ Revision ID: 20261117_0009
 Revises: 20261117_0008
 """
 from alembic import op
+from sqlalchemy import inspect
 
 from app.db import create_missing_tables, topology_assets, topology_links
 
@@ -15,7 +16,9 @@ depends_on = None
 
 def upgrade() -> None:
     bind = op.get_bind()
-    create_missing_tables(bind, [topology_assets, topology_links])
+    existing = set(inspect(bind).get_table_names())
+    missing = [table for table in (topology_assets, topology_links) if table.name not in existing]
+    create_missing_tables(bind, missing)
 
 
 def downgrade() -> None:
