@@ -46,7 +46,7 @@ def test_configuration_baseline_drift_and_secret_redaction(monkeypatch, tmp_path
 
         drift = client.get(f"/api/v1/systems/{system_id}/configuration/drift", headers=KEY).json()
         assert drift["status"] == "drift_detected"
-        assert drift["summary"] == {"added": 1, "removed": 0, "modified": 2}
+        assert drift["summary"] == {"added": 1, "removed": 0, "modified": 1}  # redacted secret changes are intentionally invisible
         assert any(change["path"] == "profile.login/min_password_lng" for change in drift["changes"])
         history = client.get(f"/api/v1/systems/{system_id}/configuration/snapshots", headers=KEY).json()
         assert len(history) == 2
