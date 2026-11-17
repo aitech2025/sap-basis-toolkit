@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api";
 import { ErrorBanner } from "../components/ui";
-import type { AnomaliesResponse, AvailabilityResponse, CapacityForecastResponse, IncidentCorrelationResponse } from "../types/intelligence";
+import type { AnomaliesResponse, AvailabilityResponse, CapacityForecastResponse, IncidentCorrelationResponse, RootCauseResponse } from "../types/intelligence";
 
 const WINDOWS = [{ label: "24 hours", value: 24 }, { label: "7 days", value: 168 }, { label: "30 days", value: 720 }];
 const fmt = (value: number | null | undefined, suffix = "") => value == null ? "—" : `${value.toLocaleString(undefined, { maximumFractionDigits: 1 })}${suffix}`;
@@ -26,6 +26,9 @@ export default function Intelligence() {
   const [anomalies, setAnomalies] = useState<AnomaliesResponse | null>(null);
   const [capacity, setCapacity] = useState<CapacityForecastResponse | null>(null);
   const [correlations, setCorrelations] = useState<IncidentCorrelationResponse | null>(null);
+  const [rootCause, setRootCause] = useState<RootCauseResponse | null>(null);
+  const [rootCauseLoading, setRootCauseLoading] = useState(false);
+  const [rootCauseError, setRootCauseError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
@@ -52,6 +55,13 @@ export default function Intelligence() {
   const forecastCount = capacity?.systems.length ?? 0;
   const thresholdCount = capacity?.systems.reduce((n, s) => n + Number(s.forecasts.disk.status === "threshold_projected" || s.forecasts.memory.status === "threshold_projected"), 0) ?? 0;
   const correlationCount = correlations?.incidents.length ?? 0;
+
+  const runRootCause = async (incidentId: number) => {
+    setRootCauseLoading(true); setRootCauseError(null); setRootCause(null);
+    try { setRootCause(await api.intelligenceRootCause(incidentId)); }
+    catch (e) { setRootCauseError(e instanceof Error ? e.message : "Root cause analysis failed"); }
+    finally { setRootCauseLoading(false); }
+  };
 
   return <div className="intelligence-page">
     <div className="dashboard-heading">
@@ -105,10 +115,25 @@ export default function Intelligence() {
       <div className="panel-heading"><div><span className="eyebrow">INCIDENT CONTEXT</span><h2>Related telemetry around incidents</h2></div><span className="panel-note">±30 minutes around opening</span></div>
       <p className="intelligence-disclaimer">Shows metric changes temporally near incident creation. Temporal association is not proof of causation or automated root-cause determination.</p>
       {correlations?.incidents.length ? <div className="intelligence-correlation-list">{correlations.incidents.map((i) => <article className="intelligence-correlation" key={i.incident_id}>
-        <div className="intelligence-correlation-head"><span className={`severity-pill ${i.severity}`}>{i.severity}</span><Link to={`/incidents/${i.incident_id}`}><strong>#{i.incident_id} · {i.title}</strong></Link><small>{i.sid ?? "Platform"} · {date(i.opened_at)}</small></div>
+        <div className="intelligence-correlation-head"><span className={`severity-pill ${i.severity}`}>{i.severity}</span><Link to={`/incidents/${i.incident_id}`}><strong>#{i.incident_id} · {i.title}</strong></Link><small>{i.sid ?? "Platform"} · {date(i.opened_at)}</small><button className="btn" disabled={rootCauseLoading || !i.system_id} onClick={() => void runRootCause(i.incident_id)}>{rootCauseLoading ? "Analysing…" : "Run RCA"}</button></div>
         {i.related_metrics.length ? <div className="intelligence-evidence">{i.related_metrics.map((m) => <div key={m.metric}><span>{m.metric}</span><strong>{m.change == null ? "Not enough paired samples" : `${m.change > 0 ? "+" : ""}${fmt(m.change)}`}</strong><small>{m.before_samples} before / {m.after_samples} after</small></div>)}</div> : <p className="muted">No metric observations found within the correlation window.</p>}
       </article>)}</div> : <div className="analytics-empty"><strong>No incidents in this analysis window</strong><p>Incident context will appear when incidents have been recorded alongside metric observations.</p></div>}
     </section>
+
+      {rootCauseError && <div className="intelligence-rca-error">{rootCauseError}</div>}
+      {rootCause && <div className="intelligence-rca">
+        <div className="intelligence-rca-heading"><div><span className="eyebrow">EVIDENCE-BASED DIAGNOSTICS</span><h3>Root cause hypotheses · #{rootCause.incident.id} {rootCause.incident.sid ? `· ${rootCause.incident.sid}` : ""}</h3></div><button className="btn" onClick={() => setRootCause(null)}>Close</button></div>
+        <p className="intelligence-disclaimer">{rootCause.interpretation}</p>
+        {rootCause.hypotheses.length ? <div className="intelligence-rca-hypotheses">{rootCause.hypotheses.map((h) => <article key={h.domain}>
+          <div className="intelligence-rca-hypothesis-head"><strong>{h.title}</strong><span className={`severity-pill ${h.confidence}`}>{h.confidence} evidence</span><strong>{h.score}/10</strong></div>
+          <p>{h.reason}</p>
+          <div className="intelligence-evidence">{h.supporting_signals.map((s) => <div key={s.metric}><span>{s.metric}</span><strong>{fmt(s.latest_value)} <small>/ threshold {fmt(s.threshold)}</small></strong><small>{s.change == null ? "No paired baseline" : `Change ${s.change > 0 ? "+" : ""}${fmt(s.change)}`}</small></div>)}</div>
+          <ul>{h.recommended_checks.map((r) => <li key={r}>{r}</li>)}</ul>
+        </article>)}</div> : <div className="analytics-empty"><strong>No supporting hypothesis could be ranked</strong><p>Check telemetry coverage and collector health before drawing conclusions.</p></div>}
+        <div className="intelligence-rca-coverage"><strong>Evidence coverage</strong><span>{rootCause.coverage.metrics_observed} metrics · {rootCause.coverage.monitor_snapshots_in_window ?? 0} monitor snapshots · {rootCause.coverage.monitors_observed?.join(", ") || "no monitor snapshots"}</span></div>
+        {rootCause.limitations.map((limitation) => <p className="intelligence-disclaimer" key={limitation}>• {limitation}</p>)}
+      </div>}
+
     <div className="dashboard-footer"><span>Sentinel · Intelligent operations</span><span>All insights are computed from recorded telemetry; no missing values are fabricated.</span></div>
   </div>;
 }

@@ -1,5 +1,5 @@
 import type { AnalyticsMetric, AnalyticsSeries, AnalyticsSummary } from "./types/analytics";
-import type { AnomaliesResponse, AvailabilityResponse, CapacityForecastResponse, IncidentCorrelationResponse } from "./types/intelligence";
+import type { AnomaliesResponse, AvailabilityResponse, CapacityForecastResponse, IncidentCorrelationResponse, RootCauseResponse } from "./types/intelligence";
 import type {
   AlertEvent, Catalogue, CertificateSummary, GrowthReport, Overview, PostcheckResult, PrecheckResult, Run,
   AuditEntry, Collector, ControlStatus, ImportHistory, Operation, RegisterResult, SapInstance, ScanResult, Incident, IncidentCounts, JobReport, LockReport, MaintenanceWindow, Me, MonitorDetail, MonitorsResponse, RouteProposal, Rule, RuleMetric, User, SapSystem, SystemDetail, SystemInput, SystemOverviewData, SystemRoutes, Topology, TransportRoute, UserReport,
@@ -115,6 +115,7 @@ export const api = {
     if (landscape) params.set("landscape", landscape);
     return request<CapacityForecastResponse>(`/api/v1/intelligence/capacity-forecasts?${params.toString()}`);
   },
+  intelligenceRootCause: (incidentId: number) => request<RootCauseResponse>(`/api/v1/intelligence/root-cause/${incidentId}`),
   intelligenceCorrelations: (hours = 24, landscape?: string) => {
     const params = new URLSearchParams({ hours: String(hours) });
     if (landscape) params.set("landscape", landscape);

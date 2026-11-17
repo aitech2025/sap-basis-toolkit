@@ -597,3 +597,19 @@ a { transition: color .15s ease, background .15s ease, border-color .15s ease; }
   .intelligence-anomaly, .intelligence-forecast { grid-template-columns: 1fr; }
   .intelligence-forecast-system { grid-column: auto; }
 }
+
+
+/* Evidence-based root cause analysis */
+.intelligence-rca { margin-top: 14px; border: 1px solid var(--line); border-radius: 10px; padding: 14px; background: var(--surface); }
+.intelligence-rca-heading, .intelligence-rca-hypothesis-head { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; }
+.intelligence-rca-heading h3 { margin: 4px 0 0; font-size: 16px; }
+.intelligence-rca-hypotheses { display: flex; flex-direction: column; gap: 10px; }
+.intelligence-rca-hypotheses article { border: 1px solid var(--line); border-radius: 8px; padding: 12px; }
+.intelligence-rca-hypothesis-head strong:first-child { flex: 1; min-width: 180px; }
+.intelligence-rca-hypotheses article > p { color: var(--muted); font-size: 11px; margin: 7px 0; }
+.intelligence-rca-hypotheses ul { padding-left: 19px; margin: 9px 0 0; color: var(--ink-2); font-size: 11px; line-height: 1.7; }
+.intelligence-rca-coverage { display: flex; flex-wrap: wrap; gap: 10px; margin: 12px 0; padding: 9px 11px; border-radius: 7px; background: var(--surface-2); font-size: 11px; }
+.intelligence-rca-coverage span { color: var(--muted); }
+.intelligence-rca-error { border: 1px solid #dc2626; color: #b42318; border-radius: 8px; padding: 10px; font-size: 12px; }
+.severity-pill.medium { color: #9a6700; background: #fff4d6; }
+.severity-pill.high { color: #067647; background: #d1fadf; }
