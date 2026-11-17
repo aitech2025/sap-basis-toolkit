@@ -13,6 +13,7 @@ A lightweight, modular toolkit for SAP Basis operations. The first MVP is SAP Ba
 - Disable targets without deleting their monitoring history.
 - Protect all management APIs with an API key.
 - Use SQLite locally or PostgreSQL for shared deployments.
+- Version the database schema with Alembic, including an upgrade path for databases created by earlier MVP versions.
 
 **Scope note:** this release monitors certificates presented by network endpoints. It does not yet inventory all certificates stored internally in SAP STRUST/PSE. The SAP-specific collector is a separate integration requiring validation against the target SAP_BASIS release.
 
@@ -35,6 +36,16 @@ Set `API_AUTH_TOKEN` to a long random secret before starting the API:
 Open http://127.0.0.1:8000/docs for the API. Send the configured key in the `X-API-Key` header. `/health` remains public for health probes. If the token is missing, management APIs fail closed with HTTP 503.
 
 Copy backend/.env.example to .env and export its settings into the process environment. For PostgreSQL set DATABASE_URL to postgresql+psycopg://sentinel:password@localhost:5432/sentinel.
+
+## Database upgrades
+
+Run migrations from the backend directory before deploying a release:
+
+    alembic upgrade head
+
+The baseline migration supports fresh databases and databases initialized by earlier MVP versions. It creates missing tables and enforces uniqueness on `(hostname, port)` without dropping certificate history. If an older database contains duplicate hostname/port pairs, migration stops with examples; resolve those duplicates before retrying. Back up the database before every production migration.
+
+For new local development databases, the API bootstrap also creates the current schema. Alembic remains the deployment mechanism for controlled upgrades and schema version tracking.
 
 ## API
 

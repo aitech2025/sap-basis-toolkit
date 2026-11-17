@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select, update
+from sqlalchemy.exc import IntegrityError
 from ..db import get_db, certificate_checks, notification_events, targets
 from ..schemas import TargetCreate
 from ..security import require_api_key
@@ -21,20 +22,23 @@ def serialize(row):
 
 @router.post("/targets", status_code=201)
 def create_target(payload: TargetCreate):
-    with get_db() as connection:
-        exists = connection.execute(
-            select(targets.c.id).where(
-                targets.c.hostname == payload.hostname, targets.c.port == payload.port
-            )
-        ).first()
-        if exists:
-            raise HTTPException(409, "This hostname and port are already registered")
-        row = connection.execute(
-            targets.insert().values(
-                name=payload.name, hostname=payload.hostname, port=payload.port
-            ).returning(targets)
-        ).mappings().one()
-        return serialize(row)
+    try:
+        with get_db() as connection:
+            exists = connection.execute(
+                select(targets.c.id).where(
+                    targets.c.hostname == payload.hostname, targets.c.port == payload.port
+                )
+            ).first()
+            if exists:
+                raise HTTPException(409, "This hostname and port are already registered")
+            row = connection.execute(
+                targets.insert().values(
+                    name=payload.name, hostname=payload.hostname, port=payload.port
+                ).returning(targets)
+            ).mappings().one()
+            return serialize(row)
+    except IntegrityError:
+        raise HTTPException(409, "This hostname and port are already registered")
 
 
 @router.get("/targets")

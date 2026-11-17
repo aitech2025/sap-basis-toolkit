@@ -138,3 +138,30 @@ def test_scheduler_sweeps_enabled_targets(monkeypatch, tmp_path):
     monkeypatch.setattr(scheduler, "check_target", lambda target_id: seen.append(target_id))
     scheduler.run_scheduled_checks()
     assert len(seen) == 1
+
+
+def test_legacy_database_uniqueness_upgrade_is_safe(tmp_path):
+    from sqlalchemy import create_engine, inspect, text
+    from app.db import ensure_target_uniqueness
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'legacy.db'}")
+    with engine.begin() as connection:
+        connection.execute(text(
+            "CREATE TABLE targets (id INTEGER PRIMARY KEY, hostname VARCHAR(253) NOT NULL, port INTEGER NOT NULL)"
+        ))
+        connection.execute(text(
+            "INSERT INTO targets (hostname, port) VALUES "
+            "('qa.example.test', 443), ('qa.example.test', 443)"
+        ))
+        try:
+            ensure_target_uniqueness(connection)
+        except RuntimeError as exc:
+            assert "duplicate hostname/port" in str(exc)
+        else:
+            raise AssertionError("Migration must stop rather than discard duplicate targets")
+
+        connection.execute(text("DELETE FROM targets WHERE id = 2"))
+        ensure_target_uniqueness(connection)
+        index_names = {item["name"] for item in inspect(connection).get_indexes("targets")}
+        assert "uq_targets_hostname_port" in index_names
+    engine.dispose()

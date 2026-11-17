@@ -12,6 +12,7 @@
 - Target disable operation that preserves target and check history.
 - API-key protection for all management endpoints; /health remains public.
 - SQLAlchemy storage supporting SQLite for local development and PostgreSQL for shared deployments.
+- Alembic baseline migration compatible with fresh databases and earlier MVP databases created through metadata.create_all().
 
 ## API
 
@@ -24,6 +25,10 @@
 - GET /api/v1/notifications?limit=100
 
 All /api/v1 endpoints require the configured X-API-Key header. If API_AUTH_TOKEN is absent, these endpoints fail closed with HTTP 503.
+
+## Database migrations
+
+Run `alembic upgrade head` from the backend directory before deploying. The initial migration creates missing tables and adds a unique index for hostname/port where absent. It does not delete or rewrite certificate history. If duplicate hostname/port pairs exist in a legacy database, the migration fails with examples rather than silently deleting records. Resolve duplicates and retry. Always take a database backup first.
 
 ## Configuration
 
@@ -51,6 +56,7 @@ A typed SAP PSE collector contract is included, but the RFC implementation is de
 
 1. Tenant isolation, user identities/RBAC and audit trail.
 2. Dedicated scheduler worker and retry/backoff policy.
-3. Implement and validate the SAP STRUST/PSE adapter for target SAP_BASIS releases.
-4. Certificate chain inventory and endpoint discovery.
-5. Dashboard and deployment packaging.
+3. Add strict target registration allowlisting and egress policy enforcement.
+4. Implement and validate the SAP STRUST/PSE adapter for target SAP_BASIS releases.
+5. Certificate chain inventory and endpoint discovery.
+6. Dashboard and deployment packaging.

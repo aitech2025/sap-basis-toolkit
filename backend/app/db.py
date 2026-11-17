@@ -2,10 +2,10 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from sqlalchemy import (
-    Boolean, Column, DateTime, ForeignKey, Integer, MetaData, String, Table,
-    Text, UniqueConstraint, create_engine, text,
+    Boolean, Column, DateTime, ForeignKey, Index, Integer, MetaData, String,
+    Table, Text, create_engine, inspect, select, text,
 )
-from sqlalchemy.engine import Engine
+from sqlalchemy.engine import Connection, Engine
 
 from .config import DATABASE_URL
 
@@ -22,8 +22,9 @@ targets = Table(
     Column("sap_system_id", String(3)),
     Column("sap_client", String(3)),
     Column("pse_name", String(255)),
-    UniqueConstraint("hostname", "port", name="uq_targets_hostname_port"),
 )
+Index("uq_targets_hostname_port", targets.c.hostname, targets.c.port, unique=True)
+
 certificate_checks = Table(
     "certificate_checks", metadata,
     Column("id", Integer, primary_key=True, autoincrement=True),
@@ -83,8 +84,45 @@ def get_db():
         yield connection
 
 
+def ensure_target_uniqueness(connection: Connection) -> None:
+    """Upgrade legacy targets tables without silently accepting duplicate endpoints."""
+    inspector = inspect(connection)
+    if "targets" not in inspector.get_table_names():
+        return
+
+    index_names = {item["name"] for item in inspector.get_indexes("targets")}
+    constraint_names = {
+        item.get("name") for item in inspector.get_unique_constraints("targets")
+    }
+    if "uq_targets_hostname_port" in index_names or "uq_targets_hostname_port" in constraint_names:
+        return
+
+    duplicates = connection.execute(
+        text(
+            "SELECT hostname, port, COUNT(*) AS duplicate_count "
+            "FROM targets GROUP BY hostname, port HAVING COUNT(*) > 1 LIMIT 10"
+        )
+    ).mappings().all()
+    if duplicates:
+        examples = ", ".join(
+            f"{row['hostname']}:{row['port']} ({row['duplicate_count']} rows)"
+            for row in duplicates
+        )
+        raise RuntimeError(
+            "Cannot enforce unique certificate targets: duplicate hostname/port "
+            f"records exist. Resolve these records and retry: {examples}"
+        )
+
+    Index(
+        "uq_targets_hostname_port", targets.c.hostname, targets.c.port, unique=True
+    ).create(bind=connection, checkfirst=True)
+
+
 def init_db() -> None:
-    metadata.create_all(get_engine())
+    engine = get_engine()
+    metadata.create_all(engine)
+    with engine.begin() as connection:
+        ensure_target_uniqueness(connection)
 
 
 def reset_engine_for_tests() -> None:
