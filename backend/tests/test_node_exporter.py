@@ -57,6 +57,10 @@ def test_node_exporter_collector_persists_metrics(monkeypatch, tmp_path):
                 "use_tls": False, "interval_seconds": 300,
             })
         assert collector.status_code == 201, collector.text
+        duplicate = client.post(f"/api/v1/systems/{system['id']}/collectors", headers={"X-API-Key": "test-secret"}, json={
+            "type": "node_exporter", "host": "sapapp2.corp.example.test", "port": 9100, "use_tls": False,
+        })
+        assert duplicate.status_code == 422 and "Only one node_exporter" in duplicate.json()["detail"]
         result = client.post(f"/api/v1/collectors/{collector.json()['id']}/run",
                              headers={"X-API-Key": "test-secret"})
         assert result.status_code == 200, result.text
