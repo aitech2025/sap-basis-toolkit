@@ -109,10 +109,31 @@ def _send_once(target: dict, fingerprint: str, channels) -> None:
             ))
 
 
+def _record_incident(target: dict, result: dict) -> None:
+    from . import incidents
+    status = result.get("status")
+    if status not in ("unreachable", "expired", "critical", "warning"):
+        return
+    severity = "critical" if status in ("unreachable", "expired", "critical") else "warning"
+    what = "endpoint unreachable" if status == "unreachable" else f"certificate {status} ({result.get('days_remaining')} days left)"
+    try:
+        incidents.raise_module_incident(
+            target.get("system_id"), f"certificate-endpoint:{target['id']}:{status if status == 'unreachable' else 'expiry'}",
+            f"{target['name']} ({target['hostname']}:{target['port']}): {what}", severity,
+            {"hostname": target["hostname"], "port": target["port"], "not_after": result.get("not_after"),
+             "error": result.get("error")})
+    except Exception:
+        pass
+
+
 def dispatch_alerts(target: dict, result: dict, last_healthy_check_id: int | None = None) -> None:
+    _record_incident(target, result)
     channels = _notification_channels(target, result)
     if not channels:
         return
+    from . import incidents
+    if target.get("system_id") and incidents.active_maintenance(incidents._system(target["system_id"])):
+        return  # planned downtime: no notifications
 
     if result.get("status") == "unreachable":
         # A new fingerprint is created after every successful check, so a later outage alerts again.

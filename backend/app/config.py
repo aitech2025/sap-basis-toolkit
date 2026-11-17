@@ -75,3 +75,26 @@ LOCK_WARNING_MINUTES = int(os.getenv("LOCK_WARNING_MINUTES", "60"))
 LOCK_CRITICAL_MINUTES = int(os.getenv("LOCK_CRITICAL_MINUTES", "240"))
 OPS_DATA_STALE_HOURS = int(os.getenv("OPS_DATA_STALE_HOURS", "24"))
 OPS_RETENTION_DAYS = int(os.getenv("OPS_RETENTION_DAYS", "90"))
+
+# --- Platform: authentication -------------------------------------------------------------
+# Signs session tokens and encrypts stored collector credentials. Falls back to a key derived
+# from API_AUTH_TOKEN so existing deployments keep working, but set it explicitly in production.
+SECRET_KEY = os.getenv("SECRET_KEY", "").strip()
+SESSION_HOURS = int(os.getenv("SESSION_HOURS", "12"))
+ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "admin").strip()
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "")
+LOGIN_MAX_FAILURES = int(os.getenv("LOGIN_MAX_FAILURES", "5"))
+AUDIT_RETENTION_DAYS = int(os.getenv("AUDIT_RETENTION_DAYS", "365"))
+
+# --- Live collectors ----------------------------------------------------------------------
+COLLECTOR_TICK_SECONDS = int(os.getenv("COLLECTOR_TICK_SECONDS", "30"))
+COLLECTOR_TIMEOUT_SECONDS = float(os.getenv("COLLECTOR_TIMEOUT_SECONDS", "15"))
+COLLECTOR_MAX_PARALLEL = int(os.getenv("COLLECTOR_MAX_PARALLEL", "4"))
+WP_LONG_RUNNING_SECONDS = int(os.getenv("WP_LONG_RUNNING_SECONDS", "1800"))
+METRIC_RETENTION_DAYS = int(os.getenv("METRIC_RETENTION_DAYS", "30"))
+SNAPSHOT_RETENTION_DAYS = int(os.getenv("SNAPSHOT_RETENTION_DAYS", "7"))
+HANA_GROWTH_SNAPSHOT_HOURS = int(os.getenv("HANA_GROWTH_SNAPSHOT_HOURS", "24"))
+# Optional JSON file overriding/adding collector SQL queries (see docs/monitoring.md).
+QUERY_OVERRIDES_FILE = os.getenv("QUERY_OVERRIDES_FILE", "").strip()
+# Demo mode: collectors with host "simulator" produce synthetic data. Never enable in production.
+SIMULATOR_ENABLED = os.getenv("SIMULATOR_ENABLED", "false").lower() == "true"

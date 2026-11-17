@@ -18,6 +18,8 @@ services:
     build:
       context: .
       dockerfile: backend/Dockerfile
+      args:
+        HANA_CLIENT: ${HANA_CLIENT:-true}
     command: ["alembic", "upgrade", "head"]
     environment: &app-environment
       DATABASE_URL: postgresql+psycopg://sentinel:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}@db:5432/sentinel
@@ -52,6 +54,18 @@ services:
       LOCK_CRITICAL_MINUTES: ${LOCK_CRITICAL_MINUTES:-240}
       OPS_DATA_STALE_HOURS: ${OPS_DATA_STALE_HOURS:-24}
       OPS_RETENTION_DAYS: ${OPS_RETENTION_DAYS:-90}
+      SECRET_KEY: ${SECRET_KEY:?Set SECRET_KEY in the project .env file}
+      SESSION_HOURS: ${SESSION_HOURS:-12}
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
+      COLLECTOR_TICK_SECONDS: ${COLLECTOR_TICK_SECONDS:-30}
+      COLLECTOR_TIMEOUT_SECONDS: ${COLLECTOR_TIMEOUT_SECONDS:-15}
+      COLLECTOR_MAX_PARALLEL: ${COLLECTOR_MAX_PARALLEL:-4}
+      WP_LONG_RUNNING_SECONDS: ${WP_LONG_RUNNING_SECONDS:-1800}
+      METRIC_RETENTION_DAYS: ${METRIC_RETENTION_DAYS:-30}
+      SNAPSHOT_RETENTION_DAYS: ${SNAPSHOT_RETENTION_DAYS:-7}
+      QUERY_OVERRIDES_FILE: ${QUERY_OVERRIDES_FILE:-}
+      SIMULATOR_ENABLED: ${SIMULATOR_ENABLED:-false}
     depends_on:
       db:
         condition: service_healthy
@@ -61,6 +75,8 @@ services:
     build:
       context: .
       dockerfile: backend/Dockerfile
+      args:
+        HANA_CLIENT: ${HANA_CLIENT:-true}
     command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
     environment: *app-environment
     ports:
@@ -79,6 +95,8 @@ services:
     build:
       context: .
       dockerfile: backend/Dockerfile
+      args:
+        HANA_CLIENT: ${HANA_CLIENT:-true}
     command: ["python", "-m", "app.worker"]
     environment: *app-environment
     depends_on:

@@ -8,11 +8,11 @@ class TargetPolicyError(ValueError):
     """Raised when a target is outside the configured outbound access policy."""
 
 
-def validate_target(hostname: str, port: int) -> None:
+def validate_target(hostname: str, port: int, check_port: bool = True) -> None:
     host = hostname.strip().lower().rstrip(".")
     if not config.ALLOWED_TARGET_HOSTS:
         raise TargetPolicyError("Target registration is disabled: configure ALLOWED_TARGET_HOSTS first")
-    if port not in config.ALLOWED_TARGET_PORTS:
+    if check_port and port not in config.ALLOWED_TARGET_PORTS:
         raise TargetPolicyError(
             f"Port {port} is not permitted; configure ALLOWED_TARGET_PORTS explicitly"
         )
@@ -33,8 +33,12 @@ def validate_target(hostname: str, port: int) -> None:
     raise TargetPolicyError("Hostname is not included in ALLOWED_TARGET_HOSTS")
 
 
-def resolve_approved_addresses(hostname: str, port: int) -> list[str]:
-    validate_target(hostname, port)
+def resolve_approved_addresses(hostname: str, port: int, check_port: bool = True) -> list[str]:
+    """Validate host (and port) against policy and return DNS answers that are all inside policy.
+
+    Collectors pass check_port=False and validate their protocol-specific port ranges themselves
+    (sapcontrol 5<NN>13/14, HANA SQL 3<NN>xx)."""
+    validate_target(hostname, port, check_port)
     try:
         answers = socket.getaddrinfo(hostname, port, type=socket.SOCK_STREAM)
     except socket.gaierror as exc:

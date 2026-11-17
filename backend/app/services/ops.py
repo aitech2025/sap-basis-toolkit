@@ -43,6 +43,12 @@ FINAL = {"cancelled", "finished"}
 def parse_jobs(raw: bytes | str, zone, captured_at: datetime) -> list[dict]:
     rows = read_rows(raw)
     require_columns(rows, {"job name": JOB_NAME, "status": JOB_STATUS})
+    return parse_job_rows(rows, zone, captured_at)
+
+
+def parse_job_rows(rows: list[dict], zone, captured_at: datetime) -> list[dict]:
+    """Rows keyed by normalised column names (TBTCO via SQL or a parsed export)."""
+    rows = [{k: "" if v is None else str(v) for k, v in row.items()} for row in rows]
     jobs = []
     for row in rows:
         name = pick(row, *JOB_NAME).strip()
@@ -67,9 +73,13 @@ def parse_jobs(raw: bytes | str, zone, captured_at: datetime) -> list[dict]:
 
 
 def store_jobs(system: dict, raw: bytes, zone, captured_at: datetime | None = None) -> dict:
-    """Upsert job runs; returns counts and newly seen cancellations (which trigger alerts)."""
+    """Upsert job runs from an SM37/TBTCO export."""
     captured_at = captured_at or datetime.now(timezone.utc)
-    jobs = parse_jobs(raw, zone, captured_at)
+    return store_job_list(system, parse_jobs(raw, zone, captured_at), captured_at)
+
+
+def store_job_list(system: dict, jobs: list[dict], captured_at: datetime) -> dict:
+    """Upsert job runs; returns counts and newly seen cancellations (which trigger alerts)."""
     inserted = updated = 0
     new_failures = []
     with get_db() as connection:
@@ -116,7 +126,7 @@ def _alert_job_failures(system: dict, failures: list[dict]) -> None:
             {"sid": system["sid"], "job": name, "job_count": last["job_count"], "scheduled_by": last["scheduled_by"],
              "started": last["start_at"].isoformat() if last["start_at"] else None,
              "next_step": "Check the job log in SM37 and the short dump in ST22"},
-            system_id=system["id"],
+            system_id=system["id"], incident_key=f"job:{system['id']}:{name}",
         )
 
 
@@ -264,6 +274,7 @@ def store_locks(system: dict, raw: bytes, zone, captured_at: datetime | None = N
              "client": lock["client"], "locked_since": lock["locked_at"].isoformat(),
              "next_step": "Check the owner's session in SM04/SM50 before deleting the lock in SM12"},
             system_id=system["id"],
+            incident_key=f"lock:{system['id']}:{lock['user_name']}:{lock['table_name']}:{lock['argument']}:{lock['locked_at'].isoformat()}",
         )
     return {"snapshot_id": snapshot_id, "captured_at": captured_at.isoformat(), "locks": len(locks),
             "long_running": len(long_locks)}

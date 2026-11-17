@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from apscheduler.schedulers.blocking import BlockingScheduler
 from sqlalchemy import select
 
-from ..config import CHECK_INTERVAL_MINUTES, GROWTH_EVAL_INTERVAL_MINUTES
+from ..config import CHECK_INTERVAL_MINUTES, COLLECTOR_TICK_SECONDS, GROWTH_EVAL_INTERVAL_MINUTES
 from ..db import get_db, sap_systems, targets
 from .checks import check_target
 
@@ -40,6 +40,24 @@ def run_toolkit_evaluations() -> None:
             logger.exception("Scheduled %s evaluation failed", name)
 
 
+def run_collectors_tick() -> None:
+    from .collectors import runner
+    try:
+        runner.run_due()
+    except Exception:
+        logger.exception("Collector tick failed")
+
+
+def run_housekeeping() -> None:
+    from .. import auth
+    from . import monitors
+    for name, job in (("metrics/snapshots", monitors.prune), ("audit log", auth.prune_audit)):
+        try:
+            job()
+        except Exception:
+            logger.exception("Housekeeping %s failed", name)
+
+
 def run_scheduler_forever() -> None:
     """Run exactly one scheduler process; API workers do not start schedulers."""
     scheduler = BlockingScheduler(timezone="UTC")
@@ -63,6 +81,12 @@ def run_scheduler_forever() -> None:
         coalesce=True,
         next_run_time=datetime.now(timezone.utc),
     )
+    scheduler.add_job(
+        run_collectors_tick, "interval", seconds=max(10, COLLECTOR_TICK_SECONDS), id="collectors",
+        replace_existing=True, max_instances=1, coalesce=True, next_run_time=datetime.now(timezone.utc),
+    )
+    scheduler.add_job(run_housekeeping, "interval", hours=6, id="housekeeping", replace_existing=True,
+                      max_instances=1, coalesce=True)
     logger.info("Starting certificate scheduler; interval=%s minutes", CHECK_INTERVAL_MINUTES)
     try:
         scheduler.start()

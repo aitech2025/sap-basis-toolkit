@@ -57,6 +57,18 @@ Endpoint TLS discovery sees only certificates presented during a network handsha
 - `lock_snapshots` / `lock_entries`: each SM12 upload is a snapshot. Lock age = snapshot time − lock time; when SM12 shows only a time, the most recent occurrence before the snapshot is used. Persistence counts how many snapshots contained the same user/table/argument/lock time.
 - `sap_systems.timezone` converts SAP-local timestamps to UTC. Health adds jobs (warning on cancellations in 24 h or long-running jobs) and locks (warning ≥ 60 min, critical ≥ 240 min), ignoring data older than `OPS_DATA_STALE_HOURS`.
 
+## Monitoring platform (v1.0)
+
+- **Auth (`app/auth.py`):** users with scrypt hashes; stateless HMAC tokens carrying the user's `token_version` (bumped to revoke sessions); role checks by HTTP method and path (viewer for reads, operator for changes, admin for collectors/rules/users/audit); login throttling; and an `audit_log` written by middleware for every mutation and sign-in.
+- **Collectors (`services/collectors/`):**
+  - `sapcontrol.py`: a SOAP client that pins connections to policy-validated IPs while keeping SNI and hostname verification.
+  - `hana.py`: an hdbcli client and query catalogue (overridable).
+  - `simulator.py`: demo data.
+  - `runner.py`: CRUD with encrypted passwords (`services/vault.py`), test connections, run/persist, and due-collector scheduling in the worker (thread pool).
+- **Monitors (`services/monitors.py`):** normalised builders per monitor shared by collectors and uploads, JSON snapshots, metric samples with retention, and upload parsers for ST22/SM21/SM13/SM58/SMQ/WE02.
+- **Incidents (`services/incidents.py`):** built-in plus scoped rules; evaluation per collector run (open/escalate/de-escalate/auto-resolve); module alerts mapped to incidents; maintenance windows suppress notifications; PagerDuty trigger/resolve.
+- **Health:** the overview health of each system is the worst of live availability, open incidents, certificates, capacity forecast, jobs, locks and the last import. Stale data is ignored.
+
 ## UI
 
 React 18 + TypeScript + Vite in `frontend/`. `npm run build` emits into `backend/app/static`; FastAPI serves assets and falls back to `index.html` for client-side routes (never for `/api/*`). The Docker image builds the UI in a Node stage. No UI component library; single-series charts are hand-built SVG with hover tooltips and a data-table fallback.
@@ -74,7 +86,7 @@ Data retention: growth snapshots and imported certificates are stored; user and 
 
 ## Remaining production hardening
 
-1. Tenant isolation, user identities/RBAC and audit trail.
+1. Tenant isolation for MSP use; SSO (OIDC/SAML) on top of the built-in users.
 2. Distributed scheduler locking if multiple scheduler replicas are required.
 3. Centralized secrets management, TLS reverse proxy, network egress firewall and backup/restore runbooks.
 4. SAP STRUST/PSE adapter and certificate-chain inventory.

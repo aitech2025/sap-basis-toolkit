@@ -1,6 +1,13 @@
 # SAP Basis Toolkit
 
-A multi-system SAP Basis operations platform (SAP Basis Sentinel) with a web UI and REST API. Register every SAP system in your landscape once, from ECC and S/4HANA to BW, CRM, Solution Manager, PI/PO and NetWeaver ABAP or Java, and run the same modules against all of them.
+An end-to-end SAP monitoring and Basis operations platform (SAP Basis Sentinel) with a web UI and REST API. Register every SAP system in your landscape once, from ECC and S/4HANA to BW, CRM, Solution Manager, PI/PO and NetWeaver ABAP or Java. Then:
+
+- **Live monitoring:** availability, instances and work processes through the SAP Start Service (sapcontrol); HANA memory/CPU/disk, alerts, backups and system replication through read-only HANA SQL; and ABAP short dumps, system log, update errors, tRFC/qRFC and IDocs.
+- **Incident management:** configurable alert rules (global, landscape or system), an incident lifecycle (open → acknowledged → resolved, with assignment, comments and timeline), auto-resolve, maintenance windows, and Slack/Teams/PagerDuty/email notifications.
+- **Basis operations:** certificate expiry, table growth forecasts, user and licence optimisation, transport pre/post checks and landscape routes, background job failures and long-running locks.
+- **Security:** named users with viewer/operator/admin roles, signed sessions, an audit log, encrypted collector credentials and an outbound host allowlist.
+
+See [docs/monitoring.md](docs/monitoring.md) for collector setup, required SAP/HANA authorisations, rules and incidents.
 
 ## Supported systems
 
@@ -80,7 +87,7 @@ The growth, user and transport modules work from standard SE16/SUIM/ST03N/DB02 e
 Requires Docker Engine and the Docker Compose plugin.
 
 1. Copy the root `.env.example` to `.env`.
-2. Replace `POSTGRES_PASSWORD` and `API_AUTH_TOKEN` with strong unique secrets.
+2. Replace `POSTGRES_PASSWORD`, `API_AUTH_TOKEN` and `SECRET_KEY` (`openssl rand -hex 32`) with strong unique secrets.
 3. Set `ALLOWED_TARGET_HOSTS` to approved exact hostnames and/or wildcard subdomains.
 4. For private SAP networks, set `ALLOWED_TARGET_CIDRS` to the narrowest possible ranges. Never use broad ranges such as `0.0.0.0/0`.
 5. Set `ALLOWED_TARGET_PORTS` to the required HTTPS listener ports only (default 443; SAP examples may include 44300 or 8443).
@@ -88,7 +95,7 @@ Requires Docker Engine and the Docker Compose plugin.
 
 The stack runs PostgreSQL, a one-shot Alembic migration, the API and one dedicated scheduler worker. The API does not start a scheduler, so it can scale horizontally without duplicating sweeps. Keep exactly one scheduler replica unless distributed scheduler locking is added.
 
-The API is available at `http://localhost:8000`; send the configured key in `X-API-Key`. Use a TLS-terminating reverse proxy and restrict API network exposure for non-local access.
+Open `http://localhost:8000`. On first start, create the administrator; first-run setup asks for the server API key. Then add users, register systems and add live collectors under each system's *Setup* tab. Scripts can keep using the API key (`X-API-Key`), which acts as an admin service account; people sign in with their own accounts so the audit log names them. Use a TLS-terminating reverse proxy and restrict API network exposure for non-local access.
 
 ## Outbound target security
 
@@ -156,11 +163,14 @@ If you enable PagerDuty or Slack/Teams, allow egress from the API and scheduler 
 
 Interactive OpenAPI docs: `/docs`. Main groups:
 
-- `GET /health` (public) · `GET /` UI
+- `GET /health` (public) · `GET /` UI · `GET /api/v1/auth/status`, `POST /api/v1/auth/setup`, `POST /api/v1/auth/login` (public)
+- Users & audit: `GET /api/v1/me`, `POST /api/v1/me/password`, `GET|POST /api/v1/users`, `PATCH /api/v1/users/{id}`, `GET /api/v1/audit`
+- Live monitoring: `GET|POST /api/v1/systems/{id}/collectors`, `POST /api/v1/systems/{id}/collectors/test`, `PATCH|DELETE /api/v1/collectors/{id}`, `POST /api/v1/collectors/{id}/run`, `GET /api/v1/systems/{id}/monitors[/{monitor}]`, `POST /api/v1/systems/{id}/monitors/{monitor}/upload`
+- Incidents: `GET /api/v1/incidents`, `GET /api/v1/incidents/counts`, `GET /api/v1/incidents/{id}`, `POST /api/v1/incidents/{id}/{acknowledge|resolve|reopen|assign|comment}`, `GET|POST /api/v1/rules`, `PATCH|DELETE /api/v1/rules/{id}`, `GET /api/v1/rules/metrics`, `GET|POST /api/v1/maintenance`, `POST /api/v1/maintenance/{id}/end`
 - Registry: `GET /api/v1/meta/catalogue`, `GET|POST /api/v1/systems`, `GET|PATCH|DELETE /api/v1/systems/{id}`, `GET /api/v1/landscapes`
 - Transport routes: `GET|POST /api/v1/routes`, `DELETE /api/v1/routes/{id}`, `GET /api/v1/landscapes/{name}/topology`, `POST /api/v1/landscapes/{name}/routes/suggest[?apply=true]`, `GET /api/v1/systems/{id}/routes`
 - Landscape: `GET /api/v1/overview`, `GET /api/v1/certificates/summary`, `GET /api/v1/alerts`
 - Endpoints: `POST|GET /api/v1/targets` (with `system_id`), `PATCH /api/v1/targets/{id}`, `.../enable`, `.../disable`, `POST .../check`, `GET /api/v1/checks`
 - Per system (`/api/v1/systems/{id}/…`): `overview`, `transports/history`, `jobs/snapshots`, `jobs/report`, `locks/snapshots`, `locks/report`, `certificates`, `certificates/import`, `certificates/{cert_id}` (DELETE), `growth/snapshots`, `growth/capacity`, `growth/report`, `users/analyze`, `transports/precheck`, `transports/postcheck`, `runs`
 
-All management endpoints require `X-API-Key`. Run tests from `backend` with `pytest -q`.
+All other endpoints require a signed-in user (`Authorization: Bearer <token>`) or the API key (`X-API-Key`). Reads need viewer, changes need operator, and collectors/rules/users/audit need admin. Run tests from `backend` with `pytest -q`.

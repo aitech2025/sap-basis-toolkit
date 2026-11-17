@@ -219,6 +219,149 @@ lock_entries = Table(
 )
 Index("ix_lock_entries_snapshot", lock_entries.c.snapshot_id)
 
+# ---------------------------------------------------------------- platform: users & audit
+users = Table(
+    "users", metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("username", String(64), nullable=False),
+    Column("display_name", String(120)),
+    Column("email", String(254)),
+    Column("password_hash", String(300), nullable=False),
+    Column("role", String(20), nullable=False),
+    Column("active", Boolean, nullable=False, default=True, server_default=true()),
+    Column("token_version", Integer, nullable=False, default=1, server_default=text("1")),
+    Column("created_at", DateTime(timezone=True), nullable=False, server_default=text("CURRENT_TIMESTAMP")),
+    Column("last_login_at", DateTime(timezone=True)),
+)
+Index("uq_users_username", users.c.username, unique=True)
+
+audit_log = Table(
+    "audit_log", metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("at", DateTime(timezone=True), nullable=False, server_default=text("CURRENT_TIMESTAMP")),
+    Column("username", String(64), nullable=False),
+    Column("action", String(80), nullable=False),
+    Column("target", String(300)),
+    Column("status", Integer),
+    Column("detail", Text),
+    Column("ip", String(64)),
+)
+Index("ix_audit_log_at", audit_log.c.at)
+
+# ---------------------------------------------------------------- live collectors & monitors
+collectors = Table(
+    "collectors", metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    SYSTEM_FK(),
+    Column("type", String(20), nullable=False),          # sapcontrol | hana
+    Column("host", String(253), nullable=False),
+    Column("port", Integer, nullable=False),
+    Column("use_tls", Boolean, nullable=False, default=True),
+    Column("verify_tls", Boolean, nullable=False, default=True),
+    Column("username", String(120)),
+    Column("password_enc", Text),
+    Column("database_name", String(64)),                # HANA tenant (informational / SYSTEMDB routing)
+    Column("abap_schema", String(64)),                  # e.g. SAPHANADB / SAPABAP1: enables ABAP table monitors
+    Column("interval_seconds", Integer, nullable=False, default=300),
+    Column("enabled", Boolean, nullable=False, default=True),
+    Column("last_run_at", DateTime(timezone=True)),
+    Column("last_status", String(20)),
+    Column("last_error", Text),
+    Column("last_duration_ms", Integer),
+    Column("last_details", Text),
+    Column("created_at", DateTime(timezone=True), nullable=False, server_default=text("CURRENT_TIMESTAMP")),
+)
+Index("ix_collectors_system", collectors.c.system_id)
+
+monitor_snapshots = Table(
+    "monitor_snapshots", metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    SYSTEM_FK(),
+    Column("monitor", String(40), nullable=False),
+    Column("source", String(20), nullable=False),        # sapcontrol | hana | upload | simulator
+    Column("captured_at", DateTime(timezone=True), nullable=False),
+    Column("health", String(20), nullable=False),
+    Column("data", Text, nullable=False),
+)
+Index("ix_monitor_snapshots", monitor_snapshots.c.system_id, monitor_snapshots.c.monitor, monitor_snapshots.c.captured_at)
+
+metric_samples = Table(
+    "metric_samples", metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    SYSTEM_FK(),
+    Column("metric", String(80), nullable=False),
+    Column("value", Float, nullable=False),
+    Column("ts", DateTime(timezone=True), nullable=False),
+)
+Index("ix_metric_samples", metric_samples.c.system_id, metric_samples.c.metric, metric_samples.c.ts)
+
+# ---------------------------------------------------------------- incidents
+alert_rules = Table(
+    "alert_rules", metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("name", String(120), nullable=False),
+    Column("metric", String(80), nullable=False),
+    Column("operator", String(2), nullable=False),         # >, >=, <, <=
+    Column("warning", Float),
+    Column("critical", Float),
+    Column("scope_type", String(20), nullable=False, server_default="global"),   # global | landscape | system
+    Column("scope_value", String(80)),
+    Column("enabled", Boolean, nullable=False, default=True),
+    Column("description", Text),
+    Column("builtin", Boolean, nullable=False, default=False),
+    Column("updated_at", DateTime(timezone=True), nullable=False, server_default=text("CURRENT_TIMESTAMP")),
+)
+
+incidents = Table(
+    "incidents", metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("system_id", Integer, ForeignKey("sap_systems.id", ondelete="CASCADE")),
+    Column("fingerprint", String(300), nullable=False),
+    Column("source", String(20), nullable=False),          # rule | module
+    Column("metric", String(80)),
+    Column("title", Text, nullable=False),
+    Column("severity", String(20), nullable=False),
+    Column("status", String(20), nullable=False),          # open | acknowledged | resolved
+    Column("details", Text),
+    Column("value", Float),
+    Column("opened_at", DateTime(timezone=True), nullable=False),
+    Column("last_seen_at", DateTime(timezone=True), nullable=False),
+    Column("occurrences", Integer, nullable=False, default=1),
+    Column("assignee", String(64)),
+    Column("acknowledged_by", String(64)),
+    Column("acknowledged_at", DateTime(timezone=True)),
+    Column("resolved_by", String(64)),
+    Column("resolved_at", DateTime(timezone=True)),
+    Column("resolution", Text),
+    Column("in_maintenance", Boolean, nullable=False, default=False),
+)
+Index("ix_incidents_status", incidents.c.status, incidents.c.system_id)
+Index("ix_incidents_fingerprint", incidents.c.fingerprint, incidents.c.status)
+
+incident_events = Table(
+    "incident_events", metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("incident_id", Integer, ForeignKey("incidents.id", ondelete="CASCADE"), nullable=False),
+    Column("at", DateTime(timezone=True), nullable=False),
+    Column("actor", String(64), nullable=False),
+    Column("kind", String(30), nullable=False),
+    Column("message", Text),
+)
+Index("ix_incident_events", incident_events.c.incident_id, incident_events.c.at)
+
+maintenance_windows = Table(
+    "maintenance_windows", metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("scope_type", String(20), nullable=False),      # global | landscape | system
+    Column("scope_value", String(80)),
+    Column("starts_at", DateTime(timezone=True), nullable=False),
+    Column("ends_at", DateTime(timezone=True), nullable=False),
+    Column("reason", Text, nullable=False),
+    Column("created_by", String(64), nullable=False),
+    Column("created_at", DateTime(timezone=True), nullable=False, server_default=text("CURRENT_TIMESTAMP")),
+)
+Index("ix_maintenance_window", maintenance_windows.c.starts_at, maintenance_windows.c.ends_at)
+
 # Columns added to pre-existing tables (applied by init_db and Alembic).
 ADDED_COLUMNS = {
     "targets": [("system_id", "INTEGER REFERENCES sap_systems(id) ON DELETE SET NULL")],

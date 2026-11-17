@@ -77,13 +77,16 @@ def _post_json(url: str, body: dict) -> tuple[bool, str | None]:
 
 
 def send_webhook(payload: dict) -> tuple[bool, str | None]:
-    if not ALERT_WEBHOOK_URL:
+    url = config.ALERT_WEBHOOK_URL or ALERT_WEBHOOK_URL
+    if not url:
         return False, "Webhook not configured"
-    return _post_json(ALERT_WEBHOOK_URL, format_webhook_payload(payload))
+    return _post_json(url, format_webhook_payload(payload))
 
 
-def pagerduty_event(payload: dict, dedup_key: str, severity: str = "warning") -> dict:
+def pagerduty_event(payload: dict, dedup_key: str, severity: str = "warning", action: str = "trigger") -> dict:
     pd_severity = {"critical": "critical", "error": "error", "warning": "warning"}.get(severity, "info")
+    if action == "resolve":
+        return {"routing_key": config.PAGERDUTY_ROUTING_KEY, "event_action": "resolve", "dedup_key": dedup_key[:255]}
     return {
         "routing_key": config.PAGERDUTY_ROUTING_KEY,
         "event_action": "trigger",
@@ -102,6 +105,12 @@ def send_pagerduty(payload: dict, dedup_key: str, severity: str = "warning") -> 
     if not config.PAGERDUTY_ROUTING_KEY:
         return False, "PagerDuty not configured"
     return _post_json(config.PAGERDUTY_EVENTS_URL, pagerduty_event(payload, dedup_key, severity))
+
+
+def send_pagerduty_action(payload: dict, dedup_key: str, severity: str, action: str) -> tuple[bool, str | None]:
+    if not config.PAGERDUTY_ROUTING_KEY:
+        return False, "PagerDuty not configured"
+    return _post_json(config.PAGERDUTY_EVENTS_URL, pagerduty_event(payload, dedup_key, severity, action))
 
 
 def send_email(subject: str, body: str) -> tuple[bool, str | None]:

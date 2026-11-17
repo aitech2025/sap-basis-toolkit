@@ -20,6 +20,11 @@ function SystemCard({ s }: { s: OverviewSystem }) {
       </div>
       <dl>
         <dt>Stack / DB</dt><dd><span className="tag">{s.environment}</span>{s.stack} · {s.database}</dd>
+        <dt>Availability</dt>
+        <dd>{s.availability ? <><Pill value={s.availability.system_up ? (s.availability.down || s.availability.degraded ? "warning" : "healthy") : "critical"} />
+          <span className="muted">{s.availability.system_up ? `${s.availability.running}/${s.availability.instances} up` : "DOWN"}</span></> : <span className="muted">no live data</span>}</dd>
+        <dt>Incidents</dt>
+        <dd>{s.incidents?.total ? <><Pill value={s.incidents.critical ? "critical" : "warning"} /><span className="muted">{s.incidents.total} active</span></> : <span className="muted">none</span>}</dd>
         <dt>Certificates</dt>
         <dd>{s.certificates.count ? <><Pill value={s.certificates.health} />
           {s.certificates.soonest_expiry_days !== null && <span className="muted">{s.certificates.soonest_expiry_days} d</span>}</> : <span className="muted">none</span>}</dd>

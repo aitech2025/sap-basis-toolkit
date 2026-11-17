@@ -5,11 +5,11 @@ from sqlalchemy.exc import IntegrityError
 from ..db import get_db, certificate_checks, notification_events, targets
 from ..schemas import TargetCreate, TargetPatch
 from ..db import sap_systems
-from ..security import require_api_key
+from ..auth import authorize
 from ..services.checks import check_target
 from ..services.target_policy import TargetPolicyError, validate_target
 
-router = APIRouter(prefix="/api/v1", dependencies=[Depends(require_api_key)])
+router = APIRouter(prefix="/api/v1", dependencies=[Depends(authorize)])
 
 
 def serialize(row):

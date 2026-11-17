@@ -12,9 +12,14 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1
 
+# SAP HANA client for the HANA SQL collector. hdbcli is distributed by SAP under the
+# SAP Developer License; set HANA_CLIENT=false to build without it.
+ARG HANA_CLIENT=true
+
 WORKDIR /app
 COPY backend/requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt \
+    && if [ "$HANA_CLIENT" = "true" ]; then pip install --no-cache-dir "hdbcli>=2.20"; fi
 COPY backend/app ./app
 COPY backend/alembic.ini .
 COPY backend/migrations ./migrations

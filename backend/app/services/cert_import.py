@@ -138,5 +138,6 @@ def evaluate_imported_certificates() -> int:
             {"sid": cert["sid"], "landscape": cert["landscape"], "pse_name": cert["pse_name"], "subject": cert["subject"],
              "issuer": cert["issuer"], "not_after": cert["not_after"], "days_remaining": days},
             system_id=cert["system_id"],
+            incident_key=f"pse:{cert['system_id']}:{cert['pse_name']}:{cert['sha256_fingerprint']}",
         )
     return alertable

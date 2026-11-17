@@ -25,7 +25,8 @@ def _channels(payload: dict, fingerprint: str, severity: str):
 
 
 def send_alert_once(module: str, fingerprint: str, summary: str, severity: str = "warning",
-                    details: dict | None = None, system_id: int | None = None) -> list[dict]:
+                    details: dict | None = None, system_id: int | None = None,
+                    incident_key: str | None = None) -> list[dict]:
     """Send an alert to every configured channel unless this fingerprint was already delivered."""
     payload = {
         "event": f"sap-basis-toolkit.{module}",
@@ -35,7 +36,17 @@ def send_alert_once(module: str, fingerprint: str, summary: str, severity: str =
         "occurred_at": datetime.now(timezone.utc).isoformat(),
     }
     outcomes = []
+    from . import incidents
+    try:
+        incidents.raise_module_incident(system_id, f"{module}:{incident_key or fingerprint}", summary, severity, details)
+    except Exception:  # incident bookkeeping must never block notifications
+        pass
+    system = incidents._system(system_id)
+    window = incidents.active_maintenance(system)
     for channel, sender in _channels(payload, fingerprint, severity):
+        if window:
+            outcomes.append({"channel": channel, "result": "suppressed", "error": f"maintenance: {window['reason']}"})
+            continue
         with get_db() as connection:
             already = connection.execute(
                 select(alert_events.c.id).where(

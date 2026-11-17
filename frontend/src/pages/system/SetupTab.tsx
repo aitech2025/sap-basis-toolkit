@@ -1,3 +1,4 @@
+import { CollectorsCard } from "../../components/Collectors";
 import { Card, Pill } from "../../components/ui";
 import type { SystemDetail } from "../../types";
 
@@ -11,6 +12,7 @@ export default function SetupTab({ system }: { system: SystemDetail }) {
   const lm = caps.license_model;
   return (
     <>
+      <CollectorsCard system={system} />
       <div className="cols">
         <Card title="System">
           <table>

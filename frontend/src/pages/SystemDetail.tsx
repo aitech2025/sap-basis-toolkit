@@ -2,8 +2,13 @@ import { useState } from "react";
 import { NavLink, Navigate, Route, Routes, useNavigate, useParams } from "react-router-dom";
 import { api } from "../api";
 import { SystemForm } from "../components/SystemForm";
+import { RequireRole } from "../components/session";
 import { ErrorBanner, Pill, useAsync } from "../components/ui";
+import AvailabilityTab from "./system/AvailabilityTab";
 import CertificatesTab from "./system/CertificatesTab";
+import ErrorsTab from "./system/ErrorsTab";
+import HanaTab from "./system/HanaTab";
+import InterfacesTab from "./system/InterfacesTab";
 import GrowthTab from "./system/GrowthTab";
 import HistoryTab from "./system/HistoryTab";
 import JobsTab from "./system/JobsTab";
@@ -29,14 +34,18 @@ export default function SystemDetailPage() {
 
   if (error) return <ErrorBanner error={error} />;
   if (!system || system.id !== id) return <p className="muted">Loading…</p>;
+  const abap = system.stack !== "JAVA";
   const tabs = [
-    ["", "Overview"], ["certificates", "Certificates"], ["growth", "Table growth"],
+    ["", "Overview"], ["availability", "Availability"],
+    ...(abap ? [["errors", "Errors"], ["interfaces", "Interfaces"]] : []),
+    ...(system.database === "HANA" ? [["hana", "HANA"]] : []),
+    ["certificates", "Certificates"], ["growth", "Table growth"],
     ["users", "Users & licences"],
     ["transports", system.capabilities.transports.supported ? "Transports" : "Transports (n/a)"],
     ["jobs", system.capabilities.jobs.supported ? "Background jobs" : "Background jobs (n/a)"],
     ["locks", system.capabilities.locks.supported ? "SAP locks" : "SAP locks (n/a)"],
     ["history", "History"], ["setup", "Setup & export guide"],
-  ] as const;
+  ] as [string, string][];
 
   return (
     <>
@@ -50,8 +59,10 @@ export default function SystemDetailPage() {
           </p>
         </div>
         <div className="actions">
-          <button className="btn" onClick={() => setEditing(true)}>Edit</button>
-          <button className="btn danger" onClick={remove}>Delete</button>
+          <RequireRole role="operator">
+            <button className="btn" onClick={() => setEditing(true)}>Edit</button>
+            <button className="btn danger" onClick={remove}>Delete</button>
+          </RequireRole>
         </div>
       </div>
       <nav className="tabs">
@@ -63,6 +74,10 @@ export default function SystemDetailPage() {
       <Routes key={system.id}>
         <Route index element={<OverviewTab system={system} />} />
         <Route path="setup" element={<SetupTab system={system} />} />
+        <Route path="availability" element={<AvailabilityTab system={system} />} />
+        <Route path="errors" element={<ErrorsTab system={system} />} />
+        <Route path="interfaces" element={<InterfacesTab system={system} />} />
+        <Route path="hana" element={<HanaTab system={system} />} />
         <Route path="certificates" element={<CertificatesTab system={system} />} />
         <Route path="growth" element={<GrowthTab system={system} />} />
         <Route path="users" element={<UsersTab system={system} />} />

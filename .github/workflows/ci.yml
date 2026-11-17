@@ -29,6 +29,7 @@ jobs:
           ALLOWED_TARGET_HOSTS: ci.example.test
           ALLOWED_TARGET_CIDRS: ""
           ALLOWED_TARGET_PORTS: "443"
+          SECRET_KEY: ci-secret-key
         run: docker compose config -q
       - name: Build application image (API + UI)
         run: docker build -f backend/Dockerfile -t sap-basis-sentinel-ci .

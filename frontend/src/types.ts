@@ -75,6 +75,8 @@ export interface Run {
 }
 
 export interface OverviewSystem {
+  availability?: { instances: number; running: number; degraded: number; down: number; system_up: boolean } | null;
+  incidents?: IncidentCounts;
   id: number;
   sid: string;
   name: string;
@@ -395,4 +397,146 @@ export interface LockReport {
   persistent: LockView[];
   history: { captured_at: string; total: number; long_running: number }[];
   thresholds: { warning_minutes: number; critical_minutes: number };
+}
+
+
+export type Role = "viewer" | "operator" | "admin";
+
+export interface Me {
+  id?: number;
+  username: string;
+  display_name: string | null;
+  email?: string | null;
+  role: Role;
+  kind?: "user" | "apikey";
+}
+
+export interface User extends Me {
+  id: number;
+  active: boolean;
+  created_at: string;
+  last_login_at: string | null;
+}
+
+export interface AuditEntry {
+  id: number;
+  at: string;
+  username: string;
+  action: string;
+  target: string | null;
+  status: number | null;
+  detail: string | null;
+  ip: string | null;
+}
+
+export interface IncidentCounts {
+  open: number;
+  acknowledged: number;
+  critical: number;
+  warning: number;
+  total: number;
+}
+
+export interface Incident {
+  id: number;
+  system_id: number | null;
+  sid: string | null;
+  landscape: string | null;
+  fingerprint: string;
+  source: "rule" | "module";
+  metric: string | null;
+  title: string;
+  severity: "warning" | "critical";
+  status: "open" | "acknowledged" | "resolved";
+  details: Record<string, unknown>;
+  value: number | null;
+  opened_at: string;
+  last_seen_at: string;
+  occurrences: number;
+  assignee: string | null;
+  acknowledged_by: string | null;
+  acknowledged_at: string | null;
+  resolved_by: string | null;
+  resolved_at: string | null;
+  resolution: string | null;
+  in_maintenance: boolean;
+  timeline?: { id: number; at: string; actor: string; kind: string; message: string | null }[];
+}
+
+export interface Rule {
+  id: number;
+  name: string;
+  metric: string;
+  operator: ">" | ">=" | "<" | "<=";
+  warning: number | null;
+  critical: number | null;
+  scope_type: "global" | "landscape" | "system";
+  scope_value: string | null;
+  enabled: boolean;
+  description: string | null;
+  builtin: boolean;
+  updated_at: string;
+}
+
+export interface RuleMetric {
+  metric: string;
+  name: string;
+  operator: string;
+  warning: number | null;
+  critical: number | null;
+  description: string;
+}
+
+export interface MaintenanceWindow {
+  id: number;
+  scope_type: "global" | "landscape" | "system";
+  scope_value: string | null;
+  starts_at: string;
+  ends_at: string;
+  reason: string;
+  created_by: string;
+  state: "active" | "planned" | "past";
+}
+
+export interface Collector {
+  id: number;
+  system_id: number;
+  type: "sapcontrol" | "hana";
+  host: string;
+  port: number;
+  use_tls: boolean;
+  verify_tls: boolean;
+  username: string | null;
+  has_password: boolean;
+  database_name: string | null;
+  abap_schema: string | null;
+  interval_seconds: number;
+  enabled: boolean;
+  last_run_at: string | null;
+  last_status: "ok" | "partial" | "error" | null;
+  last_error: string | null;
+  last_duration_ms: number | null;
+  diagnostics: { call: string; ok: boolean; error?: string; instance?: string; rows?: number; experimental?: boolean }[];
+  simulated: boolean;
+}
+
+export interface MonitorSnapshot<T = Record<string, any>> {
+  source: string;
+  captured_at: string;
+  health: string;
+  stale: boolean;
+  data: T;
+}
+
+export interface MonitorsResponse {
+  monitors: Record<string, MonitorSnapshot>;
+  collectors: Collector[];
+  incidents: IncidentCounts;
+}
+
+export interface MonitorDetail {
+  monitor: string;
+  latest: MonitorSnapshot | null;
+  series: Record<string, { ts: string; value: number }[]>;
+  uploadable: boolean;
 }

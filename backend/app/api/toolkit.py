@@ -10,14 +10,14 @@ from .. import config
 from ..db import (
     alert_events, certificate_checks, get_db, notification_events, sap_systems, targets,
 )
-from ..security import require_api_key
-from ..services import cert_import, growth, ops, profiles, routes, systems, transports, users
+from ..auth import authorize
+from ..services import cert_import, growth, incidents, monitors, ops, profiles, routes, systems, transports, users
 from ..services.routes import RouteError, RouteNotFound
 from ..services.cert_import import CertificateImportError
 from ..services.systems import SystemConflict, SystemNotFound, SystemValidationError
 from ..services.tabular import InputFormatError, to_csv
 
-router = APIRouter(prefix="/api/v1", dependencies=[Depends(require_api_key)])
+router = APIRouter(prefix="/api/v1", dependencies=[Depends(authorize)])
 
 CERT_SEVERITY = {"expired": 3, "critical": 3, "unreachable": 3, "blocked": 2, "warning": 2, "untrusted": 2,
                  "healthy": 0, "pending": 1}
@@ -445,7 +445,14 @@ def system_health(registry: list[dict]) -> dict[int, dict]:
         locks = ops.lock_report(sid, history_days=1) if system["stack"] != "JAVA" else None
         lock_level = None if not locks or locks["stale"] or not locks["summary"] else \
             3 if locks["summary"]["critical"] else 2 if locks["summary"]["long_running"] else 0
-        levels = [lvl for lvl in (cert_level, growth_level, transport_level, job_level, lock_level) if lvl is not None]
+        worst_incident = incidents.worst_active_severity(sid)
+        incident_level = {"critical": 3, "warning": 2}.get(worst_incident) if worst_incident else None
+        live = monitors.latest(sid, "availability").get("availability")
+        availability = live["data"]["summary"] if live and not live["stale"] else None
+        availability_level = None if availability is None else 3 if not availability["system_up"] else \
+            2 if availability["down"] or availability["degraded"] else 0
+        levels = [lvl for lvl in (cert_level, growth_level, transport_level, job_level, lock_level, incident_level,
+                                  availability_level) if lvl is not None]
         result[sid] = {
             "health": HEALTH[max(levels)] if levels else "unknown",
             "certificates": {"count": len(own), "health": HEALTH.get(cert_level, "unknown"),
@@ -458,6 +465,8 @@ def system_health(registry: list[dict]) -> dict[int, dict]:
             "jobs": {"health": HEALTH.get(job_level, "unknown"),
                      "cancelled_24h": jobs["summary"]["cancelled_24h"] if jobs else None,
                      "long_running": jobs["summary"]["long_running"] if jobs else None},
+            "availability": availability,
+            "incidents": incidents.counts(sid) if worst_incident else {"open": 0, "acknowledged": 0, "critical": 0, "warning": 0, "total": 0},
             "locks": {"health": HEALTH.get(lock_level, "unknown"),
                       "long_running": (locks["summary"] or {}).get("long_running") if locks else None,
                       "oldest_minutes": (locks["summary"] or {}).get("oldest_minutes") if locks else None},

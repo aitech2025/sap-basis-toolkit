@@ -1,54 +1,97 @@
 import { useEffect, useState } from "react";
 import { NavLink, Navigate, Route, Routes } from "react-router-dom";
-import { getApiKey } from "./api";
+import { api, hasCredentials } from "./api";
+import { RequireRole, SessionProvider, useSession } from "./components/session";
+import Account from "./pages/Account";
 import Alerts from "./pages/Alerts";
+import Audit from "./pages/Audit";
 import Certificates from "./pages/Certificates";
+import IncidentDetail from "./pages/IncidentDetail";
+import Incidents from "./pages/Incidents";
 import LandscapeDetail from "./pages/LandscapeDetail";
 import Landscapes from "./pages/Landscapes";
+import Login from "./pages/Login";
+import Maintenance from "./pages/Maintenance";
 import OverviewPage from "./pages/Overview";
-import Settings from "./pages/Settings";
+import Rules from "./pages/Rules";
 import SystemDetailPage from "./pages/SystemDetail";
 import Systems from "./pages/Systems";
+import Users from "./pages/Users";
 
-export default function App() {
-  const [hasKey, setHasKey] = useState(!!getApiKey());
+function IncidentBadge() {
+  const [count, setCount] = useState<{ total: number; critical: number } | null>(null);
   useEffect(() => {
-    const onChange = () => setHasKey(!!getApiKey());
-    window.addEventListener("apikey-changed", onChange);
-    return () => window.removeEventListener("apikey-changed", onChange);
+    let alive = true;
+    const load = () => api.incidentCounts().then((c) => alive && setCount(c)).catch(() => {});
+    load();
+    const timer = window.setInterval(load, 60000);
+    return () => { alive = false; window.clearInterval(timer); };
   }, []);
+  if (!count?.total) return null;
+  return <span className={`badge ${count.critical ? "bad" : "warn"}`} aria-label={`${count.total} active incidents`}>{count.total}</span>;
+}
 
+function Shell() {
+  const { me, logout } = useSession();
   return (
     <div className="shell">
       <nav className="sidebar" aria-label="Main">
-        <div className="brand">SAP Basis Toolkit<small>Sentinel · multi-system</small></div>
+        <div className="brand">SAP Basis Toolkit<small>Sentinel · SAP monitoring</small></div>
         <NavLink to="/" end>Landscape overview</NavLink>
+        <NavLink to="/incidents">Incidents <IncidentBadge /></NavLink>
         <NavLink to="/landscapes">Landscapes</NavLink>
         <NavLink to="/systems">Systems</NavLink>
         <NavLink to="/certificates">Certificates</NavLink>
-        <NavLink to="/alerts">Alerts</NavLink>
-        <NavLink to="/settings">Settings</NavLink>
+        <div className="nav-section">Operations</div>
+        <NavLink to="/maintenance">Maintenance windows</NavLink>
+        <NavLink to="/rules">Alert rules</NavLink>
+        <NavLink to="/alerts">Notifications</NavLink>
+        <RequireRole role="admin">
+          <div className="nav-section">Administration</div>
+          <NavLink to="/users">Users</NavLink>
+          <NavLink to="/audit">Audit log</NavLink>
+        </RequireRole>
         <div className="spacer" />
-        <div className="key-state">{hasKey ? "API key set for this session" : "No API key set"}</div>
+        <NavLink to="/account" className="who">
+          {me ? <><strong>{me.display_name || me.username}</strong><small>{me.role}{me.kind === "apikey" ? " · API key" : ""}</small></> : "…"}
+        </NavLink>
+        <button className="link-btn" onClick={logout}>Sign out</button>
       </nav>
       <main>
-        {!hasKey && (
-          <div className="banner info">
-            Enter your API key in <NavLink to="/settings">Settings</NavLink> to load data.
-          </div>
-        )}
         <Routes>
           <Route path="/" element={<OverviewPage />} />
+          <Route path="/incidents" element={<Incidents />} />
+          <Route path="/incidents/:id" element={<IncidentDetail />} />
           <Route path="/landscapes" element={<Landscapes />} />
           <Route path="/landscapes/:name" element={<LandscapeDetail />} />
           <Route path="/systems" element={<Systems />} />
           <Route path="/systems/:id/*" element={<SystemDetailPage />} />
           <Route path="/certificates" element={<Certificates />} />
+          <Route path="/maintenance" element={<Maintenance />} />
+          <Route path="/rules" element={<Rules />} />
           <Route path="/alerts" element={<Alerts />} />
-          <Route path="/settings" element={<Settings />} />
+          <Route path="/users" element={<Users />} />
+          <Route path="/audit" element={<Audit />} />
+          <Route path="/account" element={<Account />} />
+          <Route path="/settings" element={<Navigate to="/account" replace />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </main>
     </div>
+  );
+}
+
+export default function App() {
+  const [signedIn, setSignedIn] = useState(hasCredentials());
+  useEffect(() => {
+    const onAuth = () => setSignedIn(false);
+    window.addEventListener("auth-required", onAuth);
+    return () => window.removeEventListener("auth-required", onAuth);
+  }, []);
+  if (!signedIn) return <Login onSignedIn={() => setSignedIn(true)} />;
+  return (
+    <SessionProvider onSignedOut={() => setSignedIn(false)}>
+      <Shell />
+    </SessionProvider>
   );
 }

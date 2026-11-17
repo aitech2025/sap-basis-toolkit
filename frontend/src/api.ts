@@ -1,26 +1,54 @@
 import type {
   AlertEvent, Catalogue, CertificateSummary, GrowthReport, Overview, PostcheckResult, PrecheckResult, Run,
-  ImportHistory, JobReport, LockReport, RouteProposal, SapSystem, SystemDetail, SystemInput, SystemOverviewData, SystemRoutes, Topology, TransportRoute, UserReport,
+  AuditEntry, Collector, ImportHistory, Incident, IncidentCounts, JobReport, LockReport, MaintenanceWindow, Me, MonitorDetail, MonitorsResponse, RouteProposal, Rule, RuleMetric, User, SapSystem, SystemDetail, SystemInput, SystemOverviewData, SystemRoutes, Topology, TransportRoute, UserReport,
 } from "./types";
 
 const KEY_STORAGE = "sapBasisToolkit.apiKey";
+const TOKEN_STORAGE = "sapBasisToolkit.session";
 
-export function getApiKey(): string {
+function store(key: string, value: string | null) {
   try {
-    return sessionStorage.getItem(KEY_STORAGE) ?? "";
+    if (value) sessionStorage.setItem(key, value);
+    else sessionStorage.removeItem(key);
+  } catch {
+    /* storage unavailable: credentials live for this page only */
+  }
+}
+
+function load(key: string): string {
+  try {
+    return sessionStorage.getItem(key) ?? "";
   } catch {
     return "";
   }
 }
 
+export function getApiKey(): string {
+  return load(KEY_STORAGE);
+}
+
 export function setApiKey(value: string): void {
-  try {
-    if (value) sessionStorage.setItem(KEY_STORAGE, value);
-    else sessionStorage.removeItem(KEY_STORAGE);
-  } catch {
-    /* storage unavailable: key lives for this page only */
-  }
+  store(KEY_STORAGE, value || null);
   window.dispatchEvent(new Event("apikey-changed"));
+}
+
+export function getToken(): string {
+  return load(TOKEN_STORAGE);
+}
+
+export function setToken(value: string | null): void {
+  store(TOKEN_STORAGE, value);
+  window.dispatchEvent(new Event("apikey-changed"));
+}
+
+export function signOut(): void {
+  store(TOKEN_STORAGE, null);
+  store(KEY_STORAGE, null);
+  window.dispatchEvent(new Event("auth-required"));
+}
+
+export function hasCredentials(): boolean {
+  return !!(getToken() || getApiKey());
 }
 
 export class ApiError extends Error {
@@ -41,8 +69,13 @@ function detailMessage(detail: unknown): string {
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const headers = new Headers(init.headers);
-  headers.set("X-API-Key", getApiKey());
+  const token = getToken();
+  if (token) headers.set("Authorization", `Bearer ${token}`);
+  else if (getApiKey()) headers.set("X-API-Key", getApiKey());
   const response = await fetch(path, { ...init, headers });
+  if (response.status === 401 && !path.startsWith("/api/v1/auth/")) {
+    window.dispatchEvent(new Event("auth-required"));
+  }
   if (response.status === 204) return undefined as T;
   const text = await response.text();
   let data: unknown = text;
@@ -65,6 +98,48 @@ const json = (method: string, body: unknown): RequestInit => ({
 });
 
 export const api = {
+  authStatus: () => request<{ setup_required: boolean }>("/api/v1/auth/status"),
+  login: (username: string, password: string) =>
+    request<{ token: string; expires_at: string; user: Me }>("/api/v1/auth/login", json("POST", { username, password })),
+  setup: (body: { api_key: string; username: string; password: string; display_name?: string }) =>
+    request<Me>("/api/v1/auth/setup", json("POST", body)),
+  me: () => request<Me>("/api/v1/me"),
+  changePassword: (current_password: string, new_password: string) =>
+    request<{ token: string }>("/api/v1/me/password", json("POST", { current_password, new_password })),
+  users: () => request<User[]>("/api/v1/users"),
+  createUser: (body: Record<string, unknown>) => request<User>("/api/v1/users", json("POST", body)),
+  updateUser: (id: number, body: Record<string, unknown>) => request<User>(`/api/v1/users/${id}`, json("PATCH", body)),
+  audit: (params = "") => request<AuditEntry[]>(`/api/v1/audit${params}`),
+
+  incidents: (params = "") => request<Incident[]>(`/api/v1/incidents${params}`),
+  incident: (id: number) => request<Incident>(`/api/v1/incidents/${id}`),
+  incidentCounts: (systemId?: number) => request<IncidentCounts>(`/api/v1/incidents/counts${systemId ? `?system_id=${systemId}` : ""}`),
+  incidentAction: (id: number, action: string, body: { message?: string; assignee?: string | null }) =>
+    request<Incident>(`/api/v1/incidents/${id}/${action}`, json("POST", body)),
+  rules: () => request<Rule[]>("/api/v1/rules"),
+  ruleMetrics: () => request<RuleMetric[]>("/api/v1/rules/metrics"),
+  createRule: (body: Record<string, unknown>) => request<Rule>("/api/v1/rules", json("POST", body)),
+  updateRule: (id: number, body: Record<string, unknown>) => request<Rule>(`/api/v1/rules/${id}`, json("PATCH", body)),
+  deleteRule: (id: number) => request<void>(`/api/v1/rules/${id}`, { method: "DELETE" }),
+  maintenance: (includePast = false) => request<MaintenanceWindow[]>(`/api/v1/maintenance${includePast ? "?include_past=true" : ""}`),
+  createMaintenance: (body: Record<string, unknown>) => request<MaintenanceWindow>("/api/v1/maintenance", json("POST", body)),
+  endMaintenance: (id: number) => request(`/api/v1/maintenance/${id}/end`, { method: "POST" }),
+
+  collectors: (systemId: number) => request<Collector[]>(`/api/v1/systems/${systemId}/collectors`),
+  createCollector: (systemId: number, body: Record<string, unknown>) =>
+    request<Collector>(`/api/v1/systems/${systemId}/collectors`, json("POST", body)),
+  testCollector: (systemId: number, body: Record<string, unknown>) =>
+    request<{ ok: boolean; error?: string; duration_ms: number; summary?: Record<string, unknown>; diagnostics?: { call: string; ok: boolean; error?: string; instance?: string }[] }>(
+      `/api/v1/systems/${systemId}/collectors/test`, json("POST", body)),
+  updateCollector: (id: number, body: Record<string, unknown>) => request<Collector>(`/api/v1/collectors/${id}`, json("PATCH", body)),
+  deleteCollector: (id: number) => request<void>(`/api/v1/collectors/${id}`, { method: "DELETE" }),
+  runCollector: (id: number) => request<{ status: string; error: string | null; duration_ms: number }>(`/api/v1/collectors/${id}/run`, { method: "POST" }),
+  monitors: (systemId: number) => request<MonitorsResponse>(`/api/v1/systems/${systemId}/monitors`),
+  monitor: (systemId: number, monitor: string, hours = 24) =>
+    request<MonitorDetail>(`/api/v1/systems/${systemId}/monitors/${monitor}?hours=${hours}`),
+  uploadMonitor: (systemId: number, monitor: string, csv: string) =>
+    request<{ health: string; metrics: Record<string, number> }>(`/api/v1/systems/${systemId}/monitors/${monitor}/upload`, { method: "POST", body: csv }),
+
   health: () => fetch("/health").then((r) => r.ok),
   catalogue: () => request<Catalogue>("/api/v1/meta/catalogue"),
   overview: (landscape?: string) =>

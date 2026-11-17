@@ -6,7 +6,7 @@ or memory reaches the configured threshold and recommend standard housekeeping.
 """
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from .. import config
 from ..db import capacity_snapshots, get_db, sap_systems, table_size_snapshots
@@ -51,8 +51,18 @@ def parse_snapshot(raw: bytes) -> list[dict]:
 
 
 def store_snapshot(system_id: int, raw: bytes, captured_at: datetime | None = None) -> dict:
+    return store_entries(system_id, parse_snapshot(raw), captured_at)
+
+
+def last_snapshot_at(system_id: int) -> datetime | None:
+    with get_db() as connection:
+        value = connection.execute(select(func.max(table_size_snapshots.c.captured_at)).where(
+            table_size_snapshots.c.system_id == system_id)).scalar_one_or_none()
+    return _aware(value) if value else None
+
+
+def store_entries(system_id: int, entries: list[dict], captured_at: datetime | None = None) -> dict:
     captured_at = captured_at or datetime.now(timezone.utc)
-    entries = parse_snapshot(raw)
     with get_db() as connection:
         connection.execute(table_size_snapshots.insert(), [
             {**entry, "system_id": system_id, "captured_at": captured_at} for entry in entries
@@ -212,7 +222,7 @@ def evaluate_growth_alerts() -> list[dict]:
                 severity,
                 {"sid": system["sid"], "landscape": system["landscape"],
                  f"{resource}_used_pct": forecast.get(f"{resource}_used_pct"), "fastest_growing_tables": top},
-                system_id=system["id"],
+                system_id=system["id"], incident_key=f"growth:{system['id']}:{resource}",
             )
             raised.append({"system_id": system["id"], "sid": system["sid"], "resource": resource,
                            "days": days, "severity": severity})

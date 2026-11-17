@@ -36,9 +36,13 @@ Scored 1–5 (5 = best). "Risk" is the security and operational risk of running 
 - Dashboard at `/`, sample exports in `samples/`, Alembic revision `20261117_0002`.
 - Fix: certificate e-mail bodies previously contained literal `\n` instead of line breaks.
 
+## v1.0: end-to-end monitoring
+
+Delivered: live collection (sapcontrol, HANA SQL), monitors for availability/work processes, errors and interfaces, HANA health and backups, alert rules, incidents with lifecycle and maintenance windows, named users with roles, an audit log, and a demo simulator.
+
 ## Suggested roadmap
 
-1. **Live collectors** (optional): read-only RFC user feeding the same services (RFC_READ_TABLE replacements or a small Z function module per data set), scheduled snapshots.
+1. **RFC collector** for non-HANA ABAP systems (dumps, queues, IDocs, jobs without uploads), plus Java (NWA) metrics.
 2. **Post-copy phase 1**: pre/post snapshot diff + refresh checklist.
 3. **Multi-tenant / RBAC** for MSP use (see architecture hardening list).
 4. **Transport where-used analysis** via live cross-reference once collectors exist.
