@@ -296,6 +296,19 @@ metric_samples = Table(
 )
 Index("ix_metric_samples", metric_samples.c.system_id, metric_samples.c.metric, metric_samples.c.ts)
 
+# High-volume metric stream. TimescaleDB turns this into a hypertable in PostgreSQL
+# deployments; the same table remains an ordinary indexed table for SQLite/dev fallback.
+# No synthetic row id is needed: time-series rows are append-only observations.
+metric_points = Table(
+    "metric_points", metadata,
+    SYSTEM_FK(),
+    Column("metric", String(80), nullable=False),
+    Column("value", Float, nullable=False),
+    Column("ts", DateTime(timezone=True), nullable=False),
+)
+Index("ix_metric_points_lookup", metric_points.c.system_id, metric_points.c.metric, metric_points.c.ts)
+Index("ix_metric_points_time", metric_points.c.ts)
+
 # ---------------------------------------------------------------- incidents
 alert_rules = Table(
     "alert_rules", metadata,
