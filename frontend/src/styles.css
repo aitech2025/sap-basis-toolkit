@@ -167,3 +167,19 @@ dialog::backdrop { background: rgba(10, 14, 24, .45); }
 .route-path .hop { padding: 2px 9px; border-radius: 6px; background: var(--surface-2); font-weight: 600; }
 .route-path .hop.current { background: var(--accent); color: var(--accent-ink); }
 .route-path .hop-group { display: inline-flex; flex-direction: column; gap: 4px; }
+
+tr.clickable { cursor: pointer; }
+tr.clickable:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.system-card.clickable { cursor: pointer; }
+.system-card.clickable:focus-visible { outline: 2px solid var(--accent); }
+.system-card a.sid { color: var(--ink); }
+.module-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; margin-bottom: 16px; }
+.module-card { display: flex; flex-direction: column; gap: 8px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px 16px; color: var(--ink); box-shadow: var(--shadow); }
+.module-card:hover { border-color: var(--accent); text-decoration: none; }
+.module-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.module-body { flex: 1; }
+.module-body p { margin: 0 0 6px; }
+.module-cta { color: var(--accent); font-weight: 600; font-size: 13px; }
+.small { font-size: 12.5px; }
+.route-path.compact { margin-bottom: 8px; }
+.route-path .hop { color: var(--ink); }

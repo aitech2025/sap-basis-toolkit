@@ -116,3 +116,26 @@ def test_branching_path_has_parallel_hops(monkeypatch, tmp_path):
         assert [[h["sid"] for h in layer] for layer in hops] == [["S4D", "S4X"], ["S4Q"], ["S4R"], ["S4P"]]
         lane = c.get("/api/v1/landscapes/Finance/topology", headers=H).json()["lanes"][0]
         assert lane["path"] == "S4D → S4Q → S4R → S4P | S4X → S4Q → S4R → S4P"
+
+
+def test_system_overview_aggregates_all_modules(monkeypatch, tmp_path):
+    setup(monkeypatch, tmp_path)
+    with TestClient(app) as c:
+        d, q = sys(c, "S4D", "DEV"), sys(c, "S4Q", "QAS")
+        route(c, d, q, "consolidation", transport_layer="ZS4D")
+        c.post("/api/v1/targets", headers=H, json={"name": "S4Q ICM", "hostname": "qa.example.test", "system_id": q})
+        c.post(f"/api/v1/systems/{q}/growth/snapshots", headers=H, content="TABLE_NAME,SIZE_MB\nBALDAT,100\n")
+        c.post(f"/api/v1/systems/{q}/transports/postcheck", headers=H, json={"log": "TRKORR;RC\nS4DK900001;0008\n", "alert": False})
+        o = c.get(f"/api/v1/systems/{q}/overview", headers=H).json()
+        assert o["system"]["sid"] == "S4Q" and o["system"]["capabilities"]["transports"]["supported"]
+        assert o["health"] == "critical"
+        assert o["certificates"]["endpoints"] == 1 and o["certificates"]["counts"] == {"pending": 1}
+        assert o["growth"]["tracked_tables"] == 1 and o["growth"]["top_tables"][0]["table_name"] == "BALDAT"
+        assert o["transports"]["postcheck"]["status"] == "fail"
+        assert [[h["sid"] for h in hop] for hop in o["routes"]["hops"]] == [["S4D"], ["S4Q"]]
+        assert o["recent_runs"][0]["module"] == "transports-postcheck"
+        # nothing from another system leaks in
+        other = c.get(f"/api/v1/systems/{d}/overview", headers=H).json()
+        assert other["certificates"]["endpoints"] == 0 and other["growth"]["tracked_tables"] == 0
+        assert other["recent_runs"] == [] and other["transports"]["postcheck"] is None
+        assert c.get("/api/v1/systems/999/overview", headers=H).status_code == 404

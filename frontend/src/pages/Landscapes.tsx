@@ -1,9 +1,10 @@
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { api } from "../api";
 import { Empty, ErrorBanner, Pill, useAsync } from "../components/ui";
 import type { Topology } from "../types";
 
 export default function Landscapes() {
+  const navigate = useNavigate();
   const { data, error, loading } = useAsync(async () => {
     const list = await api.landscapes();
     return Promise.all(list.map((l) => api.topology(l.landscape)));
@@ -22,9 +23,11 @@ export default function Landscapes() {
           const systems = t.lanes.flatMap((l) => l.systems);
           const worst = ["critical", "warning", "healthy"].find((h) => systems.some((s) => s.health === h)) ?? "unknown";
           return (
-            <Link key={t.landscape} to={`/landscapes/${encodeURIComponent(t.landscape)}`} className="system-card">
+            <div key={t.landscape} className="system-card clickable" role="link" tabIndex={0}
+                 onClick={(e) => { if (!(e.target as HTMLElement).closest("a")) navigate(`/landscapes/${encodeURIComponent(t.landscape)}`); }}
+                 onKeyDown={(e) => e.key === "Enter" && navigate(`/landscapes/${encodeURIComponent(t.landscape)}`)}>
               <div className="top">
-                <div><div className="sid">{t.landscape}</div><div className="muted">{systems.length} systems · {t.routes.length} routes</div></div>
+                <div><Link className="sid" to={`/landscapes/${encodeURIComponent(t.landscape)}`}>{t.landscape}</Link><div className="muted">{systems.length} systems · {t.routes.length} routes</div></div>
                 <Pill value={worst} />
               </div>
               <dl>
@@ -32,13 +35,20 @@ export default function Landscapes() {
                   <div key={lane.key} style={{ display: "contents" }}>
                     <dt>{lane.product_label}</dt>
                     <dd style={{ flexDirection: "column", alignItems: "flex-start", gap: 2 }}>
-                      {lane.path ? lane.path.split(" | ").map((p) => <span key={p}>{p}</span>)
-                        : <span className="muted">{lane.systems.map((s) => s.sid).join(", ")} · no routes</span>}
+                      {(lane.path ? lane.path.split(" | ") : [lane.systems.map((s) => s.sid).join(", ")]).map((path) => (
+                        <span key={path}>
+                          {path.split(/( → |, )/).map((part, i) => {
+                            const target = lane.systems.find((s) => s.sid === part);
+                            return target ? <Link key={i} to={`/systems/${target.id}`}>{part}</Link> : <span key={i} className="muted">{part}</span>;
+                          })}
+                          {!lane.path && <span className="muted"> · no routes</span>}
+                        </span>
+                      ))}
                     </dd>
                   </div>
                 ))}
               </dl>
-            </Link>
+            </div>
           );
         })}
       </div>

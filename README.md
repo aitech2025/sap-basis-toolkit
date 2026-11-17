@@ -28,7 +28,7 @@ Served by the API at `/` (built into the Docker image):
 - **Landscape overview**: every system grouped by landscape with combined health (certificates, capacity forecast, last import).
 - **Landscapes**: each landscape drawn as product lanes (e.g. S/4HANA, BW/4HANA, ECC, Portal) across DEV → QAS → (TRN/PRE) → PRD columns, with the transport routes as arrows. Arrows carry the transport layer and the result of the last import into the target (OK, RC 4 warnings, RC ≥ 8 failed). Hover a system to trace its routes. Branches such as two development tracks or a training system are supported. Routes can be added manually or proposed automatically (*Suggest routes*: one system per tier → DEV → QAS → PRE → PRD).
 - **Systems**: register, filter, edit and delete systems.
-- **System workspace**: tabs for summary and export guide, certificates (endpoints + STRUST/PSE), table growth (trend charts, forecast, housekeeping), users & licences, transports (pre/post checks) and history (summary-only run log + alerts).
+- **System workspace** (opened by clicking any system tile, table row, diagram node or SID link): an *Overview* dashboard of that system with a card per feature (certificates, table growth & capacity, users & licences, transports with its route path), recent alerts and analyses. Each card opens its tab. Tabs: setup and export guide, certificates (endpoints + STRUST/PSE), table growth (trend charts, forecast, housekeeping), users & licences, transports (pre/post checks) and history (summary-only run log + alerts).
 - **Certificates** and **Alerts**: landscape-wide views.
 
 The API key is entered in *Settings* and kept in browser session storage.

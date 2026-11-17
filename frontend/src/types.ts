@@ -300,3 +300,23 @@ export interface SystemRoutes {
   outbound: TransportRoute[];
   hops: { system_id: number; sid: string }[][];
 }
+
+export interface SystemOverviewData {
+  system: SystemDetail;
+  health: Health;
+  certificates: {
+    count: number; health: Health; soonest_expiry_days: number | null; counts: Record<string, number>;
+    endpoints: number; pse_certificates: number;
+    expiring: { name?: string; hostname?: string; pse_name?: string; subject?: string; status: string; days_remaining: number | null }[];
+  };
+  growth: {
+    health: Health; disk_used_pct: number | null; days_until_threshold: number | null; tracked_tables: number;
+    tracked_growth_mb_per_day: number; memory_used_pct: number | null; snapshots: number;
+    top_tables: { table_name: string; size_mb: number; growth_mb_per_day: number | null }[];
+  };
+  users: Run | null;
+  transports: { precheck: Run | null; postcheck: Run | null };
+  routes: SystemRoutes;
+  recent_alerts: AlertEvent[];
+  recent_runs: Run[];
+}

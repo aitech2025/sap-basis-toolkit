@@ -1,6 +1,6 @@
 import type {
   AlertEvent, Catalogue, CertificateSummary, GrowthReport, Overview, PostcheckResult, PrecheckResult, Run,
-  RouteProposal, SapSystem, SystemDetail, SystemInput, SystemRoutes, Topology, TransportRoute, UserReport,
+  RouteProposal, SapSystem, SystemDetail, SystemInput, SystemOverviewData, SystemRoutes, Topology, TransportRoute, UserReport,
 } from "./types";
 
 const KEY_STORAGE = "sapBasisToolkit.apiKey";
@@ -75,6 +75,7 @@ export const api = {
   createSystem: (body: Partial<SystemInput>) => request<SapSystem>("/api/v1/systems", json("POST", body)),
   updateSystem: (id: number, body: Partial<SystemInput>) => request<SapSystem>(`/api/v1/systems/${id}`, json("PATCH", body)),
   deleteSystem: (id: number) => request<void>(`/api/v1/systems/${id}`, { method: "DELETE" }),
+  systemOverview: (id: number) => request<SystemOverviewData>(`/api/v1/systems/${id}/overview`),
   runs: (id: number) => request<Run[]>(`/api/v1/systems/${id}/runs`),
 
   certificates: (id?: number) =>

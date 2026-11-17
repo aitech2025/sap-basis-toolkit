@@ -457,6 +457,42 @@ def delete_route(route_id: int):
     return Response(status_code=204)
 
 
+@router.get("/systems/{system_id}/overview")
+def system_overview(system_id: int):
+    """Everything the toolkit knows about one system: health per module, transport path, recent activity."""
+    system = load_system(system_id)
+    health = system_health([system])[system_id]
+    certs = certificate_summary(system_id)
+    report = growth.build_report(system_id, 30, 5, system["product"])
+    return {
+        "system": system,
+        **health,
+        "certificates": {
+            **health["certificates"],
+            "counts": certs["counts"],
+            "endpoints": len(certs["endpoints"]),
+            "pse_certificates": len(certs["strust_certificates"]),
+            "expiring": [
+                {k: c.get(k) for k in ("name", "hostname", "pse_name", "subject", "status", "days_remaining")}
+                for c in (certs["endpoints"] + certs["strust_certificates"])
+                if c["status"] in ("expired", "critical", "warning", "unreachable")
+            ][:5],
+        },
+        "growth": {
+            **health["growth"],
+            "tracked_tables": report["tracked_tables"],
+            "tracked_growth_mb_per_day": report["tracked_growth_mb_per_day"],
+            "memory_used_pct": (report["capacity_forecast"] or {}).get("memory_used_pct"),
+            "top_tables": [{k: t[k] for k in ("table_name", "size_mb", "growth_mb_per_day")}
+                           for t in report["top_growing_tables"][:3]],
+            "snapshots": len(report["size_history"]),
+        },
+        "routes": routes.system_path(system_id),
+        "recent_alerts": alert_history(system_id=system_id, limit=5),
+        "recent_runs": systems.list_runs(system_id, limit=5),
+    }
+
+
 @router.get("/systems/{system_id}/routes")
 def system_routes(system_id: int):
     load_system(system_id)

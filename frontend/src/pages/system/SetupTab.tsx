@@ -5,7 +5,7 @@ const MODULES = [
   ["certificates", "Certificates"], ["growth", "Table growth"], ["users", "Users & licenses"], ["transports", "Transports"],
 ] as const;
 
-export default function SummaryTab({ system }: { system: SystemDetail }) {
+export default function SetupTab({ system }: { system: SystemDetail }) {
   const caps = system.capabilities;
   const lm = caps.license_model;
   return (

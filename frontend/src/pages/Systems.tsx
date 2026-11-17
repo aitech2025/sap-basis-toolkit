@@ -44,6 +44,7 @@ export default function Systems() {
         </div>
         <DataTable<SapSystem>
           rows={rows}
+          onRowClick={(s) => navigate(`/systems/${s.id}`)}
           rowKey={(s) => s.id}
           empty={data?.length ? "No systems match the filters." : "No systems yet — add one to get started."}
           columns={[

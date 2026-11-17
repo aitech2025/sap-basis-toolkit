@@ -6,7 +6,8 @@ import { ErrorBanner, Pill, useAsync } from "../components/ui";
 import CertificatesTab from "./system/CertificatesTab";
 import GrowthTab from "./system/GrowthTab";
 import HistoryTab from "./system/HistoryTab";
-import SummaryTab from "./system/SummaryTab";
+import OverviewTab from "./system/OverviewTab";
+import SetupTab from "./system/SetupTab";
 import TransportsTab from "./system/TransportsTab";
 import UsersTab from "./system/UsersTab";
 
@@ -25,10 +26,12 @@ export default function SystemDetailPage() {
   };
 
   if (error) return <ErrorBanner error={error} />;
-  if (!system) return <p className="muted">Loading…</p>;
+  if (!system || system.id !== id) return <p className="muted">Loading…</p>;
   const tabs = [
-    ["", "Summary"], ["certificates", "Certificates"], ["growth", "Table growth"],
-    ["users", "Users & licenses"], ["transports", "Transports"], ["history", "History"],
+    ["", "Overview"], ["certificates", "Certificates"], ["growth", "Table growth"],
+    ["users", "Users & licences"],
+    ["transports", system.capabilities.transports.supported ? "Transports" : "Transports (n/a)"],
+    ["history", "History"], ["setup", "Setup & export guide"],
   ] as const;
 
   return (
@@ -52,8 +55,10 @@ export default function SystemDetailPage() {
           <NavLink key={path} to={`/systems/${id}${path ? `/${path}` : ""}`} end={!path}>{label}</NavLink>
         ))}
       </nav>
-      <Routes>
-        <Route index element={<SummaryTab system={system} />} />
+      {/* key: remount every tab per system so uploads/results never carry over between systems */}
+      <Routes key={system.id}>
+        <Route index element={<OverviewTab system={system} />} />
+        <Route path="setup" element={<SetupTab system={system} />} />
         <Route path="certificates" element={<CertificatesTab system={system} />} />
         <Route path="growth" element={<GrowthTab system={system} />} />
         <Route path="users" element={<UsersTab system={system} />} />

@@ -79,11 +79,12 @@ export interface Column<T> {
   numeric?: boolean;
 }
 
-export function DataTable<T>({ rows, columns, empty = "Nothing to show.", rowKey }: {
+export function DataTable<T>({ rows, columns, empty = "Nothing to show.", rowKey, onRowClick }: {
   rows: T[];
   columns: Column<T>[];
   empty?: ReactNode;
   rowKey: (row: T, index: number) => string | number;
+  onRowClick?: (row: T) => void;
 }) {
   if (!rows.length) return <Empty>{empty}</Empty>;
   return (
@@ -94,7 +95,16 @@ export function DataTable<T>({ rows, columns, empty = "Nothing to show.", rowKey
         </thead>
         <tbody>
           {rows.map((row, i) => (
-            <tr key={rowKey(row, i)}>
+            <tr
+              key={rowKey(row, i)}
+              className={onRowClick ? "clickable" : undefined}
+              tabIndex={onRowClick ? 0 : undefined}
+              onClick={onRowClick ? (e) => {
+                if ((e.target as HTMLElement).closest("a,button,input,select,textarea")) return;
+                onRowClick(row);
+              } : undefined}
+              onKeyDown={onRowClick ? (e) => { if (e.key === "Enter") onRowClick(row); } : undefined}
+            >
               {columns.map((c) => (
                 <td key={c.key} className={c.numeric ? "num" : undefined}>
                   {c.render ? c.render(row) : String((row as Record<string, unknown>)[c.key] ?? "–")}
