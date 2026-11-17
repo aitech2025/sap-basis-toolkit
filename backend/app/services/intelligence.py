@@ -38,14 +38,14 @@ def _median(values):
 def _linear_forecast(points, horizon_days=30, threshold_pct=85.0):
     """Return a simple linear capacity projection; null when evidence is weak."""
     if len(points) < 3:
-        return {"status": "insufficient_data", "points": len(points), "reason": "At least three capacity snapshots are required."}
+        return {"status": "insufficient_data", "points": len(points), "threshold_in_days": None, "reason": "At least three capacity snapshots are required."}
     origin = points[0][0]
     xs = [(_aware(ts) - origin).total_seconds() / 86400 for ts, _, _ in points]
     ys = [float(used) for _, used, _ in points]
     mean_x, mean_y = sum(xs) / len(xs), sum(ys) / len(ys)
     denominator = sum((x - mean_x) ** 2 for x in xs)
     if denominator <= 0:
-        return {"status": "insufficient_data", "points": len(points), "reason": "Snapshots do not span a measurable time interval."}
+        return {"status": "insufficient_data", "points": len(points), "threshold_in_days": None, "reason": "Snapshots do not span a measurable time interval."}
     slope = sum((x - mean_x) * (y - mean_y) for x, y in zip(xs, ys)) / denominator
     intercept = mean_y - slope * mean_x
     total_values = [float(total) for _, _, total in points if total is not None and float(total) > 0]
