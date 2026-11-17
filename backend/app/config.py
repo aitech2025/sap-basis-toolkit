@@ -16,6 +16,16 @@ ALERT_EMAIL_TO = tuple(v.strip() for v in os.getenv("ALERT_EMAIL_TO", "").split(
 SMTP_STARTTLS = os.getenv("SMTP_STARTTLS", "true").lower() == "true"
 API_AUTH_TOKEN = os.getenv("API_AUTH_TOKEN", "").strip()
 
+# Mandatory allowlist. Supports exact hosts and wildcard subdomains.
+ALLOWED_TARGET_HOSTS = tuple(
+    item.strip().lower().rstrip(".")
+    for item in os.getenv("ALLOWED_TARGET_HOSTS", "").split(",")
+    if item.strip()
+)
+# Private SAP network ranges must be explicitly allowed.
+ALLOWED_TARGET_CIDRS = tuple(
+    item.strip() for item in os.getenv("ALLOWED_TARGET_CIDRS", "").split(",") if item.strip()
+)
 # Only these TCP destination ports may be probed on approved hosts.
 ALLOWED_TARGET_PORTS = tuple(
     int(item.strip()) for item in os.getenv("ALLOWED_TARGET_PORTS", "443").split(",") if item.strip()
