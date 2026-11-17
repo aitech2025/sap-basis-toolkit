@@ -1,6 +1,8 @@
 import { useMemo, useRef, useState } from "react";
 
-export interface ChartMarker { t: number; label: string; severity: string; }\n\nexport interface Point {
+export interface ChartMarker { t: number; label: string; severity: string; }
+
+export interface Point {
   t: number; // epoch ms
   v: number;
 }
@@ -15,6 +17,7 @@ export function LineChart({ points, unit, height = 180, threshold, label, marker
   height?: number;
   threshold?: { value: number; label: string };
   label: string;
+  markers?: ChartMarker[];
 }) {
   const ref = useRef<SVGSVGElement>(null);
   const [hover, setHover] = useState<number | null>(null);
@@ -68,7 +71,14 @@ export function LineChart({ points, unit, height = 180, threshold, label, marker
         ))}
         <text x={pad.l} y={height - 6} className="axis">{day(geo.t0)}</text>
         <text x={width - pad.r} y={height - 6} textAnchor="end" className="axis">{day(geo.t1)}</text>
-        {markers.filter((m) => m.t >= geo.t0 && m.t <= geo.t1).map((marker) => (\n          <g key={`${marker.t}-${marker.label}`} className={`chart-incident-marker ${marker.severity}`}>\n            <line x1={geo.x(marker.t)} x2={geo.x(marker.t)} y1={pad.t} y2={height - pad.b} />\n            <circle cx={geo.x(marker.t)} cy={pad.t + 4} r="4" />\n            <title>{marker.label}</title>\n          </g>\n        ))}\n        {threshold && (
+        {markers.filter((m) => m.t >= geo.t0 && m.t <= geo.t1).map((marker) => (
+          <g key={`${marker.t}-${marker.label}`} className={`chart-incident-marker ${marker.severity}`}>
+            <line x1={geo.x(marker.t)} x2={geo.x(marker.t)} y1={pad.t} y2={height - pad.b} />
+            <circle cx={geo.x(marker.t)} cy={pad.t + 4} r="4" />
+            <title>{marker.label}</title>
+          </g>
+        ))}
+        {threshold && (
           <g>
             <line x1={pad.l} x2={width - pad.r} y1={geo.y(threshold.value)} y2={geo.y(threshold.value)} className="threshold" />
             <text x={width - pad.r} y={geo.y(threshold.value) - 5} textAnchor="end" className="axis">{threshold.label}</text>
