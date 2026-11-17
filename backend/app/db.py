@@ -84,19 +84,26 @@ def get_db():
         yield connection
 
 
-def ensure_target_uniqueness(connection: Connection) -> None:
-    """Safely enforce endpoint uniqueness on fresh and legacy databases."""
+def _has_target_unique_index(connection: Connection) -> bool:
     inspector = inspect(connection)
     if "targets" not in inspector.get_table_names():
-        return
-
+        return False
     index_names = {item["name"] for item in inspector.get_indexes("targets")}
     constraint_names = {
         item.get("name") for item in inspector.get_unique_constraints("targets")
     }
-    if "uq_targets_hostname_port" in index_names or "uq_targets_hostname_port" in constraint_names:
-        return
+    return (
+        "uq_targets_hostname_port" in index_names
+        or "uq_targets_hostname_port" in constraint_names
+    )
 
+
+def assert_no_duplicate_targets(connection: Connection) -> None:
+    """Preflight legacy data before metadata.create_all attempts the unique index."""
+    if "targets" not in inspect(connection).get_table_names():
+        return
+    if _has_target_unique_index(connection):
+        return
     duplicates = connection.execute(
         text(
             "SELECT hostname, port, COUNT(*) AS duplicate_count "
@@ -113,6 +120,11 @@ def ensure_target_uniqueness(connection: Connection) -> None:
             f"records exist. Resolve these records and retry: {examples}"
         )
 
+
+def ensure_target_uniqueness(connection: Connection) -> None:
+    if _has_target_unique_index(connection):
+        return
+    assert_no_duplicate_targets(connection)
     Index(
         "uq_targets_hostname_port", targets.c.hostname, targets.c.port, unique=True
     ).create(bind=connection, checkfirst=True)
@@ -120,10 +132,8 @@ def ensure_target_uniqueness(connection: Connection) -> None:
 
 def init_db() -> None:
     engine = get_engine()
-    # Preflight existing targets before metadata.create_all attempts to create
-    # the unique index. This produces an actionable error for legacy duplicates.
     with engine.begin() as connection:
-        ensure_target_uniqueness(connection)
+        assert_no_duplicate_targets(connection)
     metadata.create_all(engine)
     with engine.begin() as connection:
         ensure_target_uniqueness(connection)
