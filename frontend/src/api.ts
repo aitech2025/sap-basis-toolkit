@@ -1,4 +1,5 @@
 import type { AnalyticsMetric, AnalyticsSeries, AnalyticsSummary } from "./types/analytics";
+import type { AnomaliesResponse, AvailabilityResponse, CapacityForecastResponse, IncidentCorrelationResponse } from "./types/intelligence";
 import type {
   AlertEvent, Catalogue, CertificateSummary, GrowthReport, Overview, PostcheckResult, PrecheckResult, Run,
   AuditEntry, Collector, ControlStatus, ImportHistory, Operation, RegisterResult, SapInstance, ScanResult, Incident, IncidentCounts, JobReport, LockReport, MaintenanceWindow, Me, MonitorDetail, MonitorsResponse, RouteProposal, Rule, RuleMetric, User, SapSystem, SystemDetail, SystemInput, SystemOverviewData, SystemRoutes, Topology, TransportRoute, UserReport,
@@ -99,6 +100,26 @@ const json = (method: string, body: unknown): RequestInit => ({
 });
 
 export const api = {
+  intelligenceAvailability: (hours = 24, landscape?: string) => {
+    const params = new URLSearchParams({ hours: String(hours) });
+    if (landscape) params.set("landscape", landscape);
+    return request<AvailabilityResponse>(`/api/v1/intelligence/availability?${params.toString()}`);
+  },
+  intelligenceAnomalies: (hours = 24, landscape?: string) => {
+    const params = new URLSearchParams({ hours: String(hours) });
+    if (landscape) params.set("landscape", landscape);
+    return request<AnomaliesResponse>(`/api/v1/intelligence/anomalies?${params.toString()}`);
+  },
+  intelligenceCapacity: (horizonDays = 30, thresholdPct = 85, landscape?: string) => {
+    const params = new URLSearchParams({ horizon_days: String(horizonDays), threshold_pct: String(thresholdPct) });
+    if (landscape) params.set("landscape", landscape);
+    return request<CapacityForecastResponse>(`/api/v1/intelligence/capacity-forecasts?${params.toString()}`);
+  },
+  intelligenceCorrelations: (hours = 24, landscape?: string) => {
+    const params = new URLSearchParams({ hours: String(hours) });
+    if (landscape) params.set("landscape", landscape);
+    return request<IncidentCorrelationResponse>(`/api/v1/intelligence/incident-correlations?${params.toString()}`);
+  },
   analyticsMetrics: () => request<AnalyticsMetric[]>("/api/v1/analytics/metrics"),
   analyticsSummary: (hours = 24, landscape?: string) => {
     const params = new URLSearchParams({ hours: String(hours) });
