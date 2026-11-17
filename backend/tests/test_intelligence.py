@@ -133,3 +133,68 @@ def test_capacity_forecast_projects_threshold_from_three_snapshots(monkeypatch, 
         assert forecast["status"] == "threshold_projected"
         assert forecast["daily_change_mb"] == 4.0
         assert forecast["threshold_in_days"] is not None and forecast["threshold_in_days"] < 30
+
+
+def test_root_cause_ranks_correlated_hypotheses_with_evidence_and_limits(monkeypatch, tmp_path):
+    setup(monkeypatch, tmp_path)
+    now = datetime.now(timezone.utc)
+    with TestClient(app) as client:
+        system = create_system(client)
+        with db.get_db() as connection:
+            incident_id = connection.execute(db.incidents.insert().values(
+                system_id=system["id"], fingerprint="rca:test", source="rule", metric="dumps.last_hour",
+                title="Application slowdown", severity="critical", status="open", details="{}",
+                value=25, opened_at=now, last_seen_at=now, occurrences=1, in_maintenance=False,
+            ).returning(db.incidents.c.id)).scalar_one()
+            samples = []
+            for metric, before, after in [
+                ("hana.cpu_pct", 35, 96),
+                ("hana.memory_used_pct", 65, 92),
+                ("wp.dia_busy_pct", 35, 91),
+                ("wp.long_running", 0, 4),
+                ("trfc.errors", 0, 0),
+            ]:
+                samples.extend([
+                    {"system_id": system["id"], "metric": metric, "value": before, "ts": now - timedelta(minutes=10)},
+                    {"system_id": system["id"], "metric": metric, "value": after, "ts": now + timedelta(minutes=2)},
+                ])
+            connection.execute(db.metric_points.insert(), samples)
+            connection.execute(db.monitor_snapshots.insert().values(
+                system_id=system["id"], monitor="hana", source="hana", captured_at=now,
+                health="critical", data='{"summary":{"cpu_pct":96,"alerts":2}}',
+            ))
+        response = client.get(f"/api/v1/intelligence/root-cause/{incident_id}", headers=KEY)
+        assert response.status_code == 200, response.text
+        result = response.json()
+        assert result["incident"]["sid"] == "I4P"
+        domains = [h["domain"] for h in result["hypotheses"]]
+        assert domains[0] == "HANA"
+        assert "ABAP" in domains
+        assert result["hypotheses"][0]["confidence"] in ("medium", "high")
+        assert result["coverage"]["monitor_snapshots_in_window"] == 1
+        assert any(e["metric"] == "hana.cpu_pct" and e["triggered"] for e in result["evidence"])
+        assert "not causal proof" in result["interpretation"]
+
+
+def test_root_cause_requires_auth_and_returns_404_for_missing_incident(monkeypatch, tmp_path):
+    setup(monkeypatch, tmp_path)
+    with TestClient(app) as client:
+        assert client.get("/api/v1/intelligence/root-cause/999").status_code == 401
+        response = client.get("/api/v1/intelligence/root-cause/999", headers=KEY)
+        assert response.status_code == 404
+
+
+def test_root_cause_explains_incidents_without_system_association(monkeypatch, tmp_path):
+    setup(monkeypatch, tmp_path)
+    now = datetime.now(timezone.utc)
+    with TestClient(app) as client:
+        with db.get_db() as connection:
+            incident_id = connection.execute(db.incidents.insert().values(
+                system_id=None, fingerprint="rca:unassigned", source="module", metric=None,
+                title="Unassigned platform alert", severity="warning", status="open", details="{}",
+                value=None, opened_at=now, last_seen_at=now, occurrences=1, in_maintenance=False,
+            ).returning(db.incidents.c.id)).scalar_one()
+        response = client.get(f"/api/v1/intelligence/root-cause/{incident_id}", headers=KEY)
+        assert response.status_code == 200
+        assert response.json()["hypotheses"] == []
+        assert response.json()["coverage"]["system_metrics"] is False
