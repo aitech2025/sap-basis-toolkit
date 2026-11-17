@@ -139,8 +139,8 @@ def init_db() -> None:
         table for table in metadata.sorted_tables if table.name not in existing_tables
     ]
     # Passing only missing tables avoids re-creating indexes on existing tables.
-    if missing_tables:
-        metadata.create_all(engine, tables=missing_tables)
+    for table in missing_tables:
+        table.create(engine, checkfirst=True)
     with engine.begin() as connection:
         ensure_target_uniqueness(connection)
 

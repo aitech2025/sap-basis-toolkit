@@ -17,8 +17,8 @@ def upgrade() -> None:
     missing_tables = [
         table for table in metadata.sorted_tables if table.name not in existing_tables
     ]
-    if missing_tables:
-        metadata.create_all(bind=bind, tables=missing_tables)
+    for table in missing_tables:
+        table.create(bind=bind, checkfirst=True)
     ensure_target_uniqueness(bind)
 
 
