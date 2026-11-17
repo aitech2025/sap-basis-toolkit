@@ -25,9 +25,10 @@ def test_topology_assets_and_explicit_dependencies(monkeypatch, tmp_path):
         host = client.post("/api/v1/topology/assets", headers=HEADERS, json={
             "landscape": "Finance", "system_id": system["id"], "kind": "host",
             "name": "PRD application host", "hostname": "sapapp.example.test",
-            "attributes": {"availability_zone": "az-a", "os": "Linux"},
+            "attributes": {"availability_zone": "az-a", "os": "Linux"}, "source": "hana",
         })
         assert host.status_code == 201, host.text
+        assert host.json()["source"] == "manual"  # clients cannot spoof collector provenance
         hana = client.post("/api/v1/topology/assets", headers=HEADERS, json={
             "landscape": "Finance", "system_id": system["id"], "kind": "hana",
             "name": "PRD HANA", "hostname": "saphana.example.test", "port": 30015,
