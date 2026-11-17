@@ -1,4 +1,5 @@
 """Idempotent schema baseline and target uniqueness enforcement."""
+from sqlalchemy import inspect
 from alembic import op
 
 from app.db import metadata, assert_no_duplicate_targets, ensure_target_uniqueness
@@ -11,13 +12,16 @@ depends_on = None
 
 def upgrade() -> None:
     bind = op.get_bind()
-    # Preflight duplicates before metadata.create_all attempts the unique index.
     assert_no_duplicate_targets(bind)
-    metadata.create_all(bind=bind)
+    existing_tables = set(inspect(bind).get_table_names())
+    missing_tables = [
+        table for table in metadata.sorted_tables if table.name not in existing_tables
+    ]
+    if missing_tables:
+        metadata.create_all(bind=bind, tables=missing_tables)
     ensure_target_uniqueness(bind)
 
 
 def downgrade() -> None:
-    # Deliberately retain application tables/data. A baseline downgrade must
-    # never destroy customer certificate history.
+    # Deliberately retain application tables/data.
     pass

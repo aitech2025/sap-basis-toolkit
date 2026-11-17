@@ -1,4 +1,5 @@
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
 from app.main import app

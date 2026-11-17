@@ -134,7 +134,13 @@ def init_db() -> None:
     engine = get_engine()
     with engine.begin() as connection:
         assert_no_duplicate_targets(connection)
-    metadata.create_all(engine)
+        existing_tables = set(inspect(connection).get_table_names())
+    missing_tables = [
+        table for table in metadata.sorted_tables if table.name not in existing_tables
+    ]
+    # Passing only missing tables avoids re-creating indexes on existing tables.
+    if missing_tables:
+        metadata.create_all(engine, tables=missing_tables)
     with engine.begin() as connection:
         ensure_target_uniqueness(connection)
 
