@@ -1,5 +1,6 @@
 """Idempotent schema baseline and target uniqueness enforcement."""
 from sqlalchemy import inspect
+from sqlalchemy.schema import CreateTable
 from alembic import op
 
 from app.db import metadata, assert_no_duplicate_targets, ensure_target_uniqueness
@@ -18,7 +19,7 @@ def upgrade() -> None:
         table for table in metadata.sorted_tables if table.name not in existing_tables
     ]
     for table in missing_tables:
-        table.create(bind=bind, checkfirst=True)
+        bind.execute(CreateTable(table))
     ensure_target_uniqueness(bind)
 
 

@@ -6,6 +6,7 @@ from sqlalchemy import (
     Table, Text, create_engine, inspect, text,
 )
 from sqlalchemy.engine import Connection, Engine
+from sqlalchemy.schema import CreateTable
 
 from .config import DATABASE_URL
 
@@ -135,13 +136,13 @@ def init_db() -> None:
     with engine.begin() as connection:
         assert_no_duplicate_targets(connection)
         existing_tables = set(inspect(connection).get_table_names())
-    missing_tables = [
-        table for table in metadata.sorted_tables if table.name not in existing_tables
-    ]
-    # Passing only missing tables avoids re-creating indexes on existing tables.
-    for table in missing_tables:
-        table.create(engine, checkfirst=True)
-    with engine.begin() as connection:
+        missing_tables = [
+            table for table in metadata.sorted_tables if table.name not in existing_tables
+        ]
+        # Execute table DDL directly: Table.create also traverses FK dependencies
+        # and can attempt to recreate indexes on already-existing parent tables.
+        for table in missing_tables:
+            connection.execute(CreateTable(table))
         ensure_target_uniqueness(connection)
 
 
