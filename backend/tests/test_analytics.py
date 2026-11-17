@@ -4,8 +4,6 @@ from fastapi.testclient import TestClient
 
 from app import config, db
 from app.main import app
-from app.services import analytics
-
 KEY = {"X-API-Key": "analytics-test-key"}
 
 
