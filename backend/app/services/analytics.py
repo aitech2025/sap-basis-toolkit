@@ -11,6 +11,10 @@ from sqlalchemy import func, select, text
 from ..db import get_db, metric_points, sap_systems
 
 METRICS = [
+    {"key": "hana.active_statements", "label": "HANA active statements", "category": "HANA", "unit": "count", "description": "Current active SQL statements; optional HANA view", "format": "number"},
+    {"key": "hana.long_running_statements", "label": "HANA long-running statements", "category": "HANA", "unit": "count", "description": "Active statements running at least 30 seconds", "format": "number"},
+    {"key": "hana.waiting_threads", "label": "HANA waiting service threads", "category": "HANA", "unit": "count", "description": "Service threads in WAITING state; optional HANA view", "format": "number"},
+    {"key": "hana.expensive_statements_1h", "label": "HANA expensive statements (1h)", "category": "HANA", "unit": "count", "description": "Rows in M_EXPENSIVE_STATEMENTS for the last hour; requires expensive statement trace/configuration", "format": "number"},
     {"key": "host.load1", "label": "Host load average (1m)", "category": "Host", "unit": "load", "description": "Operating-system one-minute load average; not CPU percentage", "format": "number"},
     {"key": "host.memory_used_pct", "label": "Host memory used", "category": "Host", "unit": "%", "description": "Host memory utilisation derived from MemTotal and MemAvailable", "format": "percent"},
     {"key": "host.disk_used_pct", "label": "Host root filesystem used", "category": "Host", "unit": "%", "description": "Root filesystem utilisation; other mount points are not included", "format": "percent"},
