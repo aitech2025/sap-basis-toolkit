@@ -118,14 +118,12 @@ class TopologyAssetIn(BaseModel):
     hostname: str | None = Field(default=None, max_length=253)
     port: int | None = Field(default=None, ge=1, le=65535)
     attributes: dict = Field(default_factory=dict)
-    source: str = Field(default="manual", pattern="^(manual|sapcontrol|hana)$")
 
 
 class TopologyLinkIn(BaseModel):
     source_asset_id: int = Field(gt=0)
     target_asset_id: int = Field(gt=0)
     relationship: str = Field(min_length=1, max_length=30)
-    source: str = Field(default="manual", pattern="^(manual|sapcontrol|hana)$")
     notes: str | None = Field(default=None, max_length=1000)
 
 
