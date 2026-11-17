@@ -93,7 +93,7 @@ def test_hana_collect_with_fake_client_and_partial_failures():
     assert "hana.data_backup_age_h" in metrics and "hana.log_backup_age_h" in metrics
     # without an ABAP schema only database views are read
     out = hana.collect(simulator.SimulatedHana("x"), None, timezone.utc)
-    assert {d["call"] for d in out["diagnostics"]} == {"version", "memory", "cpu", "disk", "alerts", "backups", "replication", "services"}
+    assert {d["call"] for d in out["diagnostics"]} == {"version", "memory", "cpu", "disk", "alerts", "backups", "replication", "services", "active_statements", "service_threads", "expensive_statements"}
     with pytest.raises(CollectorError):
         hana.collect(simulator.SimulatedHana("x"), "sap;drop", timezone.utc)
 
@@ -238,3 +238,18 @@ def test_live_availability_drives_landscape_health(monkeypatch, tmp_path):
         monitors.store(system["id"], "availability", "sapcontrol", data, health)
         overview = c.get("/api/v1/overview", headers=KEY).json()["systems"][0]
         assert overview["health"] == "critical" and overview["availability"]["system_up"] is False
+
+
+def test_hana_statement_and_thread_metrics_are_summary_only():
+    data, metrics, _ = monitors.build_hana({
+        "active_statements": {"count": 12, "long_running": 2, "max_duration_s": 81.5},
+        "service_threads": {"count": 220, "waiting": 27},
+        "expensive_statements_1h": {"count": 8, "max_duration_s": 120.0},
+    })
+    assert metrics["hana.active_statements"] == 12
+    assert metrics["hana.long_running_statements"] == 2
+    assert metrics["hana.waiting_threads"] == 27
+    assert metrics["hana.expensive_statements_1h"] == 8
+    assert data["active_statements"]["max_duration_s"] == 81.5
+    # SQL text and statement literals are never collected into monitor snapshots.
+    assert "statement_string" not in str(data).lower()

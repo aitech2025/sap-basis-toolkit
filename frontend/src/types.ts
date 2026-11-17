@@ -262,6 +262,37 @@ export interface TransportRoute {
   warnings?: string[];
 }
 
+export interface TopologyAsset {
+  id: number;
+  landscape: string;
+  system_id: number | null;
+  kind: "host" | "hana" | "rfc_destination" | "middleware" | "web_dispatcher" | "external_service";
+  name: string;
+  hostname: string | null;
+  port: number | null;
+  attributes: Record<string, unknown>;
+  source: "manual" | "sapcontrol" | "hana";
+  created_at: string;
+  updated_at: string;
+}
+
+export interface TopologyLink {
+  id: number;
+  source_asset_id: number;
+  target_asset_id: number;
+  relationship: "runs_on" | "uses_database" | "connects_to" | "routes_to" | "depends_on" | "hosts";
+  source: "manual" | "sapcontrol" | "hana";
+  verified_at: string | null;
+  notes: string | null;
+  created_at: string;
+}
+
+export interface DependencyTopology {
+  landscape: string;
+  assets: TopologyAsset[];
+  links: TopologyLink[];
+}
+
 export interface TopologySystem {
   id: number;
   sid: string;

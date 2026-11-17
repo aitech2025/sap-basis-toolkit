@@ -2,7 +2,7 @@ import type { AnalyticsMetric, AnalyticsSeries, AnalyticsSummary } from "./types
 import type { AnomaliesResponse, AvailabilityResponse, CapacityForecastResponse, IncidentCorrelationResponse, RootCauseResponse } from "./types/intelligence";
 import type {
   AlertEvent, Catalogue, CertificateSummary, GrowthReport, Overview, PostcheckResult, PrecheckResult, Run,
-  AuditEntry, Collector, ControlStatus, ImportHistory, Operation, RegisterResult, SapInstance, ScanResult, Incident, IncidentCounts, JobReport, LockReport, MaintenanceWindow, Me, MonitorDetail, MonitorsResponse, RouteProposal, Rule, RuleMetric, User, SapSystem, SystemDetail, SystemInput, SystemOverviewData, SystemRoutes, Topology, TransportRoute, UserReport,
+  AuditEntry, Collector, ControlStatus, ImportHistory, Operation, RegisterResult, SapInstance, ScanResult, Incident, IncidentCounts, JobReport, LockReport, MaintenanceWindow, Me, MonitorDetail, MonitorsResponse, RouteProposal, Rule, RuleMetric, User, SapSystem, SystemDetail, SystemInput, SystemOverviewData, SystemRoutes, DependencyTopology, TopologyAsset, TopologyLink, Topology, TransportRoute, UserReport,
 } from "./types";
 
 const KEY_STORAGE = "sapBasisToolkit.apiKey";
@@ -233,6 +233,11 @@ export const api = {
   postcheck: (id: number, log: string) =>
     request<PostcheckResult>(`/api/v1/systems/${id}/transports/postcheck`, json("POST", { log })),
 
+  dependencyTopology: (systemId: number) => request<DependencyTopology>(`/api/v1/systems/${systemId}/topology`),
+  createTopologyAsset: (body: Record<string, unknown>) => request<TopologyAsset>("/api/v1/topology/assets", json("POST", body)),
+  deleteTopologyAsset: (id: number) => request<void>(`/api/v1/topology/assets/${id}`, { method: "DELETE" }),
+  createTopologyLink: (body: Record<string, unknown>) => request<TopologyLink>("/api/v1/topology/links", json("POST", body)),
+  deleteTopologyLink: (id: number) => request<void>(`/api/v1/topology/links/${id}`, { method: "DELETE" }),
   topology: (landscape: string) => request<Topology>(`/api/v1/landscapes/${encodeURIComponent(landscape)}/topology`),
   suggestRoutes: (landscape: string, apply = false) =>
     request<{ proposals: RouteProposal[]; created: TransportRoute[] }>(
