@@ -22,7 +22,6 @@ function HealthBar({ healthy, warning, critical, unknown }: { healthy: number; w
 }
 
 function SystemCard({ s }: { s: OverviewSystem }) {
-  const up = s.availability?.system_up;
   const running = s.availability ? `${s.availability.running}/${s.availability.instances} instances running` : "Availability data not collected";
   const incidentCount = s.incidents?.total ?? 0;
   const disk = s.growth.disk_used_pct;
