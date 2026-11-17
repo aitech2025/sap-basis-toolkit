@@ -13,7 +13,8 @@ from .toolkit import load_system, read_body
 router = APIRouter(prefix="/api/v1", dependencies=[Depends(authorize)])
 
 MONITOR_METRICS = {
-    "availability": ["availability.system_up", "availability.instances_down"],\n    "host": ["host.load1", "host.memory_used_pct", "host.disk_used_pct"],
+    "availability": ["availability.system_up", "availability.instances_down"],
+    "host": ["host.load1", "host.memory_used_pct", "host.disk_used_pct"],
     "workprocesses": ["wp.dia_busy_pct", "wp.btc_busy_pct", "wp.long_running", "wp.stopped"],
     "dumps": ["dumps.last_hour", "dumps.last_24h"],
     "syslog": ["syslog.errors_last_hour"],
