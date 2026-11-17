@@ -15,7 +15,7 @@ from .. import config
 from ..db import get_db, metric_points, monitor_snapshots
 from .tabular import InputFormatError, parse_number, parse_sap_datetime, pick, read_rows, require_columns
 
-MONITORS = ("availability", "workprocesses", "dumps", "syslog", "updates", "trfc", "qrfc", "idocs", "hana")
+MONITORS = ("availability", "workprocesses", "dumps", "syslog", "updates", "trfc", "qrfc", "idocs", "hana", "host")
 STATUS_COLOR = {"GREEN": "green", "YELLOW": "yellow", "RED": "red", "GRAY": "gray", "GREY": "gray"}
 WP_BUSY = {"run", "running", "hold", "on hold"}
 WP_BROKEN = {"stop", "stopped", "ended", "end", "complete"}
