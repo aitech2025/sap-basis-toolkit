@@ -7,7 +7,7 @@ import { Card, DataTable, Empty, Pill, fmtDate, useAsync } from "./ui";
 const DEFAULTS = {
   sapcontrol: { port: 50014, interval_seconds: 120, username: "", abap_schema: "" },
   hana: { port: 30015, interval_seconds: 300, username: "", abap_schema: "SAPHANADB" },
-  node_exporter: { port: 9100, interval_seconds: 60, username: "", abap_schema: "" },
+  node_exporter: { port: 9100, interval_seconds: 60, username: "", abap_schema: "", use_tls: false, verify_tls: false },
 };
 
 export function CollectorsCard({ system }: { system: SystemDetail }) {
