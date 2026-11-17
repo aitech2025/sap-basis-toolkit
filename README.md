@@ -32,16 +32,16 @@ Each system records its SID, landscape (business unit, customer or track), envir
 
 ## Web UI
 
-Served by the API at `/` (built into the Docker image):
+Served by the API at `/` (built into the Docker image). The UI is React + TypeScript with [shadcn/ui](https://ui.shadcn.com) components (Radix primitives) and Tailwind CSS: a collapsible navigation rail, a breadcrumb top bar, a <kbd>Ctrl</kbd>/<kbd>⌘</kbd>+<kbd>K</kbd> command palette to jump to any SID or page, and light, dark or system themes. Status is always a coloured, shape-coded badge with text. Green, amber, red and grey are reserved for SAP state, and petrol is used for actions. Fonts (IBM Plex Sans and Mono) are bundled, so the UI works on networks without internet access.
 
-- **Landscape overview**: every system grouped by landscape with combined health (certificates, capacity forecast, last import).
+- **Landscape overview**: every landscape laid out in transport order (DEV → QAS → PRD). Each system cell shows its health, running instances, open incidents and disk headroom. KPI tiles above summarise production health, incidents and instances.
 - **Landscapes**: each landscape drawn as product lanes (e.g. S/4HANA, BW/4HANA, ECC, Portal) across DEV → QAS → (TRN/PRE) → PRD columns, with the transport routes as arrows. Arrows carry the transport layer and the result of the last import into the target (OK, RC 4 warnings, RC ≥ 8 failed). Hover a system to trace its routes. Branches such as two development tracks or a training system are supported. Routes can be added manually or proposed automatically (*Suggest routes*: one system per tier → DEV → QAS → PRE → PRD).
 - **Discover system**: host + credentials → detected SID, product, database and instance roles → register and monitor.
 - **Systems**: register, filter, edit and delete systems.
 - **System workspace** (opened by clicking any system tile, table row, diagram node or SID link): an *Overview* dashboard of that system with a card per feature (certificates, table growth & capacity, users & licences, transports with its route path, transport history, background jobs, SAP locks), recent alerts and analyses. Each card opens its tab. Tabs include *Instances & control* (instance inventory with roles and status, start/stop/restart, operation history), setup and export guide, certificates (endpoints + STRUST/PSE), table growth (trend charts, forecast, housekeeping), users & licences, transports (pre/post checks) and history (summary-only run log + alerts).
 - **Certificates** and **Alerts**: landscape-wide views.
 
-The API key is entered in *Settings* and kept in browser session storage.
+Users sign in with their own account. The server API key can be used instead for automation or break-glass access.
 
 ## Modules
 
