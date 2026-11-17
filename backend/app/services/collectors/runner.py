@@ -102,6 +102,8 @@ def update_collector(collector_id: int, changes: dict) -> dict:
         changes["abap_schema"] = (changes["abap_schema"] or "").strip().upper() or None
     password = changes.pop("password", None)
     clear_password = changes.pop("clear_password", False)
+    if current["type"] == "node_exporter" and (password or changes.get("username")):
+        raise CollectorError("node_exporter credentials are not accepted; secure the endpoint at the network or reverse-proxy layer")
     validate({**current, **changes})
     if password:
         changes["password_enc"] = vault.encrypt(password)
