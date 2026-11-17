@@ -410,7 +410,7 @@ configuration_snapshots = Table(
     SYSTEM_FK(),
     Column("source", String(40), nullable=False),
     Column("captured_at", DateTime(timezone=True), nullable=False),
-    Column("is_baseline", Boolean, nullable=False, default=False, server_default=text("0")),
+    Column("is_baseline", Boolean, nullable=False, default=False, server_default=text("false")),
     Column("snapshot_json", Text, nullable=False),
     Column("change_count", Integer, nullable=False, default=0, server_default=text("0")),
 )

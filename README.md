@@ -56,18 +56,6 @@ Alerts go to a generic webhook, **Slack**, **Microsoft Teams** (Workflows/Adapti
 
 See [docs/product-evaluation.md](docs/product-evaluation.md) for the evaluation of the product ideas and the roadmap, and [samples/](samples/) for example SAP exports to try every module.
 
-
-## Configuration & Security Analysis (new)
-
-Configuration snapshots can be submitted by a future SAP-side extractor, a customer agent, or an authorized operator. Sentinel redacts fields whose names resemble passwords, secrets, tokens, private keys, credentials or API keys before persistence. It stores immutable snapshots and supports an admin-designated baseline.
-
-- `POST /api/v1/systems/{id}/configuration/baseline` — admin-only; establishes or replaces the baseline.
-- `POST /api/v1/systems/{id}/configuration/snapshots` — capture a current sanitized snapshot.
-- `GET /api/v1/systems/{id}/configuration/drift` — added, removed and modified configuration paths compared with the baseline.
-- `GET /api/v1/systems/{id}/configuration/snapshots` — recent snapshot history.
-
-This is a generic configuration-drift engine, not yet a built-in SAP security-content pack. SAP-specific collectors, supported configuration items and compliance rules must be implemented and validated per SAP_BASIS release. Never upload private keys or unredacted secrets.
-
 ### Operations monitoring (per ABAP system)
 
 | Feature | What it shows | Input |

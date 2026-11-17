@@ -154,9 +154,11 @@ class ConfigurationSnapshotIn(BaseModel):
 
 
 @router.post("/systems/{system_id}/configuration/snapshots", status_code=201)
-def capture_configuration(system_id: int, payload: ConfigurationSnapshotIn):
-    """Store a sanitized configuration snapshot; set_baseline establishes/replaces the comparison baseline."""
+def capture_configuration(system_id: int, payload: ConfigurationSnapshotIn, request: Request):
+    """Store a sanitized configuration snapshot; only admins may replace the baseline."""
     load_system(system_id)
+    if payload.set_baseline and not _principal(request).can("admin"):
+        raise HTTPException(403, "admin role required to establish a configuration baseline")
     try:
         return configuration.capture(system_id, payload.source, payload.snapshot, payload.set_baseline)
     except ValueError as exc:
