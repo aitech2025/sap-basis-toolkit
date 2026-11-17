@@ -11,6 +11,17 @@ _SECRET_KEY = re.compile(r"(password|passwd|secret|token|private.?key|credential
 MAX_SNAPSHOT_BYTES = 512_000
 
 
+def _is_secret_key(name: str) -> bool:
+    # SAP profile parameters such as login/min_password_lng describe policy,
+    # not credentials. Preserve those values so security drift remains visible.
+    normalized = name.lower().replace(".", "_").replace("/", "_").replace("-", "_")
+    policy_parameter = re.search(
+        r"(min_password_(lng|len|length)|password_(length|policy|history|expiry|expiration|complexity)|fails_to_user_lock)",
+        normalized,
+    )
+    return bool(_SECRET_KEY.search(name)) and not policy_parameter
+
+
 def _sanitize(value, depth=0):
     if depth > 12:
         raise ValueError("Configuration nesting exceeds 12 levels")
@@ -20,7 +31,7 @@ def _sanitize(value, depth=0):
         clean = {}
         for key, item in value.items():
             name = str(key)[:200]
-            clean[name] = "[REDACTED]" if _SECRET_KEY.search(name) else _sanitize(item, depth + 1)
+            clean[name] = "[REDACTED]" if _is_secret_key(name) else _sanitize(item, depth + 1)
         return clean
     if isinstance(value, list):
         if len(value) > 5000:
