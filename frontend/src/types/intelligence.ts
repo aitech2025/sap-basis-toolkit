@@ -89,3 +89,31 @@ export interface IncidentCorrelationResponse {
   window_hours: number;
   incidents: IncidentCorrelation[];
 }
+
+export interface RootCauseSignal {
+  metric: string; label: string; domain: string; latest_value: number; threshold: number;
+  direction: "high" | "low"; triggered: boolean; before_avg: number | null; after_avg: number | null;
+  change: number | null; before_samples: number; after_samples: number; observed_at: string;
+  primary_incident_metric: boolean; corroboration_points: number;
+}
+export interface RootCauseHypothesis {
+  domain: string; title: string; score: number; confidence: "low" | "medium" | "high";
+  supporting_signals: { metric: string; label: string; latest_value: number; threshold: number;
+    change: number | null; observed_at: string }[];
+  recommended_checks: string[]; reason: string;
+}
+export interface RootCauseResponse {
+  incident: { id: number; title: string; severity?: string; status?: string; sid: string | null;
+    system_name?: string | null; landscape?: string | null; metric?: string | null;
+    value?: number | null; opened_at: string };
+  analysis_window: { starts_at: string; ends_at: string; minutes_each_side: number };
+  hypotheses: RootCauseHypothesis[];
+  evidence: RootCauseSignal[];
+  snapshot_evidence?: { monitor: string; source: string; health: string; captured_at: string;
+    summary: Record<string, string | number | boolean | null> }[];
+  coverage: { system_metrics: boolean; metrics_observed: number; expected_domains?: string[];
+    domains_with_supporting_signals?: string[]; monitor_snapshots_in_window?: number;
+    monitors_observed?: string[]; metric_query_truncated?: boolean };
+  limitations: string[];
+  interpretation: string;
+}
