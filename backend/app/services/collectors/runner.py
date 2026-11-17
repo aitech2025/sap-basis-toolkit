@@ -54,7 +54,7 @@ def validate(data: dict) -> None:
         raise CollectorError("HANA collectors need a database user")
     if data["type"] == "node_exporter" and simulator.is_sim(data["host"]):
         raise CollectorError("node_exporter does not support the SAP demo simulator")
-    if data["type"] == "node_exporter" and data.get("username"):
+    if data["type"] == "node_exporter" and (data.get("username") or data.get("password")):
         raise CollectorError("node_exporter credentials are not accepted; secure the endpoint at the network or reverse-proxy layer")
     if data.get("abap_schema") and not hana.SCHEMA_RE.match(data["abap_schema"]):
         raise CollectorError("ABAP schema must be an uppercase identifier, e.g. SAPHANADB")
