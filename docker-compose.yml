@@ -3,6 +3,8 @@ services:
     image: timescale/timescaledb:2.17.2-pg16
     restart: unless-stopped
     environment:
+      TIMESCALEDB_TELEMETRY: "off"
+    environment:
       POSTGRES_DB: sentinel
       POSTGRES_USER: sentinel
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in the project .env file}
