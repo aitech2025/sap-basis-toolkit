@@ -3,6 +3,7 @@ import { NavLink, Navigate, Route, Routes, useLocation } from "react-router-dom"
 import { api, hasCredentials } from "./api";
 import { RequireRole, SessionProvider, useSession } from "./components/session";
 import Account from "./pages/Account";
+import Analytics from "./pages/Analytics";
 import Alerts from "./pages/Alerts";
 import Audit from "./pages/Audit";
 import Certificates from "./pages/Certificates";
@@ -33,7 +34,7 @@ function IncidentBadge() {
 }
 
 const pageNames: Record<string, string> = {
-  "/": "Overview", "/incidents": "Incidents", "/landscapes": "Landscapes",
+  "/": "Overview", "/analytics": "Monitoring analytics", "/incidents": "Incidents", "/landscapes": "Landscapes",
   "/systems": "SAP systems", "/discover": "System discovery", "/certificates": "Certificates",
   "/maintenance": "Maintenance", "/rules": "Alert rules", "/alerts": "Notifications",
   "/users": "Users & access", "/audit": "Audit log", "/account": "Account",
@@ -58,6 +59,7 @@ function Shell() {
         <div className="nav-section">MONITOR</div>
         <nav className="nav-group">
           <NavItem to="/" icon="◫" end>Overview</NavItem>
+          <NavItem to="/analytics" icon="⌁">Analytics</NavItem>
           <NavItem to="/incidents" icon="⚑">Incidents</NavItem>
           <NavItem to="/landscapes" icon="⌘">Landscapes</NavItem>
           <NavItem to="/systems" icon="▦">SAP systems</NavItem>
@@ -99,6 +101,7 @@ function Shell() {
         <main className="main-content">
           <Routes>
             <Route path="/" element={<OverviewPage />} />
+            <Route path="/analytics" element={<Analytics />} />
             <Route path="/incidents" element={<Incidents />} />
             <Route path="/incidents/:id" element={<IncidentDetail />} />
             <Route path="/landscapes" element={<Landscapes />} />
