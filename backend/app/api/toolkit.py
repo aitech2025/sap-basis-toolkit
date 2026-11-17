@@ -1,5 +1,5 @@
 """Multi-system API: system registry, per-system modules, landscape overview and alert history."""
-from datetime import datetime
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi.responses import PlainTextResponse
@@ -11,7 +11,7 @@ from ..db import (
     alert_events, certificate_checks, get_db, notification_events, sap_systems, targets,
 )
 from ..security import require_api_key
-from ..services import cert_import, growth, profiles, routes, systems, transports, users
+from ..services import cert_import, growth, ops, profiles, routes, systems, transports, users
 from ..services.routes import RouteError, RouteNotFound
 from ..services.cert_import import CertificateImportError
 from ..services.systems import SystemConflict, SystemNotFound, SystemValidationError
@@ -69,6 +69,7 @@ class SystemIn(BaseModel):
     license_model: str | None = None
     host: str | None = Field(default=None, max_length=253)
     default_client: str | None = Field(default=None, max_length=3)
+    timezone: str | None = Field(default=None, max_length=64)
     description: str | None = Field(default=None, max_length=2000)
     enabled: bool = True
 
@@ -86,6 +87,7 @@ class SystemPatch(BaseModel):
     license_model: str | None = None
     host: str | None = Field(default=None, max_length=253)
     default_client: str | None = Field(default=None, max_length=3)
+    timezone: str | None = Field(default=None, max_length=64)
     description: str | None = Field(default=None, max_length=2000)
     enabled: bool | None = None
 
@@ -316,11 +318,20 @@ def transport_precheck(system_id: int, payload: TransportPrecheckIn):
     system = load_system(system_id)
     _require(system, "transports")
     _check_text_size(payload.e071_csv, payload.e070_csv)
+    imported = payload.imported_in_target
+    from_history = False
+    if imported is None:
+        stored = transports.imported_requests(system_id)
+        if stored:
+            imported, from_history = sorted(stored), True
     try:
         result = transports.precheck(payload.e071_csv, payload.e070_csv, payload.queue,
-                                     payload.imported_in_target, payload.approved_tables)
+                                     imported, payload.approved_tables)
     except InputFormatError as exc:
         raise HTTPException(422, str(exc))
+    if from_history:
+        result["notes"].append(f"Missing-predecessor check used the stored import history of {system['sid']} "
+                               f"({len(imported)} requests imported with RC < 8).")
     systems.record_run(system_id, "transports-precheck", result["verdict"],
                        {"requests": len(result["queue"]), **result["counts"]})
     return result
@@ -333,12 +344,72 @@ def transport_postcheck(system_id: int, payload: TransportPostcheckIn):
     _check_text_size(payload.log)
     try:
         result = transports.postcheck(payload.log, f"{system['sid']} ({system['landscape']})", payload.alert, system_id)
+        entries = transports.parse_import_history(payload.log, systems.system_zone(system), datetime.now(timezone.utc))
     except InputFormatError as exc:
         raise HTTPException(422, str(exc))
+    result["history"] = transports.store_import_history(system_id, entries)
     status = "fail" if result["failed"] else "review" if result["warnings"] else "pass"
     systems.record_run(system_id, "transports-postcheck", status,
                        {k: result[k] for k in ("requests", "failed", "warnings")})
     return result
+
+
+@router.get("/systems/{system_id}/transports/history")
+def transport_history(system_id: int, days: int = Query(90, ge=1, le=3650), limit: int = Query(200, ge=1, le=2000),
+                      result: str | None = Query(None, pattern="^(success|warning|error|fatal|failed)$")):
+    """Imports into this system, newest first (from post-check / import history uploads)."""
+    system = load_system(system_id)
+    _require(system, "transports")
+    return transports.import_history(system_id, days, limit, result)
+
+
+# ------------------------------------------------------------------ background jobs & locks
+def _ops_upload(system_id: int, module: str):
+    system = load_system(system_id)
+    _require(system, module)
+    return system
+
+
+@router.post("/systems/{system_id}/jobs/snapshots", status_code=201)
+async def upload_jobs(request: Request, system_id: int, captured_at: datetime | None = None):
+    """SM37 or TBTCO export (CSV). Runs are upserted; new cancellations raise alerts."""
+    system = _ops_upload(system_id, "jobs")
+    body = await read_body(request)
+    try:
+        result = ops.store_jobs(system, body, systems.system_zone(system), captured_at)
+    except InputFormatError as exc:
+        raise HTTPException(422, str(exc))
+    report = ops.job_report(system_id, 7)["summary"]
+    systems.record_run(system_id, "jobs", "review" if report["cancelled_24h"] or report["long_running"] else "pass",
+                       {"rows": result["rows"], "new_failures": result["new_failures"],
+                        "cancelled_24h": report["cancelled_24h"], "long_running": report["long_running"]})
+    return result
+
+
+@router.get("/systems/{system_id}/jobs/report")
+def jobs_report(system_id: int, days: int = Query(7, ge=1, le=90)):
+    _ops_upload(system_id, "jobs")
+    return ops.job_report(system_id, days)
+
+
+@router.post("/systems/{system_id}/locks/snapshots", status_code=201)
+async def upload_locks(request: Request, system_id: int, captured_at: datetime | None = None):
+    """SM12 lock list export (CSV). Each upload is a snapshot; long-held locks raise alerts."""
+    system = _ops_upload(system_id, "locks")
+    body = await request.body()
+    if len(body) > config.MAX_UPLOAD_BYTES:
+        raise HTTPException(413, f"Upload exceeds {config.MAX_UPLOAD_BYTES} bytes")
+    try:
+        result = ops.store_locks(system, body, systems.system_zone(system), captured_at)
+    except InputFormatError as exc:
+        raise HTTPException(422, str(exc))
+    return result
+
+
+@router.get("/systems/{system_id}/locks/report")
+def locks_report(system_id: int, history_days: int = Query(7, ge=1, le=90)):
+    _ops_upload(system_id, "locks")
+    return ops.lock_report(system_id, history_days)
 
 
 # ------------------------------------------------------------------ overview & alerts
@@ -368,7 +439,13 @@ def system_health(registry: list[dict]) -> dict[int, dict]:
             2 if soonest is not None and soonest <= config.GROWTH_ALERT_DAYS else 0
         post = runs.get((sid, "transports-postcheck"))
         transport_level = None if not post else {"fail": 3, "review": 2}.get(post["status"], 0)
-        levels = [lvl for lvl in (cert_level, growth_level, transport_level) if lvl is not None]
+        jobs = ops.job_report(sid, days=1) if system["stack"] != "JAVA" else None
+        job_level = None if not jobs or jobs["stale"] else \
+            2 if jobs["summary"]["cancelled_24h"] or jobs["summary"]["long_running"] else 0
+        locks = ops.lock_report(sid, history_days=1) if system["stack"] != "JAVA" else None
+        lock_level = None if not locks or locks["stale"] or not locks["summary"] else \
+            3 if locks["summary"]["critical"] else 2 if locks["summary"]["long_running"] else 0
+        levels = [lvl for lvl in (cert_level, growth_level, transport_level, job_level, lock_level) if lvl is not None]
         result[sid] = {
             "health": HEALTH[max(levels)] if levels else "unknown",
             "certificates": {"count": len(own), "health": HEALTH.get(cert_level, "unknown"),
@@ -378,6 +455,12 @@ def system_health(registry: list[dict]) -> dict[int, dict]:
                        "days_until_threshold": soonest},
             "users": runs.get((sid, "users")),
             "transports": {"precheck": runs.get((sid, "transports-precheck")), "postcheck": post},
+            "jobs": {"health": HEALTH.get(job_level, "unknown"),
+                     "cancelled_24h": jobs["summary"]["cancelled_24h"] if jobs else None,
+                     "long_running": jobs["summary"]["long_running"] if jobs else None},
+            "locks": {"health": HEALTH.get(lock_level, "unknown"),
+                      "long_running": (locks["summary"] or {}).get("long_running") if locks else None,
+                      "oldest_minutes": (locks["summary"] or {}).get("oldest_minutes") if locks else None},
         }
     return result
 
@@ -488,6 +571,11 @@ def system_overview(system_id: int):
             "snapshots": len(report["size_history"]),
         },
         "routes": routes.system_path(system_id),
+        "transport_history": transports.import_history(system_id, 30, 5) if system["capabilities"]["transports"]["supported"] else None,
+        "jobs": {**health["jobs"],
+                 "report": ops.job_report(system_id, 7) if system["capabilities"]["jobs"]["supported"] else None},
+        "locks": {**health["locks"],
+                  "report": ops.lock_report(system_id, 1) if system["capabilities"]["locks"]["supported"] else None},
         "recent_alerts": alert_history(system_id=system_id, limit=5),
         "recent_runs": systems.list_runs(system_id, limit=5),
     }

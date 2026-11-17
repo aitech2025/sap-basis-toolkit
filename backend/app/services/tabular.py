@@ -6,7 +6,7 @@ tab or pipe delimiters, padded columns, and dates as YYYYMMDD, DD.MM.YYYY or ISO
 import csv
 import io
 import re
-from datetime import date, datetime
+from datetime import date, datetime, time, timedelta, timezone, tzinfo
 
 DELIMITERS = [",", ";", "\t", "|"]
 
@@ -108,3 +108,54 @@ def to_csv(rows: list[dict]) -> str:
     writer.writeheader()
     writer.writerows(rows)
     return buffer.getvalue()
+
+
+def parse_sap_time(value: str) -> time | None:
+    digits = re.sub(r"\D", "", value or "")
+    if len(digits) == 4:
+        digits += "00"
+    if len(digits) != 6:
+        return None
+    try:
+        return time(int(digits[:2]), int(digits[2:4]), int(digits[4:6]))
+    except ValueError:
+        return None
+
+
+def parse_sap_datetime(date_value: str, time_value: str = "", zone: tzinfo = timezone.utc) -> datetime | None:
+    """Combine SAP date/time fields (or a 14-digit timestamp such as TPALOG TRTIME) into an aware UTC datetime."""
+    raw = (date_value or "").strip()
+    digits = re.sub(r"\D", "", raw)
+    if len(digits) == 14 and raw.isdigit():
+        d, t = parse_sap_date(digits[:8]), parse_sap_time(digits[8:])
+    else:
+        d, t = parse_sap_date(raw[:10]), parse_sap_time(time_value) or (parse_sap_time(raw[11:]) if len(raw) > 10 else None)
+    if d is None:
+        return None
+    return datetime.combine(d, t or time(0, 0), tzinfo=zone).astimezone(timezone.utc)
+
+
+def parse_duration_seconds(value: str) -> int | None:
+    """'3600', '01:00:00' or '1.234' (thousand separators) to seconds."""
+    v = (value or "").strip()
+    if not v:
+        return None
+    if ":" in v:
+        parts = [int(p) for p in v.split(":") if p.isdigit()]
+        total = 0
+        for part in parts:
+            total = total * 60 + part
+        return total
+    if re.fullmatch(r"\d{1,3}([.,\s]\d{3})+", v):  # whole seconds with thousands separators (1.234 / 1,234)
+        return int(re.sub(r"\D", "", v))
+    number = parse_number(v)
+    return int(number) if number is not None else None
+
+
+def local_time_before(reference: datetime, t: time, zone: tzinfo) -> datetime:
+    """Latest datetime <= reference (in the system zone) whose clock time is t; used when SM12 shows only a time."""
+    local_ref = reference.astimezone(zone)
+    candidate = datetime.combine(local_ref.date(), t, tzinfo=zone)
+    if candidate > local_ref:
+        candidate -= timedelta(days=1)
+    return candidate.astimezone(timezone.utc)

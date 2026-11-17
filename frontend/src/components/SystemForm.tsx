@@ -3,9 +3,11 @@ import { api } from "../api";
 import type { Catalogue, SapSystem, SystemInput } from "../types";
 import { ErrorBanner } from "./ui";
 
+const TIMEZONES = ["UTC", "Asia/Kolkata", "Asia/Singapore", "Asia/Tokyo", "Asia/Dubai", "Australia/Sydney", "Europe/London",
+  "Europe/Berlin", "Europe/Paris", "Europe/Zurich", "America/New_York", "America/Chicago", "America/Los_Angeles", "America/Sao_Paulo"];
 const EMPTY: Partial<SystemInput> = {
   sid: "", name: "", product: "S4HANA", stack: "ABAP", database: "HANA", environment: "DEV", landscape: "default",
-  product_version: "", basis_release: "", license_model: null, host: "", default_client: "", description: "", enabled: true,
+  product_version: "", basis_release: "", license_model: null, host: "", default_client: "", description: "", timezone: "", enabled: true,
 };
 
 export function SystemForm({ open, initial, catalogue, landscapes, onClose, onSaved }: {
@@ -113,6 +115,10 @@ export function SystemForm({ open, initial, catalogue, landscapes, onClose, onSa
               <input value={form.host ?? ""} onChange={(e) => set("host", e.target.value)} placeholder="s4prd.corp.example.com" /></label>
             <label className="field"><span>Default client</span>
               <input maxLength={3} value={form.default_client ?? ""} onChange={(e) => set("default_client", e.target.value)} placeholder="100" /></label>
+            <label className="field"><span>System timezone</span>
+              <input list="tz-list" value={form.timezone ?? ""} onChange={(e) => set("timezone", e.target.value)} placeholder="Asia/Kolkata" />
+              <datalist id="tz-list">{TIMEZONES.map((z) => <option key={z} value={z} />)}</datalist>
+              <small>Time zone SAP reports job, lock and import times in (default UTC).</small></label>
             <label className="field wide"><span>Description</span>
               <textarea rows={2} value={form.description ?? ""} onChange={(e) => set("description", e.target.value)} /></label>
             <label className="field" style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>

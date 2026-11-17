@@ -3,7 +3,7 @@ import { Card, DataTable, ErrorBanner, Pill, fmtDate, useAsync } from "../../com
 import type { AlertEvent, Run, SystemDetail } from "../../types";
 
 const MODULE_LABEL: Record<string, string> = {
-  users: "User & license analysis", "transports-precheck": "Transport pre-check", "transports-postcheck": "Import post-check",
+  users: "User & license analysis", jobs: "Background job upload", "transports-precheck": "Transport pre-check", "transports-postcheck": "Import post-check",
 };
 
 export default function HistoryTab({ system }: { system: SystemDetail }) {

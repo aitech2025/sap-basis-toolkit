@@ -17,7 +17,7 @@ function ModuleCard({ to, title, status, children, cta }: {
 }
 
 const RUN_LABEL: Record<string, string> = {
-  users: "User & licence analysis", "transports-precheck": "Transport pre-check", "transports-postcheck": "Import post-check",
+  users: "User & licence analysis", jobs: "Background job upload", "transports-precheck": "Transport pre-check", "transports-postcheck": "Import post-check",
 };
 
 export default function OverviewTab({ system }: { system: SystemDetail }) {
@@ -93,6 +93,52 @@ export default function OverviewTab({ system }: { system: SystemDetail }) {
               {post && <p>Last import: <Pill value={post.status} /> {post.summary.failed} failed of {post.summary.requests}</p>}
             </>
           )}
+        </ModuleCard>
+
+        <ModuleCard to={`${base}/transports`} title="Transport history" cta="Full import history"
+                    status={!data.transport_history ? "disabled" : data.transport_history.stats.failed ? "fail"
+                      : data.transport_history.stats.warning ? "review" : data.transport_history.stats.imports ? "pass" : "unknown"}>
+          {!data.transport_history ? <p className="muted">Not applicable for Java systems.</p>
+            : data.transport_history.imports.length ? (
+              <>
+                <p>Last 30 days: <strong>{data.transport_history.stats.imports}</strong> imports · <strong>{data.transport_history.stats.failed}</strong> failed · {data.transport_history.stats.warning} with warnings</p>
+                <ul className="mini-list">
+                  {data.transport_history.imports.map((i) => (
+                    <li key={i.id}><Pill value={i.result} /> <code>{i.trkorr}</code> <span className="muted small">RC {i.rc} · {fmtDate(i.imported_at)}</span></li>
+                  ))}
+                </ul>
+              </>
+            ) : <p className="muted">No imports recorded in the last 30 days. Upload the STMS import history.</p>}
+        </ModuleCard>
+
+        <ModuleCard to={`${base}/jobs`} title="Background jobs" cta="Job failures"
+                    status={!caps.jobs.supported ? "disabled" : data.jobs.health}>
+          {!caps.jobs.supported ? <p className="muted">Java Scheduler jobs are not covered.</p>
+            : data.jobs.report?.last_capture ? (
+              <>
+                <p><strong>{data.jobs.report.summary.cancelled_24h}</strong> cancelled in 24 h · <strong>{data.jobs.report.summary.cancelled}</strong> in 7 days</p>
+                <p>Failure rate {data.jobs.report.summary.failure_rate_pct ?? "–"}% · <strong>{data.jobs.report.summary.long_running}</strong> long-running</p>
+                {data.jobs.report.failing_jobs.slice(0, 3).map((j) => (
+                  <p key={j.job_name} className="small"><Pill value={j.still_failing ? "failed" : "recovered"} /> {j.job_name} <span className="muted">×{j.cancelled}</span></p>
+                ))}
+                {data.jobs.report.stale && <p className="muted small">Data from {fmtDate(data.jobs.report.last_capture)}</p>}
+              </>
+            ) : <p className="muted">No SM37 data yet.</p>}
+        </ModuleCard>
+
+        <ModuleCard to={`${base}/locks`} title="SAP locks" cta="Lock analysis"
+                    status={!caps.locks.supported ? "disabled" : data.locks.health}>
+          {!caps.locks.supported ? <p className="muted">Java locking adapter is not covered.</p>
+            : data.locks.report?.summary ? (
+              <>
+                <p><strong>{data.locks.report.summary.locks}</strong> locks · <strong>{data.locks.report.summary.long_running}</strong> long-running · {data.locks.report.summary.critical} critical</p>
+                <p>Oldest: <strong>{data.locks.report.summary.oldest_minutes ?? "–"}</strong> min</p>
+                {data.locks.report.long_running.slice(0, 3).map((l, i) => (
+                  <p key={i} className="small"><Pill value={l.severity} /> {l.table} · {l.user} <span className="muted">{l.age_minutes} min</span></p>
+                ))}
+                <p className="muted small">Snapshot {fmtDate(data.locks.report.latest)}{data.locks.report.stale ? " (stale)" : ""}</p>
+              </>
+            ) : <p className="muted">No SM12 snapshot yet.</p>}
         </ModuleCard>
       </div>
 

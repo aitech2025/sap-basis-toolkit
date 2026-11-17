@@ -10,10 +10,11 @@ Post-import input: STMS import history / TPALOG export (TRKORR + RC) or raw tp/S
 """
 import re
 from collections import defaultdict
+from datetime import datetime, timedelta, timezone
 
 from .. import config
 from .alerts import send_alert_once
-from .tabular import pick, read_rows, require_columns
+from .tabular import parse_sap_datetime, pick, read_rows, require_columns
 
 TR_PATTERN = re.compile(r"\b([A-Z0-9]{3}K\d{6})\b")
 RC_PATTERN = re.compile(r"(?:\brc\b|return\s*code|exit\s*code)\s*[:=]?\s*\"?(\d{1,4})", re.IGNORECASE)
@@ -226,3 +227,102 @@ def postcheck(content: str, target_system: str, alert: bool = True, system_id: i
         "results": entries,
         "alerts": alerts,
     }
+
+
+# ---------------------------------------------------------------- import history
+TR_ALIASES = ("TRKORR", "Request", "Transport Request", "Number")
+RC_ALIASES = ("RC", "RETCODE", "Return Code", "MAXRC", "Max. RC")
+DATE_ALIASES = ("TRTIME", "Import Date", "Date", "AS4DATE", "TRDATE", "Imported On")
+TIME_ALIASES = ("Import Time", "Time", "AS4TIME")
+OWNER_ALIASES = ("Owner", "AS4USER", "TRUSER", "User")
+TEXT_ALIASES = ("Short Text", "AS4TEXT", "Description", "Text")
+
+
+def parse_import_history(content: str, zone, default_time: datetime) -> list[dict]:
+    """Rows of (request, rc, imported_at, owner, description) from STMS/TPALOG CSV or raw tp log text."""
+    entries: dict[tuple, dict] = {}
+    first_line = content.strip().splitlines()[0] if content.strip() else ""
+    is_table = re.search(r"TRKORR|REQUEST|NUMBER", first_line, re.IGNORECASE) and \
+        re.search(r"\bRC\b|RETCODE|RETURN|MAXRC", first_line, re.IGNORECASE)
+    if is_table:
+        for row in read_rows(content):
+            tr = pick(row, *TR_ALIASES).upper()
+            rc_raw = pick(row, *RC_ALIASES).strip()
+            if not TR_PATTERN.fullmatch(tr) or not rc_raw.isdigit():
+                continue
+            when = parse_sap_datetime(pick(row, *DATE_ALIASES), pick(row, *TIME_ALIASES), zone)
+            key = (tr, when)
+            entry = entries.setdefault(key, {
+                "trkorr": tr, "rc": 0, "imported_at": when or default_time, "time_known": when is not None,
+                "owner": pick(row, *OWNER_ALIASES) or None, "description": pick(row, *TEXT_ALIASES) or None,
+            })
+            entry["rc"] = max(entry["rc"], int(rc_raw))  # several tp steps per import: keep the worst
+    else:
+        for tr, rc in parse_import_results(content).items():
+            entries[(tr, None)] = {"trkorr": tr, "rc": rc, "imported_at": default_time, "time_known": False,
+                                   "owner": None, "description": None}
+    for entry in entries.values():
+        entry["result"] = classify_rc(entry["rc"])
+    return sorted(entries.values(), key=lambda e: (e["imported_at"], e["trkorr"]))
+
+
+def store_import_history(system_id: int, entries: list[dict]) -> dict:
+    """Insert new history rows; an identical (request, time, rc) row is not stored twice."""
+    from sqlalchemy import select
+
+    from ..db import get_db, transport_imports
+
+    added = 0
+    with get_db() as connection:
+        for e in entries:
+            query = select(transport_imports.c.id).where(
+                transport_imports.c.system_id == system_id, transport_imports.c.trkorr == e["trkorr"],
+                transport_imports.c.rc == e["rc"])
+            if e["time_known"]:
+                query = query.where(transport_imports.c.imported_at == e["imported_at"])
+            else:
+                # untimed log uploads: dedupe against the same request/RC uploaded within the last day
+                query = query.where(transport_imports.c.time_known.is_(False),
+                                    transport_imports.c.imported_at >= e["imported_at"] - timedelta(days=1))
+            if connection.execute(query.limit(1)).first():
+                continue
+            connection.execute(transport_imports.insert().values(system_id=system_id, **e))
+            added += 1
+    return {"stored": added, "duplicates": len(entries) - added}
+
+
+def import_history(system_id: int, days: int = 90, limit: int = 200, result: str | None = None) -> dict:
+    from sqlalchemy import select
+
+    from ..db import get_db, transport_imports
+
+    since = datetime.now(timezone.utc) - timedelta(days=days)
+    base = select(transport_imports).where(transport_imports.c.system_id == system_id,
+                                           transport_imports.c.imported_at >= since)
+    with get_db() as connection:
+        rows = [dict(r) for r in connection.execute(
+            base.order_by(transport_imports.c.imported_at.desc(), transport_imports.c.id.desc())).mappings().all()]
+    stats = {"imports": len(rows), "requests": len({r["trkorr"] for r in rows})}
+    for key in ("success", "warning", "error", "fatal"):
+        stats[key] = sum(1 for r in rows if r["result"] == key)
+    stats["failed"] = stats["error"] + stats["fatal"]
+    if result:
+        wanted = {"failed": ("error", "fatal")}.get(result, (result,))
+        rows = [r for r in rows if r["result"] in wanted]
+    for r in rows:
+        for k in ("imported_at", "uploaded_at"):
+            if hasattr(r[k], "isoformat"):
+                r[k] = (r[k] if r[k].tzinfo else r[k].replace(tzinfo=timezone.utc)).isoformat()
+        r["time_known"] = bool(r["time_known"])
+    return {"days": days, "stats": stats, "imports": rows[:limit]}
+
+
+def imported_requests(system_id: int) -> set[str]:
+    """Requests imported into the system with RC < 8 (feeds the missing-predecessor check)."""
+    from sqlalchemy import select
+
+    from ..db import get_db, transport_imports
+
+    with get_db() as connection:
+        return set(connection.execute(select(transport_imports.c.trkorr).where(
+            transport_imports.c.system_id == system_id, transport_imports.c.rc < 8)).scalars().all())

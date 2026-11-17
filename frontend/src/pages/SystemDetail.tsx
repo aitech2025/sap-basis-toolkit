@@ -6,6 +6,8 @@ import { ErrorBanner, Pill, useAsync } from "../components/ui";
 import CertificatesTab from "./system/CertificatesTab";
 import GrowthTab from "./system/GrowthTab";
 import HistoryTab from "./system/HistoryTab";
+import JobsTab from "./system/JobsTab";
+import LocksTab from "./system/LocksTab";
 import OverviewTab from "./system/OverviewTab";
 import SetupTab from "./system/SetupTab";
 import TransportsTab from "./system/TransportsTab";
@@ -31,6 +33,8 @@ export default function SystemDetailPage() {
     ["", "Overview"], ["certificates", "Certificates"], ["growth", "Table growth"],
     ["users", "Users & licences"],
     ["transports", system.capabilities.transports.supported ? "Transports" : "Transports (n/a)"],
+    ["jobs", system.capabilities.jobs.supported ? "Background jobs" : "Background jobs (n/a)"],
+    ["locks", system.capabilities.locks.supported ? "SAP locks" : "SAP locks (n/a)"],
     ["history", "History"], ["setup", "Setup & export guide"],
   ] as const;
 
@@ -63,6 +67,8 @@ export default function SystemDetailPage() {
         <Route path="growth" element={<GrowthTab system={system} />} />
         <Route path="users" element={<UsersTab system={system} />} />
         <Route path="transports" element={<TransportsTab system={system} />} />
+        <Route path="jobs" element={<JobsTab system={system} />} />
+        <Route path="locks" element={<LocksTab system={system} />} />
         <Route path="history" element={<HistoryTab system={system} />} />
         <Route path="*" element={<Navigate to={`/systems/${id}`} replace />} />
       </Routes>

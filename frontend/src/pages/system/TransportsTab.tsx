@@ -1,8 +1,8 @@
 import { Fragment, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../../api";
-import { Card, DataTable, Empty, ErrorBanner, FileField, Pill, useAsync } from "../../components/ui";
-import type { PostcheckResult, PrecheckResult, SystemDetail } from "../../types";
+import { Card, DataTable, Empty, ErrorBanner, FileField, Pill, Tile, fmtDate, useAsync } from "../../components/ui";
+import type { PostcheckResult, PrecheckResult, SystemDetail, TransportImport } from "../../types";
 
 const list = (v: string) => v.split(/[\s,;]+/).map((x) => x.trim().toUpperCase()).filter(Boolean);
 
@@ -18,6 +18,12 @@ export default function TransportsTab({ system }: { system: SystemDetail }) {
   const [post, setPost] = useState<PostcheckResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const routes = useAsync(() => api.systemRoutes(system.id), [system.id]);
+  const [historyDays, setHistoryDays] = useState(30);
+  const [historyFilter, setHistoryFilter] = useState("");
+  const history = useAsync(
+    () => (cap.supported ? api.transportHistory(system.id, historyDays, historyFilter || undefined) : Promise.resolve(null)),
+    [system.id, historyDays, historyFilter],
+  );
 
   if (!cap.supported) {
     return <Card title="Transports"><Empty>{cap.how_to_export}</Empty></Card>;
@@ -51,6 +57,36 @@ export default function TransportsTab({ system }: { system: SystemDetail }) {
             Use the E070/E071 exports of the source system for the pre-check.</p>
         )}
       </Card>
+      <Card title={`Import history — ${system.sid}`} actions={<>
+        <select value={historyFilter} onChange={(e) => setHistoryFilter(e.target.value)} aria-label="Result filter">
+          <option value="">All results</option><option value="failed">Failed (RC ≥ 8)</option>
+          <option value="warning">Warnings (RC 4)</option><option value="success">Successful</option>
+        </select>
+        <select value={historyDays} onChange={(e) => setHistoryDays(Number(e.target.value))} aria-label="Period">
+          {[7, 30, 90, 365].map((d) => <option key={d} value={d}>Last {d} days</option>)}
+        </select>
+      </>}>
+        {history.data && (
+          <div className="tiles">
+            <Tile label="Imports" value={history.data.stats.imports} hint={`${history.data.stats.requests} requests`} />
+            <Tile label="Successful" value={history.data.stats.success} />
+            <Tile label="Warnings (RC 4)" value={history.data.stats.warning} />
+            <Tile label="Failed (RC ≥ 8)" value={history.data.stats.failed} />
+          </div>
+        )}
+        <ErrorBanner error={history.error} />
+        <DataTable<TransportImport> rows={history.data?.imports ?? []} rowKey={(i) => i.id}
+          empty="No imports recorded for this period. Upload the STMS import history in the post-import check below."
+          columns={[
+            { key: "imported_at", label: "Imported", render: (i) => i.time_known ? fmtDate(i.imported_at) : <span title="Uploaded from a log without timestamps">{fmtDate(i.imported_at)} *</span> },
+            { key: "trkorr", label: "Request", render: (i) => <code>{i.trkorr}</code> },
+            { key: "rc", label: "RC", numeric: true },
+            { key: "result", label: "Result", render: (i) => <Pill value={i.result} /> },
+            { key: "owner", label: "Owner", render: (i) => i.owner ?? "–" },
+            { key: "description", label: "Description", render: (i) => i.description ?? <span className="muted">–</span> },
+          ]} />
+        <p className="muted small">* time of upload (the log had no import timestamp). The pre-check uses this history for the missing-predecessor check when you don't paste one.</p>
+      </Card>
       <Card title={`Pre-import check — target ${system.sid}`}>
         <form onSubmit={(e) => { e.preventDefault(); guard(async () => {
           if (!e071) throw new Error("Choose an E071 export from the source system");
@@ -64,7 +100,7 @@ export default function TransportsTab({ system }: { system: SystemDetail }) {
             <FileField label="E070 export (optional)" accept=".csv,.txt" onText={(c) => setE070(c as string | null)} />
             <label className="field"><span>Approved protected tables</span><input value={approved} onChange={(e) => setApproved(e.target.value)} placeholder="TVARVC, ZCONFIG" /></label>
             <label className="field wide"><span>Import queue in order (optional)</span><textarea rows={2} value={queue} onChange={(e) => setQueue(e.target.value)} placeholder="DEVK900100 DEVK900110" /><small>Defaults to all requests ordered by release time.</small></label>
-            <label className="field wide"><span>Already imported into {system.sid} (optional)</span><textarea rows={2} value={imported} onChange={(e) => setImported(e.target.value)} /><small>Paste from STMS import history to enable the missing-predecessor check.</small></label>
+            <label className="field wide"><span>Already imported into {system.sid} (optional)</span><textarea rows={2} value={imported} onChange={(e) => setImported(e.target.value)} /><small>Leave empty to use the stored import history{history.data?.stats.imports ? ` (${history.data.stats.imports} imports)` : ""}.</small></label>
           </div>
           <button className="btn primary" style={{ marginTop: 12 }} type="submit">Run pre-check</button>
         </form>
@@ -81,17 +117,19 @@ export default function TransportsTab({ system }: { system: SystemDetail }) {
             ]} />
         </Card>
       )}
-      <Card title="Post-import check (alerts on RC ≥ 8)">
+      <Card title="Post-import check / upload import history (alerts on RC ≥ 8)">
         <form className="row" onSubmit={(e) => { e.preventDefault(); guard(async () => {
           if (!log) throw new Error("Choose an import history export or tp log");
           setPost(await api.postcheck(system.id, log));
+          history.reload();
         }); }}>
           <FileField label="STMS import history CSV or tp/ALOG text" onText={(c) => setLog(c as string | null)} />
           <button className="btn primary" type="submit">Run post-check</button>
         </form>
         {post && (
           <>
-            <p>{post.requests} requests · <strong>{post.failed} failed</strong> · {post.warnings} warnings · {post.alerts.filter((a) => a.result === "sent").length} alerts sent</p>
+            <p>{post.requests} requests · <strong>{post.failed} failed</strong> · {post.warnings} warnings · {post.alerts.filter((a) => a.result === "sent").length} alerts sent
+              {post.history && <> · {post.history.stored} added to history{post.history.duplicates ? `, ${post.history.duplicates} already known` : ""}</>}</p>
             <DataTable rows={post.results} rowKey={(r) => r.request}
               columns={[{ key: "request", label: "Request" }, { key: "rc", label: "RC", numeric: true },
                         { key: "result", label: "Result", render: (r) => <Pill value={r.result} /> }]} />

@@ -1,6 +1,6 @@
 import type {
   AlertEvent, Catalogue, CertificateSummary, GrowthReport, Overview, PostcheckResult, PrecheckResult, Run,
-  RouteProposal, SapSystem, SystemDetail, SystemInput, SystemOverviewData, SystemRoutes, Topology, TransportRoute, UserReport,
+  ImportHistory, JobReport, LockReport, RouteProposal, SapSystem, SystemDetail, SystemInput, SystemOverviewData, SystemRoutes, Topology, TransportRoute, UserReport,
 } from "./types";
 
 const KEY_STORAGE = "sapBasisToolkit.apiKey";
@@ -120,6 +120,15 @@ export const api = {
     request<TransportRoute>("/api/v1/routes", json("POST", body)),
   deleteRoute: (id: number) => request<void>(`/api/v1/routes/${id}`, { method: "DELETE" }),
   systemRoutes: (id: number) => request<SystemRoutes>(`/api/v1/systems/${id}/routes`),
+
+  transportHistory: (id: number, days = 90, result?: string) =>
+    request<ImportHistory>(`/api/v1/systems/${id}/transports/history?days=${days}${result ? `&result=${result}` : ""}`),
+  uploadJobs: (id: number, csv: string) =>
+    request<{ rows: number; inserted: number; updated: number; new_failures: number }>(`/api/v1/systems/${id}/jobs/snapshots`, { method: "POST", body: csv }),
+  jobsReport: (id: number, days = 7) => request<JobReport>(`/api/v1/systems/${id}/jobs/report?days=${days}`),
+  uploadLocks: (id: number, csv: string) =>
+    request<{ locks: number; long_running: number; captured_at: string }>(`/api/v1/systems/${id}/locks/snapshots`, { method: "POST", body: csv }),
+  locksReport: (id: number, historyDays = 7) => request<LockReport>(`/api/v1/systems/${id}/locks/report?history_days=${historyDays}`),
 
   alerts: (systemId?: number) => request<AlertEvent[]>(`/api/v1/alerts${systemId ? `?system_id=${systemId}` : ""}`),
 };

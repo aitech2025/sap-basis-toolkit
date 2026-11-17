@@ -28,7 +28,7 @@ Served by the API at `/` (built into the Docker image):
 - **Landscape overview**: every system grouped by landscape with combined health (certificates, capacity forecast, last import).
 - **Landscapes**: each landscape drawn as product lanes (e.g. S/4HANA, BW/4HANA, ECC, Portal) across DEV → QAS → (TRN/PRE) → PRD columns, with the transport routes as arrows. Arrows carry the transport layer and the result of the last import into the target (OK, RC 4 warnings, RC ≥ 8 failed). Hover a system to trace its routes. Branches such as two development tracks or a training system are supported. Routes can be added manually or proposed automatically (*Suggest routes*: one system per tier → DEV → QAS → PRE → PRD).
 - **Systems**: register, filter, edit and delete systems.
-- **System workspace** (opened by clicking any system tile, table row, diagram node or SID link): an *Overview* dashboard of that system with a card per feature (certificates, table growth & capacity, users & licences, transports with its route path), recent alerts and analyses. Each card opens its tab. Tabs: setup and export guide, certificates (endpoints + STRUST/PSE), table growth (trend charts, forecast, housekeeping), users & licences, transports (pre/post checks) and history (summary-only run log + alerts).
+- **System workspace** (opened by clicking any system tile, table row, diagram node or SID link): an *Overview* dashboard of that system with a card per feature (certificates, table growth & capacity, users & licences, transports with its route path, transport history, background jobs, SAP locks), recent alerts and analyses. Each card opens its tab. Tabs: setup and export guide, certificates (endpoints + STRUST/PSE), table growth (trend charts, forecast, housekeeping), users & licences, transports (pre/post checks) and history (summary-only run log + alerts).
 - **Certificates** and **Alerts**: landscape-wide views.
 
 The API key is entered in *Settings* and kept in browser session storage.
@@ -45,6 +45,16 @@ The API key is entered in *Settings* and kept in browser session storage.
 Alerts go to a generic webhook, **Slack**, **Microsoft Teams** (Workflows/Adaptive Card), **PagerDuty** (Events API v2) and/or email. A built-in dashboard is served at `/`.
 
 See [docs/product-evaluation.md](docs/product-evaluation.md) for the evaluation of the product ideas and the roadmap, and [samples/](samples/) for example SAP exports to try every module.
+
+### Operations monitoring (per ABAP system)
+
+| Feature | What it shows | Input |
+|---|---|---|
+| Transport import history | Every import into the system with RC, date, owner and description; filters for failed/warning; feeds the pre-check's missing-predecessor test automatically | STMS import history export, TPALOG, or tp/ALOG text (via the post-check upload) |
+| Background job failures | Cancelled jobs grouped by job name with failure rate and "still failing vs recovered", recent cancellations, active jobs running longer than `JOB_LONG_RUNNING_MINUTES` (120). One alert per failing job per day | SM37 spreadsheet export or TBTCO; re-uploads update status (matched by job name + count) |
+| Long-running SAP locks | Current locks, long-running (≥ `LOCK_WARNING_MINUTES` 60) and critical (≥ `LOCK_CRITICAL_MINUTES` 240) locks, oldest lock, locks persisting across snapshots, by user/table, lock count trend. Alerts per lock and severity | SM12 list export, uploaded as periodic snapshots (an empty list is a valid snapshot) |
+
+SAP reports these times in the system's local time: set each system's **timezone** (IANA name, e.g. `Asia/Kolkata`) so lock ages and job durations are correct. Job and lock data older than `OPS_DATA_STALE_HOURS` (24) is flagged as stale and does not affect health. Data is retained for `OPS_RETENTION_DAYS` (90). Java systems show these features as not applicable (Java Scheduler and Locking Adapter are not covered).
 
 ## Why export-based analyzers?
 
@@ -151,6 +161,6 @@ Interactive OpenAPI docs: `/docs`. Main groups:
 - Transport routes: `GET|POST /api/v1/routes`, `DELETE /api/v1/routes/{id}`, `GET /api/v1/landscapes/{name}/topology`, `POST /api/v1/landscapes/{name}/routes/suggest[?apply=true]`, `GET /api/v1/systems/{id}/routes`
 - Landscape: `GET /api/v1/overview`, `GET /api/v1/certificates/summary`, `GET /api/v1/alerts`
 - Endpoints: `POST|GET /api/v1/targets` (with `system_id`), `PATCH /api/v1/targets/{id}`, `.../enable`, `.../disable`, `POST .../check`, `GET /api/v1/checks`
-- Per system (`/api/v1/systems/{id}/…`): `certificates`, `certificates/import`, `certificates/{cert_id}` (DELETE), `growth/snapshots`, `growth/capacity`, `growth/report`, `users/analyze`, `transports/precheck`, `transports/postcheck`, `runs`
+- Per system (`/api/v1/systems/{id}/…`): `overview`, `transports/history`, `jobs/snapshots`, `jobs/report`, `locks/snapshots`, `locks/report`, `certificates`, `certificates/import`, `certificates/{cert_id}` (DELETE), `growth/snapshots`, `growth/capacity`, `growth/report`, `users/analyze`, `transports/precheck`, `transports/postcheck`, `runs`
 
 All management endpoints require `X-API-Key`. Run tests from `backend` with `pytest -q`.

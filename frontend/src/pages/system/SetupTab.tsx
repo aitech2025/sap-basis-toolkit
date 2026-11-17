@@ -3,6 +3,7 @@ import type { SystemDetail } from "../../types";
 
 const MODULES = [
   ["certificates", "Certificates"], ["growth", "Table growth"], ["users", "Users & licenses"], ["transports", "Transports"],
+  ["jobs", "Background jobs"], ["locks", "SAP locks"],
 ] as const;
 
 export default function SetupTab({ system }: { system: SystemDetail }) {
@@ -20,6 +21,7 @@ export default function SetupTab({ system }: { system: SystemDetail }) {
               <tr><th>Database</th><td>{system.database}</td></tr>
               <tr><th>Host</th><td>{system.host ?? "–"}</td></tr>
               <tr><th>Default client</th><td>{system.default_client ?? "–"}</td></tr>
+              <tr><th>Timezone</th><td>{system.timezone ?? "UTC (default)"}</td></tr>
               <tr><th>Description</th><td>{system.description ?? "–"}</td></tr>
             </tbody>
           </table>

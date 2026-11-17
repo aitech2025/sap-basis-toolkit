@@ -68,3 +68,10 @@ PROTECTED_TABLES = tuple(
 PROFILE_OVERRIDES_FILE = os.getenv("PROFILE_OVERRIDES_FILE", "").strip()
 # Built React UI (vite build output). Served at / when present.
 FRONTEND_DIST = os.getenv("FRONTEND_DIST", os.path.join(os.path.dirname(__file__), "static"))
+
+# --- Operations monitoring (jobs, locks, transport history) ---------------------
+JOB_LONG_RUNNING_MINUTES = int(os.getenv("JOB_LONG_RUNNING_MINUTES", "120"))
+LOCK_WARNING_MINUTES = int(os.getenv("LOCK_WARNING_MINUTES", "60"))
+LOCK_CRITICAL_MINUTES = int(os.getenv("LOCK_CRITICAL_MINUTES", "240"))
+OPS_DATA_STALE_HOURS = int(os.getenv("OPS_DATA_STALE_HOURS", "24"))
+OPS_RETENTION_DAYS = int(os.getenv("OPS_RETENTION_DAYS", "90"))

@@ -130,11 +130,25 @@ USERS_EXPORTS = {
              "need a usage export from your access logs."),
 }
 TRANSPORT_EXPORTS = {
-    "ABAP": ("SE16N on E071 (TRKORR, PGMID, OBJECT, OBJ_NAME, OBJFUNC) and E070 (TRKORR, TRSTATUS, AS4DATE, "
-             "AS4TIME, AS4USER, STRKORR) in the source system, filtered to the requests you plan to import. "
-             "Target history: STMS → Import History export or table TPALOG. Post-import: STMS import history "
-             "export (TRKORR, RC) or the tp/ALOG text."),
+    "ABAP": ("Pre-check: SE16N on E071 (TRKORR, PGMID, OBJECT, OBJ_NAME, OBJFUNC) and E070 (TRKORR, TRSTATUS, "
+             "AS4DATE, AS4TIME, AS4USER, STRKORR) in the source system, filtered to the requests you plan to import.\n"
+             "Import history / post-check: STMS → Import Overview → <SID> → Goto → Import History → export "
+             "(Number, RC, Date, Time, Owner, Short Text), or SE16N on TPALOG (TRKORR, RETCODE, TRTIME). "
+             "Raw tp/ALOG text is accepted too (no import times)."),
     "JAVA": "Java transports run through CTS+ / NWDI; the E070/E071 checker does not apply to pure Java systems.",
+}
+JOB_EXPORTS = {
+    "ABAP": ("SM37 → user *, job *, all statuses, date range (e.g. last 7 days) → List → Export → Spreadsheet "
+             "(Job Name, Job CreatedB, Status, Start date, Start Time, Duration(sec.)). Or SE16N on TBTCO "
+             "(JOBNAME, JOBCOUNT, SDLUNAME, STATUS, STRTDATE, STRTTIME, ENDDATE, ENDTIME). Upload regularly; "
+             "runs are matched by job name + count, so re-uploads update status instead of duplicating."),
+    "JAVA": "Java Scheduler jobs (NWA → Operations → Jobs) are not covered; this view applies to ABAP background jobs.",
+}
+LOCK_EXPORTS = {
+    "ABAP": ("SM12 → client *, user * → List → Save → Spreadsheet (Cli, User, Time, Mode, Table, Lock Argument; "
+             "Date if your release shows it). Each upload is a snapshot; upload every 15–60 minutes "
+             "(e.g. from a scheduled script) to spot locks that persist. An empty list is a valid snapshot."),
+    "JAVA": "Java Locking Adapter locks (NWA → Locking Adapter) are not covered; this view applies to ABAP enqueue locks.",
 }
 CERT_EXPORTS = {
     "ABAP": ("STRUST → open each PSE (SSL server, SSL client, SAML, WS-Security, System PSE) → double-click the "
@@ -213,6 +227,8 @@ def capabilities(system: dict) -> dict:
                   "license_recommendations": abap,
                   "how_to_export": USERS_EXPORTS["ABAP" if abap else "JAVA"]},
         "transports": {"supported": abap, "how_to_export": TRANSPORT_EXPORTS["ABAP" if abap else "JAVA"]},
+        "jobs": {"supported": abap, "how_to_export": JOB_EXPORTS["ABAP" if abap else "JAVA"]},
+        "locks": {"supported": abap, "how_to_export": LOCK_EXPORTS["ABAP" if abap else "JAVA"]},
         "license_model": {"key": model, **LICENSE_MODELS[model]},
     }
 

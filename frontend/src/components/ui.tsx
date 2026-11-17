@@ -32,7 +32,7 @@ const STATUS_CLASS: Record<string, string> = {
   healthy: "good", success: "good", pass: "good", sent: "good", info: "neutral",
   warning: "warn", review: "warn", untrusted: "warn", pending: "neutral", unknown: "neutral", suppressed: "neutral",
   critical: "bad", expired: "bad", error: "bad", fatal: "bad", block: "bad", fail: "bad", failed: "bad",
-  unreachable: "bad", blocked: "warn", enabled: "good", disabled: "neutral",
+  unreachable: "bad", blocked: "warn", enabled: "good", disabled: "neutral", recovered: "good",
 };
 const STATUS_ICON: Record<string, string> = { good: "●", warn: "▲", bad: "■", neutral: "○" };
 

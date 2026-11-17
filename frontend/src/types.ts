@@ -36,6 +36,7 @@ export interface SapSystem {
   host: string | null;
   default_client: string | null;
   description: string | null;
+  timezone: string | null;
   enabled: boolean;
   created_at: string;
 }
@@ -53,6 +54,8 @@ export interface SystemDetail extends SapSystem {
     growth: Capability;
     users: Capability;
     transports: Capability;
+    jobs: Capability;
+    locks: Capability;
     license_model: { key: string; label: string; tiers: Record<string, string>; unit: string; note: string };
   };
 }
@@ -223,6 +226,7 @@ export interface PostcheckResult {
   warnings: number;
   results: { request: string; rc: number; result: string }[];
   alerts: { channel: string; result: string }[];
+  history?: { stored: number; duplicates: number };
 }
 
 export interface AlertEvent {
@@ -317,6 +321,78 @@ export interface SystemOverviewData {
   users: Run | null;
   transports: { precheck: Run | null; postcheck: Run | null };
   routes: SystemRoutes;
+  transport_history: ImportHistory | null;
+  jobs: { health: Health; cancelled_24h: number | null; long_running: number | null; report: JobReport | null };
+  locks: { health: Health; long_running: number | null; oldest_minutes: number | null; report: LockReport | null };
   recent_alerts: AlertEvent[];
   recent_runs: Run[];
+}
+
+
+export interface TransportImport {
+  id: number;
+  trkorr: string;
+  rc: number;
+  result: "success" | "warning" | "error" | "fatal";
+  imported_at: string;
+  time_known: boolean;
+  owner: string | null;
+  description: string | null;
+}
+
+export interface ImportHistory {
+  days: number;
+  stats: { imports: number; requests: number; success: number; warning: number; error: number; fatal: number; failed: number };
+  imports: TransportImport[];
+}
+
+export interface FailingJob {
+  job_name: string;
+  runs: number;
+  cancelled: number;
+  finished: number;
+  failure_rate_pct: number | null;
+  last_failure: string | null;
+  last_run: string | null;
+  last_status: string;
+  still_failing: boolean;
+  scheduled_by: string | null;
+}
+
+export interface JobReport {
+  days: number;
+  last_capture: string | null;
+  stale: boolean;
+  summary: {
+    runs: number; cancelled: number; finished: number; active: number; scheduled: number;
+    failure_rate_pct: number | null; cancelled_24h: number; failing_jobs: number; long_running: number;
+    long_running_threshold_minutes: number;
+  };
+  failing_jobs: FailingJob[];
+  recent_failures: { job_name: string; job_count: string | null; scheduled_by: string | null; start_at: string | null; duration_s: number | null }[];
+  long_running: { job_name: string; job_count: string | null; scheduled_by: string | null; start_at: string; running_minutes: number }[];
+}
+
+export interface LockView {
+  user: string;
+  client: string | null;
+  table: string;
+  mode: string | null;
+  argument: string | null;
+  locked_at: string;
+  age_minutes: number;
+  severity: "critical" | "warning" | "ok";
+  seen_in_snapshots: number;
+}
+
+export interface LockReport {
+  latest: string | null;
+  stale: boolean;
+  summary: null | { locks: number; long_running: number; critical: number; oldest_minutes: number | null; users: number; tables: number; snapshots: number };
+  long_running: LockView[];
+  by_user: { user: string; locks: number }[];
+  by_table: { table: string; locks: number }[];
+  persistent: LockView[];
+  history: { captured_at: string; total: number; long_running: number }[];
+  thresholds: { warning_minutes: number; critical_minutes: number };
 }

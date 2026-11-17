@@ -70,6 +70,7 @@ sap_systems = Table(
     Column("host", String(253)),
     Column("default_client", String(3)),
     Column("description", Text),
+    Column("timezone", String(64)),
     Column("enabled", Boolean, nullable=False, default=True, server_default=true()),
     Column("created_at", DateTime(timezone=True), nullable=False, server_default=text("CURRENT_TIMESTAMP")),
 )
@@ -161,9 +162,67 @@ transport_routes = Table(
 )
 Index("uq_transport_route", transport_routes.c.source_system_id, transport_routes.c.target_system_id, unique=True)
 
+# Import history per target system (STMS import history / TPALOG / post-check uploads).
+transport_imports = Table(
+    "transport_imports", metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    SYSTEM_FK(),
+    Column("trkorr", String(20), nullable=False),
+    Column("rc", Integer, nullable=False),
+    Column("result", String(10), nullable=False),
+    Column("imported_at", DateTime(timezone=True), nullable=False),
+    Column("time_known", Boolean, nullable=False, default=True),
+    Column("owner", String(40)),
+    Column("description", Text),
+    Column("uploaded_at", DateTime(timezone=True), nullable=False, server_default=text("CURRENT_TIMESTAMP")),
+)
+Index("ix_transport_imports_sys", transport_imports.c.system_id, transport_imports.c.imported_at)
+
+# Background job runs (SM37 / TBTCO exports). Upserted per job so status changes are tracked.
+job_runs = Table(
+    "job_runs", metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    SYSTEM_FK(),
+    Column("job_name", String(64), nullable=False),
+    Column("job_count", String(20)),
+    Column("status", String(12), nullable=False),
+    Column("scheduled_by", String(40)),
+    Column("start_at", DateTime(timezone=True)),
+    Column("end_at", DateTime(timezone=True)),
+    Column("duration_s", Integer),
+    Column("captured_at", DateTime(timezone=True), nullable=False),
+)
+Index("ix_job_runs_sys", job_runs.c.system_id, job_runs.c.start_at)
+Index("ix_job_runs_key", job_runs.c.system_id, job_runs.c.job_name, job_runs.c.job_count)
+
+# SAP enqueue lock snapshots (SM12 exports).
+lock_snapshots = Table(
+    "lock_snapshots", metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    SYSTEM_FK(),
+    Column("captured_at", DateTime(timezone=True), nullable=False),
+    Column("total", Integer, nullable=False),
+)
+Index("ix_lock_snapshots_sys", lock_snapshots.c.system_id, lock_snapshots.c.captured_at)
+
+lock_entries = Table(
+    "lock_entries", metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("snapshot_id", Integer, ForeignKey("lock_snapshots.id", ondelete="CASCADE"), nullable=False),
+    Column("client", String(3)),
+    Column("user_name", String(40), nullable=False),
+    Column("lock_mode", String(2)),
+    Column("table_name", String(64), nullable=False),
+    Column("argument", Text),
+    Column("locked_at", DateTime(timezone=True), nullable=False),
+    Column("age_minutes", Integer, nullable=False),
+)
+Index("ix_lock_entries_snapshot", lock_entries.c.snapshot_id)
+
 # Columns added to pre-existing tables (applied by init_db and Alembic).
 ADDED_COLUMNS = {
     "targets": [("system_id", "INTEGER REFERENCES sap_systems(id) ON DELETE SET NULL")],
+    "sap_systems": [("timezone", "VARCHAR(64)")],
 }
 
 _engine: Engine | None = None

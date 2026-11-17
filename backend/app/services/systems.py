@@ -1,6 +1,7 @@
 """SAP system registry."""
 import json
 import re
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.exc import IntegrityError
@@ -39,7 +40,7 @@ def normalise(data: dict) -> dict:
     for key in ("sid", "product", "stack", "database", "environment", "license_model"):
         if clean.get(key) is not None:
             clean[key] = str(clean[key]).strip().upper() or None
-    for key in ("name", "landscape", "product_version", "basis_release", "host", "default_client", "description"):
+    for key in ("name", "landscape", "product_version", "basis_release", "host", "default_client", "description", "timezone"):
         if clean.get(key) is not None:
             clean[key] = str(clean[key]).strip() or None
     if "landscape" in clean and not clean["landscape"]:
@@ -55,6 +56,11 @@ def _validate(full: dict) -> None:
         errors.append(f"environment must be one of {', '.join(profiles.ENVIRONMENTS)}")
     if "/" in (full.get("landscape") or "") or "\\" in (full.get("landscape") or ""):
         errors.append("landscape must not contain slashes")
+    if full.get("timezone"):
+        try:
+            ZoneInfo(full["timezone"])
+        except (ZoneInfoNotFoundError, ValueError):
+            errors.append(f"Unknown timezone '{full['timezone']}' (use an IANA name such as Asia/Kolkata or Europe/Berlin)")
     if full.get("default_client") and not re.fullmatch(r"\d{3}", full["default_client"]):
         errors.append("default_client must be 3 digits")
     errors += profiles.validate_system(full.get("product", ""), full.get("stack", ""),
@@ -155,3 +161,11 @@ def list_runs(system_id: int | None = None, module: str | None = None, limit: in
             item["created_at"] = item["created_at"].isoformat()
         result.append(item)
     return result
+
+
+def system_zone(system: dict) -> ZoneInfo:
+    """Timezone in which the SAP system reports job, lock and import times (default UTC)."""
+    try:
+        return ZoneInfo(system.get("timezone") or "UTC")
+    except (ZoneInfoNotFoundError, ValueError):
+        return ZoneInfo("UTC")
