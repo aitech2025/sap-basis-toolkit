@@ -5,7 +5,8 @@ from sqlalchemy import select
 from ..config import ALERT_EMAIL_TO, ALERT_THRESHOLDS_DAYS, ALERT_WEBHOOK_URL, SMTP_HOST
 from ..db import certificate_checks, get_db, notification_events, targets
 from .certificates import inspect_certificate
-from .notifications import send_email, send_webhook
+from .. import config
+from .notifications import send_email, send_pagerduty, send_webhook
 from .target_policy import TargetPolicyError
 
 
@@ -71,11 +72,16 @@ def _notification_channels(target: dict, result: dict):
         channels.append(("webhook", lambda: send_webhook(payload)))
     if SMTP_HOST and ALERT_EMAIL_TO:
         subject = f"[SAP Basis Sentinel] {result.get('status', 'alert').upper()}: {target['name']}"
-        body = "\\n".join(
+        body = "\n".join(
             f"{key}: {value}" for key, value in payload.items()
             if key not in ("event", "occurred_at")
         )
         channels.append(("email", lambda subject=subject, body=body: send_email(subject, body)))
+    if config.PAGERDUTY_ROUTING_KEY:
+        status = result.get("status")
+        severity = "critical" if status in ("expired", "critical", "unreachable") else "warning"
+        dedup = f"sap-cert:{target['hostname']}:{target['port']}:{result.get('serial_number') or status}"
+        channels.append(("pagerduty", lambda: send_pagerduty(payload, dedup, severity)))
     return channels
 
 

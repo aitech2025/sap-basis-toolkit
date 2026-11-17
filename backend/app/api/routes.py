@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 
 from ..db import get_db, certificate_checks, notification_events, targets
@@ -98,3 +98,50 @@ def list_notifications(limit: int = 100):
             ).limit(limit)
         ).mappings().all()
     return [serialize(row) for row in rows]
+
+
+@router.patch("/targets/{target_id}/enable")
+def enable_target(target_id: int):
+    with get_db() as connection:
+        result = connection.execute(
+            update(targets).where(targets.c.id == target_id).values(enabled=True)
+        )
+        if result.rowcount == 0:
+            raise HTTPException(404, "Target not found")
+        row = connection.execute(select(targets).where(targets.c.id == target_id)).mappings().one()
+    return serialize(row)
+
+
+@router.get("/certificates/summary")
+def certificate_summary():
+    """Latest status per enabled endpoint plus imported STRUST certificates, soonest expiry first."""
+    from ..services.cert_import import list_imported
+
+    with get_db() as connection:
+        latest_ids = select(
+            certificate_checks.c.target_id, func.max(certificate_checks.c.id).label("check_id")
+        ).group_by(certificate_checks.c.target_id).subquery()
+        rows = connection.execute(
+            select(
+                targets.c.id.label("target_id"), targets.c.name, targets.c.hostname, targets.c.port,
+                certificate_checks.c.status, certificate_checks.c.days_remaining,
+                certificate_checks.c.not_after, certificate_checks.c.checked_at, certificate_checks.c.subject,
+            )
+            .select_from(targets)
+            .join(latest_ids, latest_ids.c.target_id == targets.c.id, isouter=True)
+            .join(certificate_checks, certificate_checks.c.id == latest_ids.c.check_id, isouter=True)
+            .where(targets.c.enabled.is_(True))
+        ).mappings().all()
+    endpoints = [serialize(row) for row in rows]
+    for item in endpoints:
+        item["status"] = item["status"] or "pending"
+    imported = list_imported()
+    counts: dict[str, int] = {}
+    for item in endpoints + imported:
+        counts[item["status"]] = counts.get(item["status"], 0) + 1
+    by_expiry = lambda item: (item["days_remaining"] is None, item["days_remaining"] or 0)
+    return {
+        "counts": counts,
+        "endpoints": sorted(endpoints, key=by_expiry),
+        "strust_certificates": sorted(imported, key=by_expiry),
+    }

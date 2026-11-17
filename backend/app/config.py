@@ -30,3 +30,36 @@ ALLOWED_TARGET_CIDRS = tuple(
 ALLOWED_TARGET_PORTS = tuple(
     int(item.strip()) for item in os.getenv("ALLOWED_TARGET_PORTS", "443").split(",") if item.strip()
 )
+
+# --- Alert channel formatting -------------------------------------------------
+# generic = raw JSON payload, slack = Slack incoming webhook, teams = Teams Workflows (Adaptive Card)
+ALERT_WEBHOOK_FORMAT = os.getenv("ALERT_WEBHOOK_FORMAT", "generic").strip().lower()
+PAGERDUTY_ROUTING_KEY = os.getenv("PAGERDUTY_ROUTING_KEY", "").strip()
+PAGERDUTY_EVENTS_URL = os.getenv("PAGERDUTY_EVENTS_URL", "https://events.pagerduty.com/v2/enqueue")
+
+# --- Upload limits for offline analyzers --------------------------------------
+MAX_UPLOAD_BYTES = int(os.getenv("MAX_UPLOAD_BYTES", str(20 * 1024 * 1024)))
+
+# --- Table growth watchdog ------------------------------------------------------
+GROWTH_ALERT_DAYS = int(os.getenv("GROWTH_ALERT_DAYS", "30"))
+GROWTH_CAPACITY_THRESHOLD_PCT = float(os.getenv("GROWTH_CAPACITY_THRESHOLD_PCT", "90"))
+GROWTH_EVAL_INTERVAL_MINUTES = int(os.getenv("GROWTH_EVAL_INTERVAL_MINUTES", "1440"))
+
+# --- Inactive user & license optimizer ----------------------------------------
+DORMANT_USER_DAYS = int(os.getenv("DORMANT_USER_DAYS", "90"))
+PROTECTED_USERS = tuple(
+    v.strip().upper()
+    for v in os.getenv("PROTECTED_USERS", "SAP*,DDIC,TMSADM,EARLYWATCH,SAPCPIC").split(",")
+    if v.strip()
+)
+
+# --- Transport checker ----------------------------------------------------------
+# Tables whose content must never be transported without explicit approval.
+PROTECTED_TABLES = tuple(
+    v.strip().upper()
+    for v in os.getenv(
+        "PROTECTED_TABLES",
+        "T000,USR01,USR02,USR04,UST04,AGR_USERS,RFCDES,TBTCO,TBTCP,TVARVC,PRGN_CUST,SSM_CUST",
+    ).split(",")
+    if v.strip()
+)

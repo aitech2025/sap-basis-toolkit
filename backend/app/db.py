@@ -2,7 +2,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from sqlalchemy import (
-    Boolean, Column, DateTime, ForeignKey, Index, Integer, MetaData, String,
+    BigInteger, Boolean, Column, DateTime, Float, ForeignKey, Index, Integer, MetaData, String,
     Table, Text, create_engine, inspect, text,
 )
 from sqlalchemy.engine import Connection, Engine
@@ -51,6 +51,65 @@ notification_events = Table(
     Column("result", String(30), nullable=False),
     Column("error", Text),
 )
+
+# Generic, module-agnostic alert de-duplication (growth, transports, imported certs).
+alert_events = Table(
+    "alert_events", metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("module", String(40), nullable=False),
+    Column("fingerprint", String(300), nullable=False),
+    Column("channel", String(30), nullable=False),
+    Column("severity", String(20), nullable=False),
+    Column("summary", Text, nullable=False),
+    Column("sent_at", DateTime(timezone=True), nullable=False, server_default=text("CURRENT_TIMESTAMP")),
+    Column("result", String(30), nullable=False),
+    Column("error", Text),
+)
+Index("ix_alert_events_fingerprint", alert_events.c.fingerprint, alert_events.c.channel)
+
+# Certificates exported from STRUST/PSEs (public certificates only, never keys).
+imported_certificates = Table(
+    "imported_certificates", metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("sap_system_id", String(8), nullable=False),
+    Column("pse_name", String(255), nullable=False),
+    Column("subject", Text, nullable=False),
+    Column("issuer", Text, nullable=False),
+    Column("serial_number", String(128), nullable=False),
+    Column("not_before", String(40), nullable=False),
+    Column("not_after", String(40), nullable=False),
+    Column("sha256_fingerprint", String(64), nullable=False),
+    Column("imported_at", DateTime(timezone=True), nullable=False, server_default=text("CURRENT_TIMESTAMP")),
+)
+Index(
+    "uq_imported_cert", imported_certificates.c.sap_system_id, imported_certificates.c.pse_name,
+    imported_certificates.c.sha256_fingerprint, unique=True,
+)
+
+# Table growth watchdog snapshots (DB02 / HANA M_CS_TABLES / M_TABLE_PERSISTENCE_STATISTICS exports).
+table_size_snapshots = Table(
+    "table_size_snapshots", metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("sap_system_id", String(8), nullable=False),
+    Column("table_name", String(128), nullable=False),
+    Column("size_mb", Float, nullable=False),
+    Column("row_count", BigInteger),
+    Column("captured_at", DateTime(timezone=True), nullable=False),
+)
+Index("ix_table_size_sys_tab", table_size_snapshots.c.sap_system_id, table_size_snapshots.c.table_name,
+      table_size_snapshots.c.captured_at)
+
+capacity_snapshots = Table(
+    "capacity_snapshots", metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("sap_system_id", String(8), nullable=False),
+    Column("disk_total_mb", Float, nullable=False),
+    Column("disk_used_mb", Float, nullable=False),
+    Column("memory_total_mb", Float),
+    Column("memory_used_mb", Float),
+    Column("captured_at", DateTime(timezone=True), nullable=False),
+)
+Index("ix_capacity_sys", capacity_snapshots.c.sap_system_id, capacity_snapshots.c.captured_at)
 
 _engine: Engine | None = None
 
@@ -141,9 +200,18 @@ def init_db() -> None:
         ]
         # Execute table DDL directly: Table.create also traverses FK dependencies
         # and can attempt to recreate indexes on already-existing parent tables.
-        for table in missing_tables:
-            connection.execute(CreateTable(table))
+        create_missing_tables(connection, missing_tables)
         ensure_target_uniqueness(connection)
+
+
+def create_missing_tables(connection: Connection, missing_tables) -> None:
+    """Create new tables and their own indexes. Existing tables are never altered."""
+    for table in missing_tables:
+        connection.execute(CreateTable(table))
+        for index in table.indexes:
+            if table.name == "targets":
+                continue  # handled by ensure_target_uniqueness (duplicate preflight)
+            index.create(bind=connection, checkfirst=True)
 
 
 def reset_engine_for_tests() -> None:

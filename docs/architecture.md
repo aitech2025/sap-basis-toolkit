@@ -1,4 +1,4 @@
-# SAP Basis Sentinel – certificate monitoring MVP
+# SAP Basis Sentinel – architecture
 
 ## Delivered
 
@@ -34,10 +34,22 @@ Run `alembic upgrade head` before deployment. The baseline creates missing table
 
 Endpoint TLS discovery sees only certificates presented during a network handshake. It cannot inventory all certificates stored in STRUST, including client PSEs and certificates not presented by an endpoint. The included collector is a contract only; a production RFC adapter must be built and tested against the supported SAP_BASIS release and a least-privilege SAP interface. Do not treat the current scaffold as working STRUST integration.
 
+## Toolkit modules (v0.4)
+
+- `services/tabular.py` – tolerant parser for SAP exports (delimiter, header alias, date and number locale detection).
+- `services/alerts.py` – module-agnostic alert dispatch with de-duplication in `alert_events`.
+- `services/cert_import.py` – STRUST/PSE certificate inventory from exported public certificates (private keys rejected).
+- `services/growth.py` – snapshot storage, least-squares growth rates, disk/memory threshold forecast, housekeeping catalogue.
+- `services/users.py` – stateless dormancy and license analysis; produces an SU10 lock list. No write access to SAP.
+- `services/transports.py` – stateless E070/E071 pre-import risk analysis and import-log RC evaluation.
+
+Data retention: growth snapshots and imported certificates are stored; user and transport uploads are analysed in memory only. Uploads are size-limited by `MAX_UPLOAD_BYTES`.
+
 ## Remaining production hardening
 
 1. Tenant isolation, user identities/RBAC and audit trail.
 2. Distributed scheduler locking if multiple scheduler replicas are required.
 3. Centralized secrets management, TLS reverse proxy, network egress firewall and backup/restore runbooks.
 4. SAP STRUST/PSE adapter and certificate-chain inventory.
-5. Dashboard and operational observability.
+5. Operational observability (metrics endpoint, structured logs).
+6. Optional live collectors (RFC/OData) feeding the existing analysis services.
