@@ -275,6 +275,18 @@ def build_hana(parts: dict, now: datetime | None = None) -> tuple[dict, dict, st
         levels.append("critical" if mem["pct"] >= 95 else "warning" if mem["pct"] >= 85 else "healthy")
     if parts.get("cpu_pct") is not None:
         metrics["hana.cpu_pct"] = float(parts["cpu_pct"])
+    active = parts.get("active_statements") or {}
+    if "count" in active:
+        metrics["hana.active_statements"] = float(active.get("count") or 0)
+        metrics["hana.long_running_statements"] = float(active.get("long_running") or 0)
+        metrics["hana.max_statement_duration_s"] = float(active.get("max_duration_s") or 0)
+    threads = parts.get("service_threads") or {}
+    if "waiting" in threads:
+        metrics["hana.waiting_threads"] = float(threads.get("waiting") or 0)
+    expensive = parts.get("expensive_statements_1h") or {}
+    if "count" in expensive:
+        metrics["hana.expensive_statements_1h"] = float(expensive.get("count") or 0)
+        metrics["hana.expensive_statement_max_duration_s"] = float(expensive.get("max_duration_s") or 0)
     disk = parts.get("disk")
     if disk and disk.get("total"):
         disk["pct"] = round(disk["used"] / disk["total"] * 100, 1)
@@ -306,7 +318,7 @@ def build_hana(parts: dict, now: datetime | None = None) -> tuple[dict, dict, st
     levels.append("warning" if high else "healthy")
     data = {"version": parts.get("version"), "memory": mem, "cpu_pct": parts.get("cpu_pct"), "disk": disk,
             "alerts": sorted(alerts, key=lambda a: -int(a.get("rating") or 0))[:50], "backups": backups,
-            "replication": replication, "services": services}
+            "replication": replication, "services": services, "active_statements": active,\n            "service_threads": threads, "expensive_statements_1h": expensive}
     return data, metrics, _health(levels)
 
 
