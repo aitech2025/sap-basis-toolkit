@@ -27,7 +27,7 @@ export default function Intelligence() {
   const [capacity, setCapacity] = useState<CapacityForecastResponse | null>(null);
   const [correlations, setCorrelations] = useState<IncidentCorrelationResponse | null>(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);\n  const [refreshKey, setRefreshKey] = useState(0);
 
   useEffect(() => {
     let active = true;
@@ -44,7 +44,7 @@ export default function Intelligence() {
     }).catch((e) => active && setError(e instanceof Error ? e.message : "Unable to load operational intelligence"))
       .finally(() => active && setLoading(false));
     return () => { active = false; };
-  }, [hours]);
+  }, [hours, refreshKey]);
 
   const totalSamples = availability?.systems.reduce((n, s) => n + s.samples, 0) ?? 0;
   const anomaliesList = anomalies?.anomalies ?? [];
@@ -60,7 +60,7 @@ export default function Intelligence() {
       </div>
       <div className="dashboard-actions">
         <label className="filter-select"><span>ANALYSIS WINDOW</span><select value={hours} onChange={(e) => setHours(Number(e.target.value))}>{WINDOWS.map((w) => <option key={w.value} value={w.value}>{w.label}</option>)}</select></label>
-        <button className="btn refresh-btn" disabled={loading} onClick={() => setHours((v) => v)}>↻ <span>Refresh</span></button>
+        <button className="btn refresh-btn" disabled={loading} onClick={() => setRefreshKey((v) => v + 1)}>↻ <span>Refresh</span></button>
       </div>
     </div>
     <ErrorBanner error={error} />
