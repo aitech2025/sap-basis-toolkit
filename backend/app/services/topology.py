@@ -7,7 +7,7 @@ import json
 import re
 from datetime import datetime, timezone
 
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, or_, select, update
 
 from ..db import get_db, sap_systems, topology_assets, topology_links
 
@@ -64,7 +64,7 @@ def list_graph(landscape: str, system_id: int | None = None) -> dict:
     with get_db() as connection:
         query = select(topology_assets).where(topology_assets.c.landscape == landscape)
         if system_id is not None:
-            query = query.where(topology_assets.c.system_id == system_id)
+            query = query.where(or_(topology_assets.c.system_id == system_id, topology_assets.c.system_id.is_(None)))
         rows = connection.execute(query.order_by(topology_assets.c.kind, topology_assets.c.name)).mappings().all()
         ids = [row["id"] for row in rows]
         links = []
