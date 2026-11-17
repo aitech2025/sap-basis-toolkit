@@ -1,0 +1,7 @@
+Number;RC;Date;Time;Owner;Short Text
+S4DK900101;0004;10.11.2026;21:05:12;ALICE;Pricing: new condition type ZPR1
+S4DK900102;0000;10.11.2026;21:05:40;BOB;FI: payment terms
+S4DK900103;0008;12.11.2026;21:02:10;CAROL;SD: output determination
+S4DK900103;0000;13.11.2026;09:15:33;CAROL;SD: output determination (re-import after fix)
+S4DK900104;0000;14.11.2026;21:00:05;ALICE;Pricing: fix rounding
+S4DK900105;0012;16.11.2026;21:01:47;DAVE;MM: release strategy
