@@ -12,7 +12,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import delete, func, select
 
 from .. import config
-from ..db import get_db, metric_samples, monitor_snapshots
+from ..db import get_db, metric_points, monitor_snapshots
 from .tabular import InputFormatError, parse_number, parse_sap_datetime, pick, read_rows, require_columns
 
 MONITORS = ("availability", "workprocesses", "dumps", "syslog", "updates", "trfc", "qrfc", "idocs", "hana")
@@ -59,7 +59,7 @@ def record_metrics(system_id: int, metrics: dict[str, float], ts: datetime | Non
     rows = [{"system_id": system_id, "metric": k, "value": float(v), "ts": ts} for k, v in metrics.items() if v is not None]
     if rows:
         with get_db() as connection:
-            connection.execute(metric_samples.insert(), rows)
+            connection.execute(metric_points.insert(), rows)
 
 
 def latest(system_id: int, monitor: str | None = None) -> dict:
@@ -83,9 +83,9 @@ def latest(system_id: int, monitor: str | None = None) -> dict:
 def series(system_id: int, metrics: list[str], hours: int = 24) -> dict[str, list[dict]]:
     since = _now() - timedelta(hours=hours)
     with get_db() as connection:
-        rows = connection.execute(select(metric_samples.c.metric, metric_samples.c.value, metric_samples.c.ts).where(
-            metric_samples.c.system_id == system_id, metric_samples.c.metric.in_(metrics), metric_samples.c.ts >= since,
-        ).order_by(metric_samples.c.ts)).all()
+        rows = connection.execute(select(metric_points.c.metric, metric_points.c.value, metric_points.c.ts).where(
+            metric_points.c.system_id == system_id, metric_points.c.metric.in_(metrics), metric_points.c.ts >= since,
+        ).order_by(metric_points.c.ts)).all()
     out: dict[str, list[dict]] = {m: [] for m in metrics}
     for metric, value, ts in rows:
         out[metric].append({"ts": _iso(ts), "value": value})
@@ -94,8 +94,8 @@ def series(system_id: int, metrics: list[str], hours: int = 24) -> dict[str, lis
 
 def prune() -> None:
     with get_db() as connection:
-        connection.execute(delete(metric_samples).where(
-            metric_samples.c.ts < _now() - timedelta(days=config.METRIC_RETENTION_DAYS)))
+        connection.execute(delete(metric_points).where(
+            metric_points.c.ts < _now() - timedelta(days=config.METRIC_RETENTION_DAYS)))
         # keep the newest snapshot per system/monitor even when old
         keep = select(func.max(monitor_snapshots.c.id)).group_by(monitor_snapshots.c.system_id, monitor_snapshots.c.monitor)
         connection.execute(delete(monitor_snapshots).where(
