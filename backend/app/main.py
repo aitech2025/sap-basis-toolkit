@@ -7,6 +7,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from . import auth, config
 from .api.auth_routes import public as auth_public_router
 from .api.auth_routes import router as auth_router
+from .api.analytics import router as analytics_router
 from .api.lifecycle import router as lifecycle_router
 from .api.monitoring import router as monitoring_router
 from .api.routes import router
@@ -40,6 +41,7 @@ app.include_router(auth_router)
 app.include_router(router)
 app.include_router(toolkit_router)
 app.include_router(monitoring_router)
+app.include_router(analytics_router)
 app.include_router(lifecycle_router)
 
 

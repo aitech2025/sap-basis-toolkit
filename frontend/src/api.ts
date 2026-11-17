@@ -1,3 +1,4 @@
+import type { AnalyticsMetric, AnalyticsSeries, AnalyticsSummary } from "./types/analytics";
 import type {
   AlertEvent, Catalogue, CertificateSummary, GrowthReport, Overview, PostcheckResult, PrecheckResult, Run,
   AuditEntry, Collector, ControlStatus, ImportHistory, Operation, RegisterResult, SapInstance, ScanResult, Incident, IncidentCounts, JobReport, LockReport, MaintenanceWindow, Me, MonitorDetail, MonitorsResponse, RouteProposal, Rule, RuleMetric, User, SapSystem, SystemDetail, SystemInput, SystemOverviewData, SystemRoutes, Topology, TransportRoute, UserReport,
@@ -98,6 +99,18 @@ const json = (method: string, body: unknown): RequestInit => ({
 });
 
 export const api = {
+  analyticsMetrics: () => request<AnalyticsMetric[]>("/api/v1/analytics/metrics"),
+  analyticsSummary: (hours = 24, landscape?: string) => {
+    const params = new URLSearchParams({ hours: String(hours) });
+    if (landscape) params.set("landscape", landscape);
+    return request<AnalyticsSummary>(`/api/v1/analytics/summary?${params.toString()}`);
+  },
+  analyticsSeries: (metric: string, options: { hours?: number; bucketSeconds?: number; aggregation?: "avg" | "min" | "max" | "last"; systemId?: number; landscape?: string } = {}) => {
+    const params = new URLSearchParams({ metric, hours: String(options.hours ?? 24), bucket_seconds: String(options.bucketSeconds ?? 300), aggregation: options.aggregation ?? "avg" });
+    if (options.systemId) params.set("system_id", String(options.systemId));
+    if (options.landscape) params.set("landscape", options.landscape);
+    return request<AnalyticsSeries>(`/api/v1/analytics/series?${params.toString()}`);
+  },
   authStatus: () => request<{ setup_required: boolean }>("/api/v1/auth/status"),
   login: (username: string, password: string) =>
     request<{ token: string; expires_at: string; user: Me }>("/api/v1/auth/login", json("POST", { username, password })),

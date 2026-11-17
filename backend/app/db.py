@@ -296,6 +296,19 @@ metric_samples = Table(
 )
 Index("ix_metric_samples", metric_samples.c.system_id, metric_samples.c.metric, metric_samples.c.ts)
 
+# High-volume metric stream. TimescaleDB turns this into a hypertable in PostgreSQL
+# deployments; the same table remains an ordinary indexed table for SQLite/dev fallback.
+# No synthetic row id is needed: time-series rows are append-only observations.
+metric_points = Table(
+    "metric_points", metadata,
+    SYSTEM_FK(),
+    Column("metric", String(80), nullable=False),
+    Column("value", Float, nullable=False),
+    Column("ts", DateTime(timezone=True), nullable=False),
+)
+Index("ix_metric_points_lookup", metric_points.c.system_id, metric_points.c.metric, metric_points.c.ts)
+Index("ix_metric_points_time", metric_points.c.ts)
+
 # ---------------------------------------------------------------- incidents
 alert_rules = Table(
     "alert_rules", metadata,
@@ -402,6 +415,20 @@ system_operations = Table(
     Column("finished_at", DateTime(timezone=True)),
 )
 Index("ix_system_operations", system_operations.c.system_id, system_operations.c.started_at)
+
+# Configuration & Security Analysis: immutable configuration snapshots and drift baseline.
+configuration_snapshots = Table(
+    "configuration_snapshots", metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    SYSTEM_FK(),
+    Column("source", String(40), nullable=False),
+    Column("captured_at", DateTime(timezone=True), nullable=False),
+    Column("is_baseline", Boolean, nullable=False, default=False, server_default=text("false")),
+    Column("snapshot_json", Text, nullable=False),
+    Column("change_count", Integer, nullable=False, default=0, server_default=text("0")),
+)
+Index("ix_configuration_snapshots_sys", configuration_snapshots.c.system_id,
+      configuration_snapshots.c.captured_at)
 
 # Columns added to pre-existing tables (applied by init_db and Alembic).
 ADDED_COLUMNS = {

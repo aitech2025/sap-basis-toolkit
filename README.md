@@ -9,7 +9,7 @@ An end-to-end SAP monitoring and Basis operations platform (SAP Basis Sentinel) 
 - **Basis operations:** certificate expiry, table growth forecasts, user and licence optimisation, transport pre/post checks and landscape routes, background job failures and long-running locks.
 - **Security:** named users with viewer/operator/admin roles, signed sessions, an audit log, encrypted collector credentials and an outbound host allowlist.
 
-See [docs/monitoring.md](docs/monitoring.md) for collector setup, required SAP/HANA authorisations, rules and incidents.
+See [docs/monitoring.md](docs/monitoring.md) for collector setup, required SAP/HANA authorisations, rules and incidents. See [docs/monitoring-analytics.md](docs/monitoring-analytics.md) for historical analytics APIs, aggregation and data-quality semantics. See [docs/timeseries-storage.md](docs/timeseries-storage.md) for the telemetry storage architecture, migration and retention behaviour.
 
 ## Supported systems
 
@@ -56,6 +56,18 @@ Alerts go to a generic webhook, **Slack**, **Microsoft Teams** (Workflows/Adapti
 
 See [docs/product-evaluation.md](docs/product-evaluation.md) for the evaluation of the product ideas and the roadmap, and [samples/](samples/) for example SAP exports to try every module.
 
+
+## Configuration & Security Analysis (new)
+
+Configuration snapshots can be submitted by a future SAP-side extractor, a customer agent, or an authorized operator. Sentinel redacts fields whose names resemble passwords, secrets, tokens, private keys, credentials or API keys before persistence. It stores immutable snapshots and supports an admin-designated baseline.
+
+- `POST /api/v1/systems/{id}/configuration/baseline` — admin-only; establishes or replaces the baseline.
+- `POST /api/v1/systems/{id}/configuration/snapshots` — capture a current sanitized snapshot.
+- `GET /api/v1/systems/{id}/configuration/drift` — added, removed and modified configuration paths compared with the baseline.
+- `GET /api/v1/systems/{id}/configuration/snapshots` — recent snapshot history.
+
+This is a generic configuration-drift engine, not yet a built-in SAP security-content pack. SAP-specific collectors, supported configuration items and compliance rules must be implemented and validated per SAP_BASIS release. Never upload private keys or unredacted secrets.
+
 ### Operations monitoring (per ABAP system)
 
 | Feature | What it shows | Input |
@@ -80,7 +92,7 @@ The growth, user and transport modules work from standard SE16/SUIM/ST03N/DB02 e
 - Disable targets without deleting monitoring history.
 - Protect management APIs with an API key.
 - Enforce hostname, destination-port and DNS/IP network allowlists.
-- Deploy with Docker Compose and PostgreSQL.
+- Deploy with Docker Compose and TimescaleDB (PostgreSQL-compatible); SQLite remains available for local development and CI.
 - Manage schema upgrades with Alembic.
 
 **Scope note:** this release monitors certificates presented by network endpoints. It does not yet inventory all certificates stored internally in SAP STRUST/PSE. The SAP-specific collector requires validation against the target SAP_BASIS release.
