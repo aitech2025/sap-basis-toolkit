@@ -13,10 +13,10 @@ from ...db import collectors, get_db, sap_systems
 from .. import growth, incidents, monitors, ops, transports, vault
 from ..systems import system_zone
 from ..tabular import parse_sap_datetime
-from . import CollectorError, hana, sapcontrol, simulator, validate_port
+from . import CollectorError, hana, node_exporter, sapcontrol, simulator, validate_port
 
 logger = logging.getLogger(__name__)
-TYPES = ("sapcontrol", "hana")
+TYPES = ("sapcontrol", "hana", "node_exporter")
 
 
 def _iso(value):
@@ -218,12 +218,12 @@ def _run_hana(row: dict, system: dict, persist: bool) -> tuple[dict, dict]:
     return {"metrics": metrics, "summary": summary}, {"diagnostics": raw["diagnostics"]}
 
 
-def run(collector_id: int, persist: bool = True) -> dict:
+def _run_node_exporter(row: dict, system: dict, persist: bool) -> tuple[dict, dict]:\n    raw = node_exporter.collect(row["host"], int(row["port"]), bool(row["use_tls"]), bool(row["verify_tls"]))\n    metrics = raw["metrics"]\n    summary = {"signals": sorted(metrics), "collected_at": raw["collected_at"].isoformat()}\n    if persist:\n        health = "critical" if metrics.get("host.memory_used_pct", 0) >= 95 or metrics.get("host.disk_used_pct", 0) >= 95 else "warning" if metrics.get("host.memory_used_pct", 0) >= 85 or metrics.get("host.disk_used_pct", 0) >= 85 else "healthy"\n        monitors.store(system["id"], "host", "node_exporter", {"metrics": metrics, "summary": summary}, health, raw["collected_at"])\n    return {"metrics": metrics, "summary": summary}, {"diagnostics": [{"call": "GET /metrics", "ok": True, "signals": sorted(metrics)}]}\n\n\ndef run(collector_id: int, persist: bool = True) -> dict:
     """Run one collector now. With persist=False it is a connection test (nothing stored or alerted)."""
     row = get(collector_id)
     system = _system(row["system_id"])
     started = time.monotonic()
-    runner = _run_sapcontrol if row["type"] == "sapcontrol" else _run_hana
+    runner = {"sapcontrol": _run_sapcontrol, "hana": _run_hana, "node_exporter": _run_node_exporter}[row["type"]]
     try:
         result, details = runner(row, system, persist)
         status, error = "ok", None
