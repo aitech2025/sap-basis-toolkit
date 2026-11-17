@@ -551,3 +551,49 @@ a { transition: color .15s ease, background .15s ease, border-color .15s ease; }
   .analytics-kpis, .analytics-filter-grid, .analytics-series-grid { grid-template-columns: 1fr; }
   .analytics-kpi strong { font-size: 22px; }
 }
+
+
+/* Intelligent operations workspace */
+.intelligence-page { display: flex; flex-direction: column; gap: 18px; }
+.intelligence-section { min-width: 0; }
+.intelligence-disclaimer { color: var(--muted); font-size: 12px; line-height: 1.5; margin: -4px 0 12px; }
+.intelligence-table-wrap { overflow-x: auto; }
+.intelligence-table { width: 100%; border-collapse: collapse; font-size: 12px; min-width: 680px; }
+.intelligence-table th { text-align: left; color: var(--muted); font-size: 10px; letter-spacing: .06em; font-weight: 700; padding: 9px 10px; border-bottom: 1px solid var(--line); }
+.intelligence-table td { padding: 11px 10px; border-bottom: 1px solid var(--line); vertical-align: middle; font-variant-numeric: tabular-nums; }
+.intelligence-table td:first-child { display: flex; flex-direction: column; gap: 2px; }
+.intelligence-table td small { display: block; color: var(--muted); font-size: 11px; }
+.intelligence-anomaly-list, .intelligence-forecast-list, .intelligence-correlation-list { display: flex; flex-direction: column; gap: 9px; }
+.intelligence-anomaly { display: grid; grid-template-columns: minmax(180px, 1.4fr) repeat(2, minmax(130px, 1fr)) minmax(130px, .8fr); align-items: center; gap: 12px; border: 1px solid var(--line); border-radius: 9px; padding: 11px 13px; font-size: 12px; }
+.intelligence-anomaly > div { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.intelligence-anomaly > div:first-child { flex-direction: row; flex-wrap: wrap; align-items: center; gap: 8px; }
+.intelligence-anomaly small, .intelligence-anomaly span:not(.severity-pill) { color: var(--muted); font-size: 11px; }
+.severity-pill { display: inline-flex; align-items: center; border-radius: 20px; padding: 2px 7px; font-size: 10px; text-transform: uppercase; font-weight: 750; background: var(--surface-2); color: var(--ink-2); }
+.severity-pill.warning { color: #9a6700; background: #fff4d6; }
+.severity-pill.critical { color: #b42318; background: #fee4e2; }
+.intelligence-forecast { display: grid; grid-template-columns: minmax(150px, .9fr) repeat(2, minmax(180px, 1fr)); gap: 12px; padding: 12px; border: 1px solid var(--line); border-radius: 9px; }
+.intelligence-forecast-system, .intelligence-forecast-cell { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.intelligence-forecast-system span, .intelligence-forecast-system small, .intelligence-forecast-cell span, .intelligence-forecast-cell small { color: var(--muted); font-size: 11px; }
+.intelligence-forecast-cell strong { font-size: 12px; }
+.intelligence-forecast-cell strong.warning { color: #9a6700; }
+.intelligence-forecast-cell strong.muted { color: var(--muted); }
+.intelligence-correlation { border: 1px solid var(--line); border-radius: 9px; padding: 12px; }
+.intelligence-correlation-head { display: flex; align-items: center; flex-wrap: wrap; gap: 9px; }
+.intelligence-correlation-head small { color: var(--muted); font-size: 11px; }
+.intelligence-evidence { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; margin-top: 10px; }
+.intelligence-evidence > div { display: flex; flex-direction: column; gap: 3px; padding: 8px; background: var(--surface-2); border-radius: 7px; min-width: 0; }
+.intelligence-evidence span, .intelligence-evidence small { color: var(--muted); font-size: 10px; overflow-wrap: anywhere; }
+.intelligence-evidence strong { font-size: 13px; font-variant-numeric: tabular-nums; }
+.chart-incident-marker line { stroke: #d97706; stroke-width: 1.5; stroke-dasharray: 4 3; opacity: .85; }
+.chart-incident-marker circle { fill: #d97706; stroke: var(--surface); stroke-width: 1.5; }
+.chart-incident-marker.critical line, .chart-incident-marker.critical circle { stroke: #dc2626; }
+.chart-incident-marker.critical circle { fill: #dc2626; }
+@media (max-width: 900px) {
+  .intelligence-anomaly { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .intelligence-forecast { grid-template-columns: 1fr 1fr; }
+  .intelligence-forecast-system { grid-column: 1 / -1; }
+}
+@media (max-width: 620px) {
+  .intelligence-anomaly, .intelligence-forecast { grid-template-columns: 1fr; }
+  .intelligence-forecast-system { grid-column: auto; }
+}

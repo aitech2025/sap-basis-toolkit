@@ -10,6 +10,7 @@ import Certificates from "./pages/Certificates";
 import Discover from "./pages/Discover";
 import IncidentDetail from "./pages/IncidentDetail";
 import Incidents from "./pages/Incidents";
+import Intelligence from "./pages/Intelligence";
 import LandscapeDetail from "./pages/LandscapeDetail";
 import Landscapes from "./pages/Landscapes";
 import Login from "./pages/Login";
@@ -34,7 +35,7 @@ function IncidentBadge() {
 }
 
 const pageNames: Record<string, string> = {
-  "/": "Overview", "/analytics": "Monitoring analytics", "/incidents": "Incidents", "/landscapes": "Landscapes",
+  "/": "Overview", "/analytics": "Monitoring analytics", "/intelligence": "Intelligent operations", "/incidents": "Incidents", "/landscapes": "Landscapes",
   "/systems": "SAP systems", "/discover": "System discovery", "/certificates": "Certificates",
   "/maintenance": "Maintenance", "/rules": "Alert rules", "/alerts": "Notifications",
   "/users": "Users & access", "/audit": "Audit log", "/account": "Account",
@@ -60,6 +61,7 @@ function Shell() {
         <nav className="nav-group">
           <NavItem to="/" icon="◫" end>Overview</NavItem>
           <NavItem to="/analytics" icon="⌁">Analytics</NavItem>
+          <NavItem to="/intelligence" icon="✧">Intelligence</NavItem>
           <NavItem to="/incidents" icon="⚑">Incidents</NavItem>
           <NavItem to="/landscapes" icon="⌘">Landscapes</NavItem>
           <NavItem to="/systems" icon="▦">SAP systems</NavItem>
@@ -102,6 +104,7 @@ function Shell() {
           <Routes>
             <Route path="/" element={<OverviewPage />} />
             <Route path="/analytics" element={<Analytics />} />
+            <Route path="/intelligence" element={<Intelligence />} />
             <Route path="/incidents" element={<Incidents />} />
             <Route path="/incidents/:id" element={<IncidentDetail />} />
             <Route path="/landscapes" element={<Landscapes />} />

@@ -9,7 +9,7 @@ An end-to-end SAP monitoring and Basis operations platform (SAP Basis Sentinel) 
 - **Basis operations:** certificate expiry, table growth forecasts, user and licence optimisation, transport pre/post checks and landscape routes, background job failures and long-running locks.
 - **Security:** named users with viewer/operator/admin roles, signed sessions, an audit log, encrypted collector credentials and an outbound host allowlist.
 
-See [docs/monitoring.md](docs/monitoring.md) for collector setup, required SAP/HANA authorisations, rules and incidents. See [docs/monitoring-analytics.md](docs/monitoring-analytics.md) for historical analytics APIs, aggregation and data-quality semantics. See [docs/timeseries-storage.md](docs/timeseries-storage.md) for the telemetry storage architecture, migration and retention behaviour.
+See [docs/monitoring.md](docs/monitoring.md) for collector setup, required SAP/HANA authorisations, rules and incidents. See [docs/monitoring-analytics.md](docs/monitoring-analytics.md) for historical analytics APIs, aggregation and data-quality semantics. See [docs/intelligent-operations.md](docs/intelligent-operations.md) for availability, anomaly detection, capacity projections and correlation methodology. See [docs/timeseries-storage.md](docs/timeseries-storage.md) for the telemetry storage architecture, migration and retention behaviour.
 
 ## Supported systems
 

@@ -111,3 +111,25 @@ def test_intelligence_endpoints_require_authentication(monkeypatch, tmp_path):
     with TestClient(app) as client:
         assert client.get("/api/v1/intelligence/availability").status_code == 401
         assert client.get("/api/v1/intelligence/anomalies").status_code == 401
+
+
+def test_capacity_forecast_projects_threshold_from_three_snapshots(monkeypatch, tmp_path):
+    setup(monkeypatch, tmp_path)
+    now = datetime.now(timezone.utc)
+    with TestClient(app) as client:
+        system = create_system(client)
+        with db.get_db() as connection:
+            connection.execute(db.capacity_snapshots.insert(), [
+                {"system_id": system["id"], "disk_total_mb": 1000, "disk_used_mb": 800,
+                 "memory_total_mb": 2000, "memory_used_mb": 1000, "captured_at": now - timedelta(days=20)},
+                {"system_id": system["id"], "disk_total_mb": 1000, "disk_used_mb": 840,
+                 "memory_total_mb": 2000, "memory_used_mb": 1020, "captured_at": now - timedelta(days=10)},
+                {"system_id": system["id"], "disk_total_mb": 1000, "disk_used_mb": 880,
+                 "memory_total_mb": 2000, "memory_used_mb": 1040, "captured_at": now},
+            ])
+        response = client.get("/api/v1/intelligence/capacity-forecasts?horizon_days=30&threshold_pct=85", headers=KEY)
+        assert response.status_code == 200, response.text
+        forecast = response.json()["systems"][0]["forecasts"]["disk"]
+        assert forecast["status"] == "threshold_projected"
+        assert forecast["daily_change_mb"] == 4.0
+        assert forecast["threshold_in_days"] is not None and forecast["threshold_in_days"] < 30

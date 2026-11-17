@@ -5,6 +5,7 @@ import { LineChart } from "../components/LineChart";
 import { ErrorBanner } from "../components/ui";
 import type { SapSystem } from "../types";
 import type { AnalyticsMetric, AnalyticsSeries, AnalyticsSummary } from "../types/analytics";
+import type { IncidentCorrelationResponse } from "../types/intelligence";
 
 const RANGES = [{ label: "Last 6 hours", hours: 6 }, { label: "Last 24 hours", hours: 24 }, { label: "Last 7 days", hours: 168 }, { label: "Last 30 days", hours: 720 }];
 const BUCKETS = [{ label: "1 minute", seconds: 60 }, { label: "5 minutes", seconds: 300 }, { label: "15 minutes", seconds: 900 }, { label: "30 minutes", seconds: 1800 }, { label: "1 hour", seconds: 3600 }, { label: "6 hours", seconds: 21600 }, { label: "1 day", seconds: 86400 }];
@@ -37,8 +38,10 @@ export default function Analytics() {
   const [systemId, setSystemId] = useState("");
   const [summary, setSummary] = useState<AnalyticsSummary | null>(null);
   const [result, setResult] = useState<AnalyticsSeries | null>(null);
+  const [correlations, setCorrelations] = useState<IncidentCorrelationResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [refreshKey, setRefreshKey] = useState(0);
 
   useEffect(() => {
     let active = true;
@@ -57,19 +60,21 @@ export default function Analytics() {
     setError(null);
     Promise.all([
       api.analyticsSummary(hours, landscape || undefined),
+      api.intelligenceCorrelations(hours, landscape || undefined),
       metricKey ? api.analyticsSeries(metricKey, {
         hours, bucketSeconds, aggregation,
         landscape: landscape || undefined,
         systemId: systemId ? Number(systemId) : undefined,
       }) : Promise.resolve(null),
-    ]).then(([overview, series]) => {
+    ]).then(([overview, incidents, series]) => {
       if (!active) return;
       setSummary(overview);
+      setCorrelations(incidents);
       setResult(series);
     }).catch((e) => active && setError(e instanceof Error ? e.message : "Unable to load historical telemetry"))
       .finally(() => active && setLoading(false));
     return () => { active = false; };
-  }, [metricKey, hours, bucketSeconds, aggregation, landscape, systemId]);
+  }, [metricKey, hours, bucketSeconds, aggregation, landscape, systemId, refreshKey]);
 
   const visibleSystems = useMemo(() => systems.filter((s) => !landscape || s.landscape === landscape), [systems, landscape]);
   const groupedMetrics = useMemo(() => {
@@ -92,13 +97,7 @@ export default function Analytics() {
         <div className="dashboard-actions">
           <label className="filter-select"><span>LANDSCAPE</span><select value={landscape} onChange={(e) => { setLandscape(e.target.value); setSystemId(""); }}><option value="">All landscapes</option>{[...new Set(systems.map((s) => s.landscape))].sort().map((name) => <option key={name} value={name}>{name}</option>)}</select></label>
           <label className="filter-select"><span>TIME RANGE</span><select value={hours} onChange={(e) => setHours(Number(e.target.value))}>{RANGES.map((r) => <option key={r.hours} value={r.hours}>{r.label}</option>)}</select></label>
-          <button className="btn refresh-btn" onClick={() => {
-            setLoading(true);
-            Promise.all([api.analyticsSummary(hours, landscape || undefined), api.analyticsSeries(metricKey, { hours, bucketSeconds, aggregation, landscape: landscape || undefined, systemId: systemId ? Number(systemId) : undefined })])
-              .then(([s, r]) => { setSummary(s); setResult(r); setError(null); })
-              .catch((e) => setError(e instanceof Error ? e.message : "Refresh failed"))
-              .finally(() => setLoading(false));
-          }} disabled={loading}>↻ <span>Refresh</span></button>
+          <button className="btn refresh-btn" onClick={() => setRefreshKey((v) => v + 1)} disabled={loading}>↻ <span>Refresh</span></button>
         </div>
       </div>
       <ErrorBanner error={error} />
@@ -135,7 +134,7 @@ export default function Analytics() {
               return <article className="analytics-series-card" key={s.system_id}>
                 <div className="analytics-series-heading"><div><Link to={`/systems/${s.system_id}`}><strong>{s.sid}</strong></Link><span>{s.name} · {s.landscape}</span></div><span className="analytics-env">{s.environment}</span></div>
                 <div className="analytics-series-stats"><span>Latest <strong>{formatValue(selectedMetric!, latest)}</strong></span><span>Average <strong>{formatValue(selectedMetric!, average)}</strong></span><span>Peak <strong>{formatValue(selectedMetric!, peak)}</strong></span></div>
-                <LineChart points={chartPoints} unit={selectedMetric!.unit} label={`${s.sid} ${selectedMetric!.label}`} height={190} />
+                <LineChart points={chartPoints} unit={selectedMetric!.unit} label={`${s.sid} ${selectedMetric!.label}`} height={190} markers={(correlations?.incidents ?? []).filter((i) => i.system_id === s.system_id && i.metric === metricKey).map((i) => ({ t: new Date(i.opened_at).getTime(), label: `#${i.incident_id} ${i.title}`, severity: i.severity }))} />
                 <div className="analytics-series-foot"><span>{s.points.length} time buckets</span><span>{s.points.reduce((n, p) => n + p.samples, 0)} raw samples</span></div>
               </article>;
             })}

@@ -1,5 +1,7 @@
 import { useMemo, useRef, useState } from "react";
 
+export interface ChartMarker { t: number; label: string; severity: string; }
+
 export interface Point {
   t: number; // epoch ms
   v: number;
@@ -9,12 +11,13 @@ export interface Point {
  * Single-series line chart: one hue, 2px line, >=8px markers, recessive grid,
  * crosshair + tooltip on hover, table fallback via the caller. The title names the series.
  */
-export function LineChart({ points, unit, height = 180, threshold, label }: {
+export function LineChart({ points, unit, height = 180, threshold, label, markers = [] }: {
   points: Point[];
   unit: string;
   height?: number;
   threshold?: { value: number; label: string };
   label: string;
+  markers?: ChartMarker[];
 }) {
   const ref = useRef<SVGSVGElement>(null);
   const [hover, setHover] = useState<number | null>(null);
@@ -68,6 +71,13 @@ export function LineChart({ points, unit, height = 180, threshold, label }: {
         ))}
         <text x={pad.l} y={height - 6} className="axis">{day(geo.t0)}</text>
         <text x={width - pad.r} y={height - 6} textAnchor="end" className="axis">{day(geo.t1)}</text>
+        {markers.filter((m) => m.t >= geo.t0 && m.t <= geo.t1).map((marker) => (
+          <g key={`${marker.t}-${marker.label}`} className={`chart-incident-marker ${marker.severity}`}>
+            <line x1={geo.x(marker.t)} x2={geo.x(marker.t)} y1={pad.t} y2={height - pad.b} />
+            <circle cx={geo.x(marker.t)} cy={pad.t + 4} r="4" />
+            <title>{marker.label}</title>
+          </g>
+        ))}
         {threshold && (
           <g>
             <line x1={pad.l} x2={width - pad.r} y1={geo.y(threshold.value)} y2={geo.y(threshold.value)} className="threshold" />
