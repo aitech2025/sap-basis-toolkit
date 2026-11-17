@@ -1,100 +1,148 @@
-# SAP Basis Sentinel – architecture
+# Live monitoring guide
 
-## Delivered
+SAP Basis Sentinel monitors every registered SAP system end to end:
 
-- HTTPS endpoint certificate discovery and X.509 metadata extraction.
-- Separate trust and hostname validation.
-- On-demand checks and a dedicated blocking scheduler worker.
-- Configurable expiry thresholds (default 90/60/30/14/7 days).
-- Webhook and SMTP notifications with event history and deduplication.
-- Endpoint-unreachable alerts, de-duplicated per outage and re-armed after recovery.
-- Target disable operation preserving target and check history.
-- API-key protection for management endpoints; /health remains public.
-- Explicit hostname, destination-port and DNS/IP network policy.
-- SQLAlchemy storage for SQLite development and PostgreSQL deployment.
-- Alembic baseline migration and Docker Compose deployment.
+| Area | Monitors | Source |
+|---|---|---|
+| Availability | System up/down, instances (ASCS/SCS, PAS/AAS), OS processes (dispatcher, ICM, gateway, message/enqueue server, jstart) | SAP Start Service (sapcontrol) |
+| Work processes | DIA/BTC/UPD/SPO utilisation, long-running and stopped work processes, restarts | sapcontrol `ABAPGetWPTable` |
+| Errors | ST22 short dumps, SM21 system log, SM13 update errors | HANA SQL (SNAP, VBHDR), sapcontrol `ABAPReadSyslog`, or uploads |
+| Interfaces | SM58 tRFC errors, SMQ1/SMQ2 blocked queues, IDoc error statuses | HANA SQL (ARFCSSTATE, TRFCQOUT/TRFCQIN, EDIDC) or uploads |
+| SAP HANA | Memory, CPU, data volume, statistics server alerts, last data/log backup, system replication, services | HANA SQL monitoring views |
+| Operations | Background jobs, import history, table growth | HANA SQL (TBTCO, TPALOG, M_CS_TABLES) feeding the existing modules |
 
-## Scheduler topology
+Every collector run stores a snapshot per monitor and metric samples. **Alert rules** turn metrics into **incidents**.
 
-FastAPI does not start a scheduler. Run one instance of `python -m app.worker`; it performs an immediate sweep and then repeats every `CHECK_INTERVAL_MINUTES`. API replicas can scale independently. Do not run multiple scheduler replicas without distributed locking or leader election.
+## 1. Configure the server
 
-## Target security policy
+Set these in `.env` (see `.env.example`):
 
-`ALLOWED_TARGET_HOSTS` is mandatory and accepts exact hostnames, explicitly listed IP literals and wildcard subdomains such as `*.corp.example.com` (not the apex domain). `ALLOWED_TARGET_PORTS` defaults to TCP 443; add SAP HTTPS listener ports only when needed. Registration fails closed if the hostname or port is not allowed.
+- `SECRET_KEY`: signs sessions and encrypts collector passwords. Generate it with `openssl rand -hex 32`. If you rotate it, collector passwords must be entered again.
+- `ALLOWED_TARGET_HOSTS` / `ALLOWED_TARGET_CIDRS`: the SAP and HANA hosts the collectors may contact. Instance hostnames returned by `GetSystemInstanceList` must also be allowed.
+- `HANA_CLIENT=true`: builds the image with SAP's `hdbcli` driver. It is distributed under the SAP Developer License; check that the licence suits your use.
+- `COLLECTOR_TICK_SECONDS`, `COLLECTOR_MAX_PARALLEL`, `COLLECTOR_TIMEOUT_SECONDS`: control scheduling.
 
-Before every check, all DNS answers are validated. The socket is pinned to a validated IP while TLS SNI and hostname verification use the original hostname. Non-global addresses (private, loopback, link-local, etc.) require a matching `ALLOWED_TARGET_CIDRS` entry. When CIDRs are configured, every DNS answer must fall inside an approved range.
+Collectors run in the `scheduler` container. API replicas never poll.
 
-Application controls do not replace network egress filtering. Restrict API and scheduler egress to approved target networks and ports, and protect DNS infrastructure.
+## 2. Sign in and roles
 
-## Database migrations
+On first start, create the admin in the UI. First-run setup asks for the server API key (`API_AUTH_TOKEN`) as proof of ownership. Alternatively, set `ADMIN_PASSWORD` to bootstrap the admin at startup.
 
-Run `alembic upgrade head` before deployment. The baseline creates missing tables and adds a unique index on hostname/port. It does not delete history. Legacy duplicates cause a clear migration failure; resolve them and back up before retrying.
+| Role | Can |
+|---|---|
+| viewer | Read every page |
+| operator | Run checks and uploads, run collectors, acknowledge/resolve/assign incidents, schedule maintenance, edit systems, refresh instances and correct instance roles |
+| admin | Everything, plus discover systems, start/stop/restart SAP systems and instances, configure collectors and credentials, edit alert rules, manage users, read the audit log |
 
-## SAP STRUST/PSE boundary
+Passwords are hashed with scrypt and must be at least 12 characters. Five failed sign-ins lock that user/IP for 15 minutes. Changing a password, role or active flag ends that user's sessions. The API key remains an admin service account for scripts and break-glass access. Every change is written to the audit log.
 
-Endpoint TLS discovery sees only certificates presented during a network handshake. It cannot inventory all certificates stored in STRUST, including client PSEs and certificates not presented by an endpoint. The included collector is a contract only; a production RFC adapter must be built and tested against the supported SAP_BASIS release and a least-privilege SAP interface. Do not treat the current scaffold as working STRUST integration.
+## 3. Discover a system from its host (recommended)
 
-## Multi-system model (v0.5)
+*Discover system* (admins) needs only a hostname or IP and, ideally, the `<sid>adm` OS login:
 
-- `sap_systems` is the registry (SID + landscape unique). Every module table references it: `targets.system_id` (nullable, SET NULL on delete), `imported_certificates`, `table_size_snapshots`, `capacity_snapshots`, `analysis_runs`, `alert_events` (CASCADE).
-- `services/profiles.py` holds product/stack/database rules, licence models, export guides and housekeeping catalogues. `PROFILE_OVERRIDES_FILE` (JSON) adds products or housekeeping entries.
-- Disabling a system pauses its endpoint checks, PSE alerts and growth alerts without deleting history.
-- `analysis_runs` stores summary counts of stateless analyses (no user names, no uploaded content) for the overview and history views.
-- `GET /api/v1/overview` derives per-system health: worst of certificate status, capacity forecast (≤7 days critical, ≤`GROWTH_ALERT_DAYS` warning) and last import post-check.
+1. **Probe.** After the host passes the outbound policy, Sentinel connects to the sapstartsrv port of every instance number 00–99 in parallel (`5<NN>13`, or `5<NN>14` with HTTPS). You can enter one instance number to skip the sweep.
+2. **Identify.** `GetInstanceProperties` returns the SID (`SAPSYSTEMNAME`) and instance name. `GetSystemInstanceList` returns every instance of the system on every host, with its features, start priority and status.
+3. **Classify roles** by instance name, falling back to sapstartsrv features:
 
-## Transport routes and landscape topology
+   | Instance name | Features | Role |
+   |---|---|---|
+   | `ASCS<NN>` / `SCS<NN>` | `MESSAGESERVER\|ENQUE` | ABAP / Java central services |
+   | `ERS<NN>` | `ENQREP` | Enqueue replication server |
+   | `DVEBMGS<NN>` | `ABAP` | Primary application server (PAS) |
+   | `D<NN>` | `ABAP` | Additional application server (AAS); without a DVEBMGS instance, the lowest-numbered one is marked PAS (*inferred*) |
+   | `J<NN>` | `J2EE` | Java server |
+   | `W<NN>`, `SMDA<NN>`, `G<NN>`, `HDB<NN>` | `WEBDISP`, `SMDAGENT`, `GATEWAY`, `HDB` | Web Dispatcher, diagnostics agent, gateway, HANA |
 
-- `transport_routes` (source → target system, `consolidation` | `delivery`, optional transport layer) mirrors STMS (ABAP) or CTS+ (Java) routes. Deleting a system removes its routes.
-- Validation: no self-routes, no duplicates, no cycles, no backwards routes by tier (SBX < DEV < QAS < TRN/PRE < PRD), and no mixing of ABAP and Java. Routes across landscapes or products are allowed but reported as warnings.
-- `GET /landscapes/{name}/topology` returns tiers (columns), lanes (one per product and stack), routes enriched with the last import post-check of the target, per-system health and a readable path per lane.
-- `suggest_routes` proposes a DEV → QAS → PRE → PRD chain (plus QAS → TRN) per product where each tier holds exactly one system, and leaves ambiguous tracks to the user.
-- The UI places system cards in a CSS grid and draws routes in an SVG overlay from measured card positions. Routes that would cross a card on a skipped tier are drawn underneath the row.
+   Roles can be corrected in the wizard or later on the *Instances & control* tab. Manual roles survive re-discovery.
+4. **Product and database (best effort).** `ParameterValue(dbms/type)` gives the database (hdb, ora, db6, mss, ada, syb …). `ABAPGetComponentList` gives the software components: `S4CORE` → S/4HANA (108 = 2023), `DW4CORE` → BW/4HANA, `SAP_APPL` → ECC (618 = EHP8), `BBPCRM`, `SRM_SERVER`, `SCM`, `ST`, `GRCFND_A`, `BI_CONT`. Anything not readable is shown as a warning and can be chosen manually.
+5. **Register.** The host is scanned again (the browser's instance list is never trusted). Sentinel then creates or updates the system, stores the instance inventory, creates the sapcontrol collector with the encrypted credentials (and optionally a HANA SQL collector), and runs the first collection. Each later collection keeps the inventory's status in sync and adds new instances.
 
-## Operations monitoring
+The environment is suggested from the SID's last letter (P → PRD, Q/T → QAS, D → DEV). If the SID is already registered, you can update that system instead of creating a duplicate.
 
-- `transport_imports`: one row per import into a system (request, RC, time, owner, text), filled by post-check uploads, de-duplicated on request + time + RC (untimed log rows within a day). `imported_requests()` feeds the pre-check's missing-predecessor test.
-- `job_runs`: SM37/TBTCO rows upserted by job name + job count (or start time), so a job moving from active to finished/cancelled updates in place. New cancellations alert once per job name per day.
-- `lock_snapshots` / `lock_entries`: each SM12 upload is a snapshot. Lock age = snapshot time − lock time; when SM12 shows only a time, the most recent occurrence before the snapshot is used. Persistence counts how many snapshots contained the same user/table/argument/lock time.
-- `sap_systems.timezone` converts SAP-local timestamps to UTC. Health adds jobs (warning on cancellations in 24 h or long-running jobs) and locks (warning ≥ 60 min, critical ≥ 240 min), ignoring data older than `OPS_DATA_STALE_HOURS`.
+## 4. Start, stop and restart
 
-## Monitoring platform (v1.0)
+The *Instances & control* tab can start, stop or restart the whole system or one instance through sapstartsrv:
 
-- **Auth (`app/auth.py`):** users with scrypt hashes; stateless HMAC tokens carrying the user's `token_version` (bumped to revoke sessions); role checks by HTTP method and path (viewer for reads, operator for changes, admin for collectors/rules/users/audit); login throttling; and an `audit_log` written by middleware for every mutation and sign-in.
-- **Collectors (`services/collectors/`):**
-  - `sapcontrol.py`: a SOAP client that pins connections to policy-validated IPs while keeping SNI and hostname verification.
-  - `hana.py`: an hdbcli client and query catalogue (overridable).
-  - `simulator.py`: demo data.
-  - `runner.py`: CRUD with encrypted passwords (`services/vault.py`), test connections, run/persist, and due-collector scheduling in the worker (thread pool).
-- **Monitors (`services/monitors.py`):** normalised builders per monitor shared by collectors and uploads, JSON snapshots, metric samples with retention, and upload parsers for ST22/SM21/SM13/SM58/SMQ/WE02.
-- **Incidents (`services/incidents.py`):** built-in plus scoped rules; evaluation per collector run (open/escalate/de-escalate/auto-resolve); module alerts mapped to incidents; maintenance windows suppress notifications; PagerDuty trigger/resolve.
-- **Health:** the overview health of each system is the worst of live availability, open incidents, certificates, capacity forecast, jobs, locks and the last import. Stale data is ignored.
+- **System:** `StartSystem` / `StopSystem` / `RestartSystem` with `SAPControl-ALL-INSTANCES` (or only central services, application servers, ABAP or Java). sapstartsrv honours the start priorities: ASCS/ERS first on start and last on stop.
+- **Instance:** `Start` / `Stop` / `RestartInstance` on that instance's own sapstartsrv. Stops accept a soft timeout so running work can finish.
+- **Progress:** the calls are asynchronous. Sentinel polls `GetSystemInstanceList` every `CONTROL_POLL_SECONDS` until every targeted instance is GREEN (start/restart) or GRAY (stop), or until `CONTROL_TIMEOUT_SECONDS` (default 20 min). An instance turning RED fails the operation. A collection runs afterwards so the dashboards update immediately.
+- **The database is not touched.** sapstartsrv controls SAP instances only. Start HANA or another database with SAP Host Agent or the database tools before starting the system.
 
-## Discovery and lifecycle control (v1.1)
+Safeguards:
 
-- **Discovery (`services/discovery.py`):** policy check → parallel TCP probe of `5<NN>13/14` → `GetInstanceProperties` + `GetSystemInstanceList` → role classification (instance name, then features) → `ParameterValue(dbms/type)` and `ABAPGetComponentList` for database and product → `AccessCheck`. `register` rescans on the server, then upserts `sap_systems`, `sap_instances` (manual roles are kept) and collectors, and runs the first collection. The sapcontrol collector re-syncs `sap_instances` on every run.
-- **Control (`services/control.py`):** `system_operations` rows, one running per system (409 otherwise). A worker thread issues `StartSystem`/`StopSystem`/`RestartSystem` (with options) or the instance-level `Start`/`Stop`/`RestartInstance`, then polls `GetSystemInstanceList` until the goal state, RED, or timeout. Startup marks orphaned operations `interrupted`. Authorization: `/discovery/*` and `POST …/control` are admin; per-system `control_enabled` (NULL = on except PRD) can only be changed by admins.
-- **Simulator:** `simulator-<sid>` hosts keep per-host state (ASCS/SCS, ERS, PAS/AAS) and answer the discovery and control methods with timed state transitions.
+- Admin role only, plus the SID typed again and a reason. Every request is in the audit log and the operation history.
+- Production (PRD) systems are **off by default**. An admin must set *Start / stop from Sentinel* to *Allowed* in the system settings. Any system can be set to *Not allowed*. `CONTROL_ENABLED=false` turns the feature off server-wide.
+- One operation per system at a time. Operations still running when Sentinel restarts are marked *interrupted*.
+- An optional maintenance window (default 30 min for stops) suppresses notifications for the expected outage.
+- The collector's OS user needs permission for `Start`/`Stop` (`<sid>adm`, or `service/admin_users`). Discovery checks this with `AccessCheck` where the release supports it.
 
-## UI
+## 5. SAP Start Service collector (all ABAP and Java systems)
 
-React 18 + TypeScript + Vite in `frontend/`. `npm run build` emits into `backend/app/static`; FastAPI serves assets and falls back to `index.html` for client-side routes (never for `/api/*`). The Docker image builds the UI in a Node stage. No UI component library; single-series charts are hand-built SVG with hover tooltips and a data-table fallback.
+- **Endpoint:** the ASCS/SCS or any instance host, port `5<NN>13` (HTTP) or `5<NN>14` (HTTPS, recommended). The collector calls `GetSystemInstanceList` and then each instance's own sapstartsrv.
+- **Credentials:** `GetSystemInstanceList` and `GetProcessList` are usually unprotected. `ABAPGetWPTable` and `ABAPReadSyslog` may be protected by `service/protectedwebmethods` (default `SDEFAULT`). In that case use `<sid>adm`, or an OS user/group listed in `service/admin_users` / `service/admin_groups`. Prefer a dedicated, least-privileged user where your release allows it.
+- **System log:** if `ABAPReadSyslog` is unavailable on your release, the Errors tab shows that in the diagnostics. Upload SM21 exports instead.
 
-## Toolkit modules (v0.4)
+## 6. HANA SQL collector (HANA-based systems)
 
-- `services/tabular.py` – tolerant parser for SAP exports (delimiter, header alias, date and number locale detection).
-- `services/alerts.py` – module-agnostic alert dispatch with de-duplication in `alert_events`.
-- `services/cert_import.py` – STRUST/PSE certificate inventory from exported public certificates (private keys rejected).
-- `services/growth.py` – snapshot storage, least-squares growth rates, disk/memory threshold forecast, housekeeping catalogue.
-- `services/users.py` – stateless dormancy and license analysis; produces an SU10 lock list. No write access to SAP.
-- `services/transports.py` – stateless E070/E071 pre-import risk analysis and import-log RC evaluation.
+Create a dedicated read-only user, for example:
 
-Data retention: growth snapshots and imported certificates are stored; user and transport uploads are analysed in memory only. Uploads are size-limited by `MAX_UPLOAD_BYTES`.
+```sql
+CREATE USER SENTINEL_MON PASSWORD "<strong password>" NO FORCE_FIRST_PASSWORD_CHANGE;
+GRANT MONITORING TO SENTINEL_MON;            -- monitoring views, _SYS_STATISTICS alerts, backup catalog
+-- Optional ABAP runtime tables (replace SAPHANADB with your ABAP schema):
+GRANT SELECT ON "SAPHANADB"."SNAP" TO SENTINEL_MON;
+GRANT SELECT ON "SAPHANADB"."VBHDR" TO SENTINEL_MON;
+GRANT SELECT ON "SAPHANADB"."ARFCSSTATE" TO SENTINEL_MON;
+GRANT SELECT ON "SAPHANADB"."TRFCQOUT" TO SENTINEL_MON;
+GRANT SELECT ON "SAPHANADB"."TRFCQIN" TO SENTINEL_MON;
+GRANT SELECT ON "SAPHANADB"."EDIDC" TO SENTINEL_MON;
+GRANT SELECT ON "SAPHANADB"."TBTCO" TO SENTINEL_MON;
+GRANT SELECT ON "SAPHANADB"."TPALOG" TO SENTINEL_MON;
+```
 
-## Remaining production hardening
+Validate the privileges on your HANA revision. If a query fails, it is listed in the collector diagnostics and the other monitors continue.
 
-1. Tenant isolation for MSP use; SSO (OIDC/SAML) on top of the built-in users.
-2. Distributed scheduler locking if multiple scheduler replicas are required.
-3. Centralized secrets management, TLS reverse proxy, network egress firewall and backup/restore runbooks.
-4. SAP STRUST/PSE adapter and certificate-chain inventory.
-5. Operational observability (metrics endpoint, structured logs).
-6. Optional live collectors (RFC/OData) feeding the existing analysis services.
+Reading ABAP tables directly bypasses ABAP authorisations. Grant exactly these SELECT privileges, to this user only. Port `3<NN>15` is the first tenant's SQL port.
+
+### Query overrides
+
+Some queries are marked "verify on your release" in the diagnostics: CPU from `M_LOAD_HISTORY_HOST`, update errors from `VBHDR`, inbound qRFC, and `TPALOG`. Replace any query, keeping the same output column names, with a JSON file referenced by `QUERY_OVERRIDES_FILE`:
+
+```json
+{"hana": {"updates": "SELECT VBKEY, VBUSR, VBTCODE, VBREPORT, VBDATE, VBRC FROM {schema}.VBHDR WHERE VBRC NOT IN (0)"}}
+```
+
+`{schema}` is replaced with the quoted ABAP schema. The query names are listed in `backend/app/services/collectors/hana.py`.
+
+## 7. Systems without a HANA collector (ECC on Oracle/Db2/MSSQL/…)
+
+Use the SAP Start Service collector for availability, work processes and the system log. For errors and interfaces, upload SAP GUI exports on the Errors and Interfaces tabs: ST22, SM21, SM13, SM58, SMQ1/SMQ2 and WE02. The rules and incidents work the same way. Upload regularly, or from a script using the API key.
+
+## 8. Alert rules, incidents and maintenance
+
+- **Built-in rules:** global rules exist for every metric (see *Alert rules*). Admins can change thresholds or disable rules, and add landscape or system overrides. The most specific enabled rule wins.
+- **Incident lifecycle:** a breach opens one incident per (metric, system). Repeats increase its count, a higher severity escalates it (and re-opens it if it was acknowledged), and recovery resolves it automatically. Operators acknowledge, assign, comment on and resolve incidents. Every step is on the timeline.
+- **Module incidents:** alerts from certificates, background jobs, locks, transports and growth also open incidents. People resolve these manually.
+- **Notifications:** sent on open, escalation and resolution through the configured webhook (generic, Slack or Teams), email and PagerDuty. PagerDuty receives critical incidents, plus a `resolve` event when they clear.
+- **Maintenance windows:** cover one system, a landscape, or everything. Incidents are still recorded and flagged, but notifications are suppressed and the suppression is logged on the timeline.
+- **Collector failures:** a collector that cannot reach its system opens a "Collector cannot reach the system" incident. Its data is then stale, and stale data is ignored for health.
+
+## 9. Demo mode
+
+`SIMULATOR_ENABLED=true` allows collectors with host `simulator` to produce synthetic, time-varying data for demos and tests. For discovery, use `simulator-<sid>`: `simulator-s4p` behaves like an S/4HANA 2023 system on HANA, `simulator-ecd` like ECC EHP8 on Oracle, `simulator-epq` like a Java system. Each has ASCS/SCS, ERS and two or three application servers. Simulated start/stop changes instance states over a few seconds. Never enable it in production.
+
+
+## Competitive capability expansion
+
+### Delivered foundation: configuration drift engine
+The configuration snapshot API stores immutable sanitized snapshots, supports an administrator-controlled baseline, and computes added/removed/modified paths. Secret-like fields are redacted before persistence. This enables a customer-side SAP extractor or agent to publish configuration data without coupling the API to a specific SAP release.
+
+The generic engine does not claim SAP security compliance by itself. SAP-specific collection adapters, versioned control catalogs, risk scoring, and compliance evidence remain planned work.
+
+### Competitive roadmap
+1. Configuration & Security Analysis: SAP-specific security controls, drift severity, exception/waiver workflow, evidence and scheduled checks.
+2. Synthetic User Monitoring: Selenium/Playwright runners for Fiori and critical SAP GUI/web journeys.
+3. Integration & Exception Monitoring: end-to-end message correlation across IDoc, RFC, qRFC, web services, PI/PO and Integration Suite.
+4. Business Service Management: service dependency maps, SLOs, business hours and maintenance-aware availability.
+5. Event intelligence and RCA: event correlation, topology-aware grouping, change correlation, probable cause and runbook suggestions.
+6. Deep performance observability: ABAP workload/SQL, HANA expensive statements, OS metrics, traces and SAP Passport correlation.
