@@ -4,7 +4,7 @@ import { api } from "../api";
 import { LineChart } from "../components/LineChart";
 import { ErrorBanner } from "../components/ui";
 import type { SapSystem } from "../types";
-import type { AnalyticsMetric, AnalyticsSeries, AnalyticsSummary } from "../types/analytics";
+import type { AnalyticsMetric, AnalyticsSeries, AnalyticsSummary } from "../types/analytics";\nimport type { IncidentCorrelationResponse } from "../types/intelligence";
 
 const RANGES = [{ label: "Last 6 hours", hours: 6 }, { label: "Last 24 hours", hours: 24 }, { label: "Last 7 days", hours: 168 }, { label: "Last 30 days", hours: 720 }];
 const BUCKETS = [{ label: "1 minute", seconds: 60 }, { label: "5 minutes", seconds: 300 }, { label: "15 minutes", seconds: 900 }, { label: "30 minutes", seconds: 1800 }, { label: "1 hour", seconds: 3600 }, { label: "6 hours", seconds: 21600 }, { label: "1 day", seconds: 86400 }];
@@ -36,7 +36,7 @@ export default function Analytics() {
   const [landscape, setLandscape] = useState("");
   const [systemId, setSystemId] = useState("");
   const [summary, setSummary] = useState<AnalyticsSummary | null>(null);
-  const [result, setResult] = useState<AnalyticsSeries | null>(null);
+  const [result, setResult] = useState<AnalyticsSeries | null>(null);\n  const [correlations, setCorrelations] = useState<IncidentCorrelationResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -57,12 +57,12 @@ export default function Analytics() {
     setError(null);
     Promise.all([
       api.analyticsSummary(hours, landscape || undefined),
-      metricKey ? api.analyticsSeries(metricKey, {
+      api.intelligenceCorrelations(hours, landscape || undefined),\n      metricKey ? api.analyticsSeries(metricKey, {
         hours, bucketSeconds, aggregation,
         landscape: landscape || undefined,
         systemId: systemId ? Number(systemId) : undefined,
       }) : Promise.resolve(null),
-    ]).then(([overview, series]) => {
+    ]).then(([overview, incidents, series]) => {
       if (!active) return;
       setSummary(overview);
       setResult(series);
@@ -135,7 +135,7 @@ export default function Analytics() {
               return <article className="analytics-series-card" key={s.system_id}>
                 <div className="analytics-series-heading"><div><Link to={`/systems/${s.system_id}`}><strong>{s.sid}</strong></Link><span>{s.name} · {s.landscape}</span></div><span className="analytics-env">{s.environment}</span></div>
                 <div className="analytics-series-stats"><span>Latest <strong>{formatValue(selectedMetric!, latest)}</strong></span><span>Average <strong>{formatValue(selectedMetric!, average)}</strong></span><span>Peak <strong>{formatValue(selectedMetric!, peak)}</strong></span></div>
-                <LineChart points={chartPoints} unit={selectedMetric!.unit} label={`${s.sid} ${selectedMetric!.label}`} height={190} />
+                <LineChart points={chartPoints} unit={selectedMetric!.unit} label={`${s.sid} ${selectedMetric!.label}`} height={190} markers={(correlations?.incidents ?? []).filter((i) => i.system_id === s.system_id && i.metric === metricKey).map((i) => ({ t: new Date(i.opened_at).getTime(), label: `#${i.incident_id} ${i.title}`, severity: i.severity }))} />
                 <div className="analytics-series-foot"><span>{s.points.length} time buckets</span><span>{s.points.reduce((n, p) => n + p.samples, 0)} raw samples</span></div>
               </article>;
             })}
