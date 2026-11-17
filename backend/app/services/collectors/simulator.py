@@ -293,6 +293,15 @@ class SimulatedHana:
         if name == "services":
             return [{"HOST": "hdbprim", "SERVICE_NAME": s, "ACTIVE_STATUS": "YES"}
                     for s in ("nameserver", "indexserver", "xsengine", "compileserver", "preprocessor")]
+        if name == "active_statements":
+            return [{"ACTIVE_COUNT": 8 + (12 if p["fragile"] else 0),
+                     "LONG_RUNNING": 2 if p["fragile"] else 0,
+                     "MAX_DURATION_US": 95000000 if p["fragile"] else 8000000}]
+        if name == "service_threads":
+            return [{"THREAD_COUNT": 180, "WAITING_THREADS": 32 if p["fragile"] else 8}]
+        if name == "expensive_statements":
+            return [{"STATEMENT_COUNT": 14 if p["fragile"] else 2,
+                     "MAX_DURATION_US": 125000000 if p["fragile"] else 18000000}]
         if name == "table_sizes":
             base = {"ACDOCA": 380, "BALDAT": 95, "CDPOS": 70, "EDI40": 55, "SOFFCONT1": 48, "BALHDR": 12, "DBTABLOG": 22,
                     "MATDOC": 140, "VBAP": 30, "EDIDC": 8}
