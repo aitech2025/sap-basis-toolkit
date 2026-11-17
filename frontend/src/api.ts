@@ -1,6 +1,6 @@
 import type {
   AlertEvent, Catalogue, CertificateSummary, GrowthReport, Overview, PostcheckResult, PrecheckResult, Run,
-  SapSystem, SystemDetail, SystemInput, UserReport,
+  RouteProposal, SapSystem, SystemDetail, SystemInput, SystemRoutes, Topology, TransportRoute, UserReport,
 } from "./types";
 
 const KEY_STORAGE = "sapBasisToolkit.apiKey";
@@ -110,6 +110,15 @@ export const api = {
     request<PrecheckResult>(`/api/v1/systems/${id}/transports/precheck`, json("POST", body)),
   postcheck: (id: number, log: string) =>
     request<PostcheckResult>(`/api/v1/systems/${id}/transports/postcheck`, json("POST", { log })),
+
+  topology: (landscape: string) => request<Topology>(`/api/v1/landscapes/${encodeURIComponent(landscape)}/topology`),
+  suggestRoutes: (landscape: string, apply = false) =>
+    request<{ proposals: RouteProposal[]; created: TransportRoute[] }>(
+      `/api/v1/landscapes/${encodeURIComponent(landscape)}/routes/suggest${apply ? "?apply=true" : ""}`, { method: "POST" }),
+  createRoute: (body: { source_system_id: number; target_system_id: number; route_type: string; transport_layer?: string | null; description?: string | null }) =>
+    request<TransportRoute>("/api/v1/routes", json("POST", body)),
+  deleteRoute: (id: number) => request<void>(`/api/v1/routes/${id}`, { method: "DELETE" }),
+  systemRoutes: (id: number) => request<SystemRoutes>(`/api/v1/systems/${id}/routes`),
 
   alerts: (systemId?: number) => request<AlertEvent[]>(`/api/v1/alerts${systemId ? `?system_id=${systemId}` : ""}`),
 };

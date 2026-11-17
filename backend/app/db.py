@@ -148,6 +148,19 @@ analysis_runs = Table(
 )
 Index("ix_analysis_runs_sys", analysis_runs.c.system_id, analysis_runs.c.module, analysis_runs.c.created_at)
 
+# Transport routes between systems (STMS/CTS+ consolidation and delivery routes).
+transport_routes = Table(
+    "transport_routes", metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("source_system_id", Integer, ForeignKey("sap_systems.id", ondelete="CASCADE"), nullable=False),
+    Column("target_system_id", Integer, ForeignKey("sap_systems.id", ondelete="CASCADE"), nullable=False),
+    Column("route_type", String(20), nullable=False),
+    Column("transport_layer", String(20)),
+    Column("description", Text),
+    Column("created_at", DateTime(timezone=True), nullable=False, server_default=text("CURRENT_TIMESTAMP")),
+)
+Index("uq_transport_route", transport_routes.c.source_system_id, transport_routes.c.target_system_id, unique=True)
+
 # Columns added to pre-existing tables (applied by init_db and Alembic).
 ADDED_COLUMNS = {
     "targets": [("system_id", "INTEGER REFERENCES sap_systems(id) ON DELETE SET NULL")],

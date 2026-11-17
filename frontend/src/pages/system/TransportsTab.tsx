@@ -1,6 +1,7 @@
-import { useState } from "react";
+import { Fragment, useState } from "react";
+import { Link } from "react-router-dom";
 import { api } from "../../api";
-import { Card, DataTable, Empty, ErrorBanner, FileField, Pill } from "../../components/ui";
+import { Card, DataTable, Empty, ErrorBanner, FileField, Pill, useAsync } from "../../components/ui";
 import type { PostcheckResult, PrecheckResult, SystemDetail } from "../../types";
 
 const list = (v: string) => v.split(/[\s,;]+/).map((x) => x.trim().toUpperCase()).filter(Boolean);
@@ -16,6 +17,7 @@ export default function TransportsTab({ system }: { system: SystemDetail }) {
   const [pre, setPre] = useState<PrecheckResult | null>(null);
   const [post, setPost] = useState<PostcheckResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const routes = useAsync(() => api.systemRoutes(system.id), [system.id]);
 
   if (!cap.supported) {
     return <Card title="Transports"><Empty>{cap.how_to_export}</Empty></Card>;
@@ -29,6 +31,26 @@ export default function TransportsTab({ system }: { system: SystemDetail }) {
   return (
     <>
       <ErrorBanner error={error} />
+      <Card title="Transport path" actions={<Link className="btn small" to={`/landscapes/${encodeURIComponent(system.landscape)}`}>Landscape diagram</Link>}>
+        {routes.data?.hops.length ? (
+          <div className="route-path" aria-label="Transport path">
+            {routes.data.hops.map((layer, i) => (
+              <Fragment key={layer.map((h) => h.system_id).join("-")}>
+                {i > 0 && <span className="muted" aria-hidden="true">→</span>}
+                <span className="hop-group">
+                  {layer.map((hop) => hop.system_id === system.id
+                    ? <span key={hop.system_id} className="hop current" aria-current="true">{hop.sid}</span>
+                    : <Link key={hop.system_id} className="hop" to={`/systems/${hop.system_id}/transports`}>{hop.sid}</Link>)}
+                </span>
+              </Fragment>
+            ))}
+          </div>
+        ) : <p className="muted" style={{ margin: 0 }}>No transport routes for {system.sid} yet. Define them in the landscape diagram.</p>}
+        {!!routes.data?.inbound.length && (
+          <p className="muted">Imports arrive from {routes.data.inbound.map((r) => `${r.source_sid} (${r.route_type}${r.transport_layer ? `, layer ${r.transport_layer}` : ""})`).join(", ")}.
+            Use the E070/E071 exports of the source system for the pre-check.</p>
+        )}
+      </Card>
       <Card title={`Pre-import check — target ${system.sid}`}>
         <form onSubmit={(e) => { e.preventDefault(); guard(async () => {
           if (!e071) throw new Error("Choose an E071 export from the source system");

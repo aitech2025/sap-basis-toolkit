@@ -71,7 +71,8 @@ export default function OverviewPage() {
       )}
       {[...groups.entries()].map(([name, list]) => (
         <section className="landscape" key={name}>
-          <h2>{name} <span className="muted">· {list.length} system{list.length === 1 ? "" : "s"}</span></h2>
+          <h2>{name} <span className="muted">· {list.length} system{list.length === 1 ? "" : "s"} · </span>
+            <Link to={`/landscapes/${encodeURIComponent(name)}`} style={{ fontSize: 13, fontWeight: 500 }}>transport path →</Link></h2>
           <div className="system-grid">{list.map((s) => <SystemCard key={s.id} s={s} />)}</div>
         </section>
       ))}

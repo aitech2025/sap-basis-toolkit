@@ -3,6 +3,8 @@ import { NavLink, Navigate, Route, Routes } from "react-router-dom";
 import { getApiKey } from "./api";
 import Alerts from "./pages/Alerts";
 import Certificates from "./pages/Certificates";
+import LandscapeDetail from "./pages/LandscapeDetail";
+import Landscapes from "./pages/Landscapes";
 import OverviewPage from "./pages/Overview";
 import Settings from "./pages/Settings";
 import SystemDetailPage from "./pages/SystemDetail";
@@ -21,6 +23,7 @@ export default function App() {
       <nav className="sidebar" aria-label="Main">
         <div className="brand">SAP Basis Toolkit<small>Sentinel · multi-system</small></div>
         <NavLink to="/" end>Landscape overview</NavLink>
+        <NavLink to="/landscapes">Landscapes</NavLink>
         <NavLink to="/systems">Systems</NavLink>
         <NavLink to="/certificates">Certificates</NavLink>
         <NavLink to="/alerts">Alerts</NavLink>
@@ -36,6 +39,8 @@ export default function App() {
         )}
         <Routes>
           <Route path="/" element={<OverviewPage />} />
+          <Route path="/landscapes" element={<Landscapes />} />
+          <Route path="/landscapes/:name" element={<LandscapeDetail />} />
           <Route path="/systems" element={<Systems />} />
           <Route path="/systems/:id/*" element={<SystemDetailPage />} />
           <Route path="/certificates" element={<Certificates />} />

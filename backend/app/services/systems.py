@@ -53,6 +53,8 @@ def _validate(full: dict) -> None:
         errors.append("SID must be 3 characters: a letter followed by letters/digits (e.g. PRD, S4P)")
     if full.get("environment") not in profiles.ENVIRONMENTS:
         errors.append(f"environment must be one of {', '.join(profiles.ENVIRONMENTS)}")
+    if "/" in (full.get("landscape") or "") or "\\" in (full.get("landscape") or ""):
+        errors.append("landscape must not contain slashes")
     if full.get("default_client") and not re.fullmatch(r"\d{3}", full["default_client"]):
         errors.append("default_client must be 3 digits")
     errors += profiles.validate_system(full.get("product", ""), full.get("stack", ""),

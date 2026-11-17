@@ -11,7 +11,8 @@ from ..db import (
     alert_events, certificate_checks, get_db, notification_events, sap_systems, targets,
 )
 from ..security import require_api_key
-from ..services import cert_import, growth, profiles, systems, transports, users
+from ..services import cert_import, growth, profiles, routes, systems, transports, users
+from ..services.routes import RouteError, RouteNotFound
 from ..services.cert_import import CertificateImportError
 from ..services.systems import SystemConflict, SystemNotFound, SystemValidationError
 from ..services.tabular import InputFormatError, to_csv
@@ -348,13 +349,11 @@ def _latest_runs() -> dict[tuple[int, str], dict]:
     return latest
 
 
-@router.get("/overview")
-def overview(landscape: str | None = None):
-    """Health of every enabled system across all modules."""
-    registry = systems.list_systems(enabled=True, landscape=landscape)
+def system_health(registry: list[dict]) -> dict[int, dict]:
+    """Per-system health across certificates, capacity forecast and last import."""
     certs = certificate_summary()
     runs = _latest_runs()
-    result = []
+    result = {}
     for system in registry:
         sid = system["id"]
         own = [c for c in certs["endpoints"] if c["system_id"] == sid] + \
@@ -370,9 +369,7 @@ def overview(landscape: str | None = None):
         post = runs.get((sid, "transports-postcheck"))
         transport_level = None if not post else {"fail": 3, "review": 2}.get(post["status"], 0)
         levels = [lvl for lvl in (cert_level, growth_level, transport_level) if lvl is not None]
-        result.append({
-            **{k: system[k] for k in ("id", "sid", "name", "product", "product_label", "stack", "database",
-                                      "environment", "landscape", "effective_license_model")},
+        result[sid] = {
             "health": HEALTH[max(levels)] if levels else "unknown",
             "certificates": {"count": len(own), "health": HEALTH.get(cert_level, "unknown"),
                              "soonest_expiry_days": min(days) if days else None},
@@ -381,11 +378,89 @@ def overview(landscape: str | None = None):
                        "days_until_threshold": soonest},
             "users": runs.get((sid, "users")),
             "transports": {"precheck": runs.get((sid, "transports-precheck")), "postcheck": post},
-        })
+        }
+    return result
+
+
+@router.get("/overview")
+def overview(landscape: str | None = None):
+    """Health of every enabled system across all modules."""
+    registry = systems.list_systems(enabled=True, landscape=landscape)
+    health = system_health(registry)
+    result = [
+        {**{k: system[k] for k in ("id", "sid", "name", "product", "product_label", "stack", "database",
+                                   "environment", "landscape", "effective_license_model")},
+         **health[system["id"]]}
+        for system in registry
+    ]
     totals: dict[str, int] = {}
     for item in result:
         totals[item["health"]] = totals.get(item["health"], 0) + 1
     return {"totals": totals, "systems": result}
+
+
+# ------------------------------------------------------------------ landscape topology & routes
+class RouteIn(BaseModel):
+    source_system_id: int
+    target_system_id: int
+    route_type: str = Field(pattern="^(consolidation|delivery)$")
+    transport_layer: str | None = Field(default=None, max_length=20)
+    description: str | None = Field(default=None, max_length=500)
+
+
+def _route_errors(fn, *args, **kwargs):
+    try:
+        return fn(*args, **kwargs)
+    except RouteNotFound as exc:
+        raise HTTPException(404, str(exc))
+    except RouteError as exc:
+        raise HTTPException(422, str(exc))
+
+
+@router.get("/landscapes/{landscape}/topology")
+def landscape_topology(landscape: str):
+    """Systems grouped into product lanes and DEV → QAS → PRD tiers, with transport routes and health."""
+    registry = systems.list_systems(landscape=landscape)
+    return _route_errors(routes.topology, landscape, system_health(registry))
+
+
+@router.post("/landscapes/{landscape}/routes/suggest")
+def suggest_routes(landscape: str, apply: bool = False):
+    """Propose DEV → QAS → PRE → PRD routes per product; apply=true creates them."""
+    proposals = routes.suggest_routes(landscape)
+    if not apply:
+        return {"proposals": proposals, "created": []}
+    created, skipped = [], []
+    for p in proposals:
+        try:
+            created.append(routes.create_route(p["source_system_id"], p["target_system_id"], p["route_type"],
+                                               p["transport_layer"]))
+        except RouteError as exc:
+            skipped.append({**p, "reason": str(exc)})
+    return {"proposals": proposals, "created": created, "skipped": skipped}
+
+
+@router.get("/routes")
+def list_routes(landscape: str | None = None, system_id: int | None = None):
+    return routes.list_routes(landscape, system_id)
+
+
+@router.post("/routes", status_code=201)
+def create_route(payload: RouteIn):
+    return _route_errors(routes.create_route, payload.source_system_id, payload.target_system_id,
+                         payload.route_type, payload.transport_layer, payload.description)
+
+
+@router.delete("/routes/{route_id}", status_code=204)
+def delete_route(route_id: int):
+    _route_errors(routes.delete_route, route_id)
+    return Response(status_code=204)
+
+
+@router.get("/systems/{system_id}/routes")
+def system_routes(system_id: int):
+    load_system(system_id)
+    return routes.system_path(system_id)
 
 
 @router.get("/alerts")

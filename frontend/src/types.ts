@@ -237,3 +237,66 @@ export interface AlertEvent {
   result: string;
   error: string | null;
 }
+
+export interface TransportRoute {
+  id: number;
+  source_system_id: number;
+  target_system_id: number;
+  source_sid: string;
+  target_sid: string;
+  source_environment: string;
+  target_environment: string;
+  route_type: "consolidation" | "delivery";
+  transport_layer: string | null;
+  description: string | null;
+  mechanism: "TMS" | "CTS+";
+  last_import?: null | { status: string; at: string; requests?: number; failed?: number; warnings?: number };
+  warnings?: string[];
+}
+
+export interface TopologySystem {
+  id: number;
+  sid: string;
+  name: string;
+  environment: string;
+  database: string;
+  stack: string;
+  product_version: string | null;
+  enabled: boolean;
+  health: Health;
+  certificates?: { count: number; health: Health; soonest_expiry_days: number | null };
+  growth?: { health: Health; disk_used_pct: number | null; days_until_threshold: number | null };
+}
+
+export interface Lane {
+  key: string;
+  product: string;
+  product_label: string;
+  stack: string;
+  path: string;
+  systems: TopologySystem[];
+}
+
+export interface Topology {
+  landscape: string;
+  tiers: { key: string; label: string }[];
+  lanes: Lane[];
+  routes: TransportRoute[];
+  warnings: string[];
+}
+
+export interface RouteProposal {
+  source_system_id: number;
+  source_sid: string;
+  target_system_id: number;
+  target_sid: string;
+  route_type: "consolidation" | "delivery";
+  transport_layer: string | null;
+  mechanism: string;
+}
+
+export interface SystemRoutes {
+  inbound: TransportRoute[];
+  outbound: TransportRoute[];
+  hops: { system_id: number; sid: string }[][];
+}

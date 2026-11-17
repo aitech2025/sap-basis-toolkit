@@ -26,6 +26,7 @@ Each system records its SID, landscape (business unit, customer or track), envir
 Served by the API at `/` (built into the Docker image):
 
 - **Landscape overview**: every system grouped by landscape with combined health (certificates, capacity forecast, last import).
+- **Landscapes**: each landscape drawn as product lanes (e.g. S/4HANA, BW/4HANA, ECC, Portal) across DEV → QAS → (TRN/PRE) → PRD columns, with the transport routes as arrows. Arrows carry the transport layer and the result of the last import into the target (OK, RC 4 warnings, RC ≥ 8 failed). Hover a system to trace its routes. Branches such as two development tracks or a training system are supported. Routes can be added manually or proposed automatically (*Suggest routes*: one system per tier → DEV → QAS → PRE → PRD).
 - **Systems**: register, filter, edit and delete systems.
 - **System workspace**: tabs for summary and export guide, certificates (endpoints + STRUST/PSE), table growth (trend charts, forecast, housekeeping), users & licences, transports (pre/post checks) and history (summary-only run log + alerts).
 - **Certificates** and **Alerts**: landscape-wide views.
@@ -147,6 +148,7 @@ Interactive OpenAPI docs: `/docs`. Main groups:
 
 - `GET /health` (public) · `GET /` UI
 - Registry: `GET /api/v1/meta/catalogue`, `GET|POST /api/v1/systems`, `GET|PATCH|DELETE /api/v1/systems/{id}`, `GET /api/v1/landscapes`
+- Transport routes: `GET|POST /api/v1/routes`, `DELETE /api/v1/routes/{id}`, `GET /api/v1/landscapes/{name}/topology`, `POST /api/v1/landscapes/{name}/routes/suggest[?apply=true]`, `GET /api/v1/systems/{id}/routes`
 - Landscape: `GET /api/v1/overview`, `GET /api/v1/certificates/summary`, `GET /api/v1/alerts`
 - Endpoints: `POST|GET /api/v1/targets` (with `system_id`), `PATCH /api/v1/targets/{id}`, `.../enable`, `.../disable`, `POST .../check`, `GET /api/v1/checks`
 - Per system (`/api/v1/systems/{id}/…`): `certificates`, `certificates/import`, `certificates/{cert_id}` (DELETE), `growth/snapshots`, `growth/capacity`, `growth/report`, `users/analyze`, `transports/precheck`, `transports/postcheck`, `runs`

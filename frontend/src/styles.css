@@ -35,7 +35,7 @@ pre { white-space: pre-wrap; background: var(--surface-2); padding: 12px; border
 .sidebar a.active { background: var(--accent-soft); color: var(--ink); font-weight: 600; }
 .sidebar .spacer { flex: 1; }
 .key-state { font-size: 12px; color: var(--muted); padding: 8px 10px; }
-main { padding: 24px 28px 48px; max-width: 1280px; width: 100%; }
+main { padding: 24px 28px 48px; max-width: 1280px; width: 100%; min-width: 0; }
 .page-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 18px; }
 .page-head p { margin: 4px 0 0; color: var(--muted); }
 
@@ -129,3 +129,41 @@ dialog::backdrop { background: rgba(10, 14, 24, .45); }
   main { padding: 16px; }
   .cols { grid-template-columns: 1fr; }
 }
+
+/* Landscape diagram */
+.diagram-scroll { overflow-x: auto; }
+.diagram { position: relative; display: grid; gap: 0 76px; padding: 4px 4px 8px; }
+.diagram-tier { font-size: 12px; font-weight: 600; color: var(--muted); padding-bottom: 6px; border-bottom: 1px solid var(--line); }
+.lane-head { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; padding: 14px 0 6px; font-size: 13px; }
+.lane-path { font-size: 12px; color: var(--ink-2); background: var(--surface-2); padding: 1px 8px; border-radius: 5px; }
+.diagram-cell { display: flex; flex-direction: column; gap: 26px; padding: 4px 0 34px; position: relative; z-index: 1; border-bottom: 1px dashed var(--line); }
+.node { all: unset; box-sizing: border-box; cursor: pointer; display: flex; flex-direction: column; gap: 2px; background: var(--surface); border: 1px solid var(--line); border-radius: 9px; padding: 9px 11px; box-shadow: var(--shadow); }
+.node:hover, .node.focus { border-color: var(--accent); }
+.node:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.node.disabled { opacity: .6; border-style: dashed; }
+.node-top { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.node-sid { font-weight: 700; font-size: 15px; }
+.node-name { font-size: 12.5px; color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.node-meta { font-size: 11.5px; color: var(--muted); }
+.diagram-edges { position: absolute; left: 0; top: 0; pointer-events: none; overflow: visible; z-index: 0; }
+.edge path { fill: none; stroke: var(--neutral); stroke-width: 2; transition: opacity .15s; }
+.edge.ok path { stroke: var(--good); }
+.edge.review path { stroke: var(--warn); }
+.edge.fail path { stroke: var(--bad); stroke-dasharray: 6 4; }
+.edge.hot path { stroke: var(--accent); stroke-width: 2.5; }
+.edge.dim { opacity: .25; }
+.edge text { font-size: 11px; font-weight: 600; fill: var(--ink-2); paint-order: stroke; stroke: var(--surface); stroke-width: 4px; }
+.edge text.edge-alert { fill: var(--bad); font-weight: 600; }
+.edge text.edge-warn { fill: var(--warn); font-weight: 600; }
+.arrowhead { fill: var(--neutral); }
+.arrowhead.ok { fill: var(--good); } .arrowhead.review { fill: var(--warn); } .arrowhead.fail { fill: var(--bad); } .arrowhead.focus { fill: var(--accent); }
+.legend { display: flex; gap: 18px; flex-wrap: wrap; margin-top: 10px; font-size: 12px; color: var(--muted); align-items: center; }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.legend-line { stroke: var(--neutral); stroke-width: 2; }
+.legend-line.ok { stroke: var(--good); }
+.legend-line.review { stroke: var(--warn); }
+.legend-line.fail { stroke: var(--bad); stroke-dasharray: 6 4; }
+.route-path { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.route-path .hop { padding: 2px 9px; border-radius: 6px; background: var(--surface-2); font-weight: 600; }
+.route-path .hop.current { background: var(--accent); color: var(--accent-ink); }
+.route-path .hop-group { display: inline-flex; flex-direction: column; gap: 4px; }

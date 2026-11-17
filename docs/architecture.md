@@ -42,6 +42,14 @@ Endpoint TLS discovery sees only certificates presented during a network handsha
 - `analysis_runs` stores summary counts of stateless analyses (no user names, no uploaded content) for the overview and history views.
 - `GET /api/v1/overview` derives per-system health: worst of certificate status, capacity forecast (≤7 days critical, ≤`GROWTH_ALERT_DAYS` warning) and last import post-check.
 
+## Transport routes and landscape topology
+
+- `transport_routes` (source → target system, `consolidation` | `delivery`, optional transport layer) mirrors STMS (ABAP) or CTS+ (Java) routes. Deleting a system removes its routes.
+- Validation: no self-routes, no duplicates, no cycles, no backwards routes by tier (SBX < DEV < QAS < TRN/PRE < PRD), and no mixing of ABAP and Java. Routes across landscapes or products are allowed but reported as warnings.
+- `GET /landscapes/{name}/topology` returns tiers (columns), lanes (one per product and stack), routes enriched with the last import post-check of the target, per-system health and a readable path per lane.
+- `suggest_routes` proposes a DEV → QAS → PRE → PRD chain (plus QAS → TRN) per product where each tier holds exactly one system, and leaves ambiguous tracks to the user.
+- The UI places system cards in a CSS grid and draws routes in an SVG overlay from measured card positions. Routes that would cross a card on a skipped tier are drawn underneath the row.
+
 ## UI
 
 React 18 + TypeScript + Vite in `frontend/`. `npm run build` emits into `backend/app/static`; FastAPI serves assets and falls back to `index.html` for client-side routes (never for `/api/*`). The Docker image builds the UI in a Node stage. No UI component library; single-series charts are hand-built SVG with hover tooltips and a data-table fallback.
