@@ -128,6 +128,7 @@ def test_unreachable_alert_is_sent_once_per_outage(monkeypatch, tmp_path):
 
 def test_scheduler_sweeps_enabled_targets(monkeypatch, tmp_path):
     setup_test_db(monkeypatch, tmp_path)
+    db.init_db()
     from app.services import scheduler
     with db.get_db() as connection:
         connection.execute(targets.insert().values(
