@@ -39,6 +39,10 @@ QUERIES: dict[str, tuple[str, bool, bool]] = {
     "replication": ("SELECT HOST, PORT, SECONDARY_HOST, REPLICATION_MODE, REPLICATION_STATUS, REPLICATION_STATUS_DETAILS "
                     "FROM M_SERVICE_REPLICATION", False, False),
     "services": ("SELECT HOST, SERVICE_NAME, ACTIVE_STATUS FROM M_SERVICES", False, False),
+    # These views are optional and release/privilege dependent; failures are diagnostics, not collector-wide failures.
+    "active_statements": ("SELECT COUNT(*) AS ACTIVE_COUNT, SUM(CASE WHEN DURATION_MICROSEC >= 30000000 THEN 1 ELSE 0 END) AS LONG_RUNNING, MAX(DURATION_MICROSEC) AS MAX_DURATION_US FROM M_ACTIVE_STATEMENTS", False, True),
+    "service_threads": ("SELECT COUNT(*) AS THREAD_COUNT, SUM(CASE WHEN THREAD_STATE = 'WAITING' THEN 1 ELSE 0 END) AS WAITING_THREADS FROM M_SERVICE_THREADS", False, True),
+    "expensive_statements": ("SELECT COUNT(*) AS STATEMENT_COUNT, MAX(DURATION_MICROSEC) AS MAX_DURATION_US FROM M_EXPENSIVE_STATEMENTS WHERE START_TIME >= ADD_SECONDS(CURRENT_TIMESTAMP, -3600)", False, True),
     "table_sizes": ("SELECT TABLE_NAME, SUM(MEMORY_SIZE_IN_TOTAL) AS MEMORY_SIZE_IN_TOTAL, SUM(RECORD_COUNT) AS RECORD_COUNT "
                     "FROM M_CS_TABLES WHERE SCHEMA_NAME = ? GROUP BY TABLE_NAME ORDER BY 2 DESC LIMIT 300", True, False),
     "dumps": ("SELECT DATUM, UZEIT, AHOST, UNAME, MANDT, FLIST FROM {schema}.SNAP WHERE SEQNO = '000' AND DATUM >= ?",
@@ -183,6 +187,19 @@ def collect(client, abap_schema: str | None, zone) -> dict:
     if "services" in results:
         hana["services"] = [{"host": s.get("HOST"), "service": s.get("SERVICE_NAME"), "active": s.get("ACTIVE_STATUS")}
                             for s in results["services"]]
+    if results.get("active_statements"):
+        row = results["active_statements"][0]
+        hana["active_statements"] = {"count": int(row.get("ACTIVE_COUNT") or 0),
+                                     "long_running": int(row.get("LONG_RUNNING") or 0),
+                                     "max_duration_s": round(float(row.get("MAX_DURATION_US") or 0) / 1_000_000, 2)}
+    if results.get("service_threads"):
+        row = results["service_threads"][0]
+        hana["service_threads"] = {"count": int(row.get("THREAD_COUNT") or 0),
+                                   "waiting": int(row.get("WAITING_THREADS") or 0)}
+    if results.get("expensive_statements"):
+        row = results["expensive_statements"][0]
+        hana["expensive_statements_1h"] = {"count": int(row.get("STATEMENT_COUNT") or 0),
+                                           "max_duration_s": round(float(row.get("MAX_DURATION_US") or 0) / 1_000_000, 2)}
     out["hana"] = hana
 
     if "dumps" in results:
