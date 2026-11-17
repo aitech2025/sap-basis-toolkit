@@ -9,79 +9,83 @@
  */
 @layer base {
   :root {
-    --background: 216 20% 97%;
-    --foreground: 218 22% 11%;
-    --card: 0 0% 100%;
-    --card-foreground: 218 22% 11%;
+    --background: 240 20% 99%;
+    --foreground: 240 12% 8%;
+    --card: 240 16% 96.4%;
+    --card-foreground: 240 12% 8%;
+    --surface: 0 0% 100%;
     --popover: 0 0% 100%;
-    --popover-foreground: 218 22% 11%;
-    --primary: 194 85% 29%;
+    --popover-foreground: 240 12% 8%;
+    --primary: 248 82% 66%;
     --primary-foreground: 0 0% 100%;
-    --secondary: 214 18% 94%;
-    --secondary-foreground: 218 22% 14%;
-    --muted: 214 20% 95%;
-    --muted-foreground: 216 10% 40%;
-    --accent: 194 45% 94%;
-    --accent-foreground: 194 85% 20%;
-    --destructive: 0 72% 45%;
+    --secondary: 240 14% 93%;
+    --secondary-foreground: 240 12% 12%;
+    --muted: 240 14% 93.5%;
+    --muted-foreground: 240 5% 45%;
+    --accent: 248 90% 96%;
+    --accent-foreground: 248 55% 46%;
+    --destructive: 0 72% 50%;
     --destructive-foreground: 0 0% 100%;
-    --border: 214 16% 89%;
-    --input: 214 16% 84%;
-    --ring: 194 85% 34%;
-    --radius: 0.6rem;
-    --shadow: 218 30% 10%;
+    --border: 240 12% 90%;
+    --input: 240 12% 88%;
+    --ring: 248 82% 66%;
+    --radius: 1.5rem;
+    --shadow: 248 40% 30%;
 
-    --good: 148 64% 28%;
-    --good-soft: 145 52% 95%;
-    --warn: 31 92% 35%;
-    --warn-soft: 40 92% 94%;
-    --bad: 0 72% 44%;
-    --bad-soft: 0 86% 96%;
-    --idle: 216 10% 46%;
-    --idle-soft: 216 16% 94%;
+    --good: 152 62% 34%;
+    --good-soft: 150 55% 94%;
+    --warn: 30 92% 42%;
+    --warn-soft: 38 95% 93%;
+    --bad: 356 74% 52%;
+    --bad-soft: 356 90% 96%;
+    --idle: 240 6% 52%;
+    --idle-soft: 240 12% 93%;
 
-    --sidebar: 218 26% 9%;
-    --sidebar-foreground: 214 22% 90%;
-    --sidebar-muted: 216 12% 60%;
-    --sidebar-accent: 218 20% 16%;
-    --sidebar-border: 218 18% 16%;
+    --sidebar: 240 20% 99%;
+    --sidebar-foreground: 240 12% 10%;
+    --sidebar-muted: 240 5% 50%;
+    --sidebar-accent: 240 14% 94%;
+    --sidebar-border: 240 12% 92%;
     color-scheme: light;
   }
 
   .dark {
-    --background: 220 22% 7%;
-    --foreground: 214 22% 92%;
-    --card: 220 19% 10%;
-    --card-foreground: 214 22% 92%;
-    --popover: 220 19% 11%;
-    --popover-foreground: 214 22% 92%;
-    --primary: 191 72% 50%;
-    --primary-foreground: 220 30% 8%;
-    --secondary: 220 15% 16%;
-    --secondary-foreground: 214 22% 92%;
-    --muted: 220 15% 14%;
-    --muted-foreground: 216 11% 63%;
-    --accent: 194 32% 17%;
-    --accent-foreground: 191 72% 80%;
-    --destructive: 0 72% 52%;
+    --background: 240 10% 5.5%;
+    --foreground: 240 10% 95%;
+    --card: 240 8% 9.5%;
+    --card-foreground: 240 10% 95%;
+    --surface: 240 8% 13%;
+    --popover: 240 8% 12%;
+    --popover-foreground: 240 10% 95%;
+    --primary: 248 90% 72%;
+    --primary-foreground: 248 40% 10%;
+    --secondary: 240 6% 16%;
+    --secondary-foreground: 240 10% 95%;
+    --muted: 240 6% 15%;
+    --muted-foreground: 240 5% 62%;
+    --accent: 248 32% 19%;
+    --accent-foreground: 248 95% 86%;
+    --destructive: 356 74% 58%;
     --destructive-foreground: 0 0% 100%;
-    --border: 220 14% 18%;
-    --input: 220 14% 23%;
-    --ring: 191 72% 50%;
+    --border: 240 6% 17%;
+    --input: 240 6% 22%;
+    --ring: 248 90% 72%;
     --shadow: 0 0% 0%;
 
-    --good: 146 56% 54%;
-    --good-soft: 146 42% 12%;
-    --warn: 38 92% 60%;
-    --warn-soft: 36 60% 12%;
-    --bad: 0 82% 67%;
-    --bad-soft: 0 52% 14%;
-    --idle: 216 11% 62%;
-    --idle-soft: 220 15% 15%;
+    --good: 150 55% 55%;
+    --good-soft: 150 40% 12%;
+    --warn: 38 92% 62%;
+    --warn-soft: 36 55% 12%;
+    --bad: 356 85% 68%;
+    --bad-soft: 356 45% 14%;
+    --idle: 240 5% 62%;
+    --idle-soft: 240 6% 15%;
 
-    --sidebar: 222 24% 5%;
-    --sidebar-accent: 220 18% 12%;
-    --sidebar-border: 220 16% 11%;
+    --sidebar: 240 10% 5.5%;
+    --sidebar-foreground: 240 10% 94%;
+    --sidebar-muted: 240 5% 58%;
+    --sidebar-accent: 240 7% 13%;
+    --sidebar-border: 240 6% 13%;
     color-scheme: dark;
   }
 
@@ -91,10 +95,10 @@
     @apply bg-background font-sans text-foreground antialiased;
     font-size: 14px;
     line-height: 1.5;
-    font-feature-settings: "ss02", "tnum" 0;
+    font-feature-settings: "cv11";
   }
   h1, h2, h3, h4 { @apply font-semibold tracking-tight; margin: 0; }
-  h1 { @apply text-2xl; }
+  h1 { @apply text-[28px] font-bold tracking-[-0.02em]; }
   h2 { @apply text-lg; }
   h3 { @apply text-[15px]; }
   a { @apply text-primary underline-offset-4 hover:underline; }
@@ -118,7 +122,7 @@
   .text-warn { color: hsl(var(--warn)); }
   .text-bad { color: hsl(var(--bad)); }
 
-  .page-head { @apply mb-6 flex flex-wrap items-end justify-between gap-4; }
+  .page-head { @apply mb-7 flex flex-wrap items-end justify-between gap-4; }
   .page-head p { @apply mt-1 max-w-3xl text-sm text-muted-foreground; }
   .actions { @apply flex flex-wrap items-center gap-2; }
   td .actions { @apply flex-nowrap gap-1; }
@@ -135,14 +139,14 @@
   .mini-list { @apply m-0 grid list-none gap-1.5 p-0 text-sm; }
 
   .btn {
-    @apply inline-flex h-9 cursor-pointer items-center justify-center gap-2 whitespace-nowrap rounded-md border border-input bg-card px-3.5 text-sm font-medium text-foreground shadow-sm transition-colors;
+    @apply inline-flex h-10 cursor-pointer items-center justify-center gap-2 whitespace-nowrap rounded-full border border-input bg-surface px-4 text-sm font-semibold text-foreground transition-colors;
     @apply hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50;
     text-decoration: none !important;
   }
-  .btn.primary { @apply border-primary bg-primary text-primary-foreground hover:bg-primary/90 hover:text-primary-foreground; }
+  .btn.primary { @apply border-primary bg-primary text-primary-foreground shadow-[0_8px_20px_-8px_hsl(var(--primary)/0.7)] hover:bg-primary/90 hover:text-primary-foreground; }
   .btn.danger { @apply border-bad/30 text-bad hover:bg-bad-soft hover:text-bad; }
   .btn.primary.danger, .btn.danger.solid { @apply border-destructive bg-destructive text-destructive-foreground hover:bg-destructive/90; }
-  .btn.small { @apply h-7 px-2.5 text-xs; }
+  .btn.small { @apply h-8 px-3 text-xs; }
   .link-btn, .text-link { @apply cursor-pointer border-0 bg-transparent p-0 text-sm font-medium text-primary hover:underline; }
 
   .form-grid { @apply grid gap-x-4 gap-y-4; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); }
@@ -152,26 +156,26 @@
   .field small { @apply text-xs font-normal text-muted-foreground; }
   .field input:not([type="checkbox"]):not([type="radio"]):not([type="file"]),
   .field select, .field textarea, select.filter-select, input.num-input, .incident-search {
-    @apply h-9 w-full rounded-md border border-input bg-card px-3 text-sm font-normal text-foreground shadow-sm transition-colors;
+    @apply h-10 w-full rounded-xl border border-input bg-surface px-3.5 text-sm font-normal text-foreground transition-colors;
     @apply placeholder:text-muted-foreground focus-visible:border-ring focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30 disabled:opacity-60;
   }
   .field textarea { @apply h-auto min-h-[88px] py-2; }
   .field input[type="file"] { @apply text-sm font-normal file:mr-3 file:h-8 file:cursor-pointer file:rounded-md file:border file:border-input file:bg-card file:px-3 file:text-xs file:font-medium file:text-foreground; }
   select { @apply cursor-pointer; }
-  td select, .scope-row select { @apply h-8 rounded-md border border-input bg-card px-2 text-sm shadow-sm; }
+  td select, .scope-row select { @apply h-8 rounded-lg border border-input bg-surface px-2 text-sm; }
   input.num-input { @apply w-24; }
   .field.check { @apply flex-row items-center gap-2.5 font-normal; }
   input[type="checkbox"], input[type="radio"] { @apply h-4 w-4 cursor-pointer; accent-color: hsl(var(--primary)); }
 
-  .banner { @apply mb-4 flex items-start gap-2.5 rounded-lg border px-4 py-3 text-sm; }
+  .banner { @apply mb-4 flex items-start gap-2.5 rounded-2xl border px-4 py-3 text-sm; }
   .banner.error { @apply border-bad/25 bg-bad-soft text-bad; }
   .banner.warn { @apply border-warn/25 bg-warn-soft text-warn; }
   .banner.info { @apply border-primary/20 bg-accent text-accent-foreground; }
   .banner.ok { @apply border-good/25 bg-good-soft text-good; }
   .banner ul { @apply m-0; }
 
-  .tag { @apply ml-1.5 inline-flex items-center rounded border bg-muted px-1.5 py-px align-middle text-[11px] font-medium text-muted-foreground; }
-  .role { @apply inline-flex min-w-[52px] justify-center rounded border border-primary/20 bg-accent px-1.5 py-px font-mono text-xs font-semibold text-accent-foreground; }
+  .tag { @apply ml-1.5 inline-flex items-center rounded-full border bg-surface px-2 py-px align-middle text-[11px] font-medium text-muted-foreground; }
+  .role { @apply inline-flex min-w-[52px] justify-center rounded-full bg-accent px-2 py-px font-mono text-xs font-semibold text-accent-foreground; }
   .eyebrow { @apply text-xs font-medium text-muted-foreground; }
   .section-title { @apply mb-3 mt-6 text-sm font-semibold; }
   .small-head { @apply mb-1.5 mt-4 text-[13px] font-semibold; }
@@ -179,14 +183,14 @@
 
   /* native <dialog> used by the form dialogs */
   dialog {
-    @apply w-[min(640px,calc(100vw-2rem))] max-w-none rounded-xl border bg-card p-0 text-card-foreground shadow-2xl;
+    @apply w-[min(640px,calc(100vw-2rem))] max-w-none rounded-3xl border-0 bg-surface p-0 text-foreground shadow-2xl;
   }
   dialog::backdrop { background: rgb(8 12 18 / 0.55); backdrop-filter: blur(2px); }
   dialog[open] { animation: dialog-in 160ms ease-out; }
   dialog.wide-dialog { width: min(780px, calc(100vw - 2rem)); }
   .dialog-body { @apply max-h-[72vh] overflow-y-auto p-6; }
   .dialog-body h2 { @apply mb-4 text-lg; }
-  .dialog-foot { @apply flex justify-end gap-2 border-t bg-muted/40 px-6 py-3.5; }
+  .dialog-foot { @apply flex justify-end gap-2 bg-card px-6 py-4; }
 
   /* incident timeline */
   .timeline { @apply relative m-0 list-none border-l pl-5; }
@@ -200,7 +204,7 @@
   /* transport routes */
   .route-path { @apply flex flex-wrap items-center gap-1.5; }
   .hop-group { @apply flex flex-wrap items-center gap-1.5; }
-  .hop { @apply inline-flex items-center rounded-md border bg-card px-2 py-0.5 font-mono text-xs font-semibold; }
+  .hop { @apply inline-flex items-center rounded-full border bg-surface px-2.5 py-0.5 font-mono text-xs font-semibold; }
   .hop.current { @apply border-primary bg-accent text-accent-foreground; }
 
   /* table growth bars */
@@ -209,10 +213,10 @@
 
   /* availability instances */
   .instance-grid { @apply grid gap-3; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); }
-  .instance { @apply rounded-lg border bg-card p-3; }
+  .instance { @apply rounded-2xl bg-surface p-3.5; }
   .instance-head { @apply mb-2 flex items-center justify-between gap-2 font-mono text-sm font-semibold; }
 
-  .upload-fallback { @apply mt-3 rounded-lg border border-dashed p-4; }
+  .upload-fallback { @apply mt-3 rounded-2xl border border-dashed bg-surface p-4; }
   .collector-form { @apply mt-5 border-t pt-5; }
   .collector-form h3 { @apply mb-3; }
   .card-subsection { @apply mt-5 border-t pt-4; }
@@ -231,7 +235,7 @@
   .chart .threshold { stroke: hsl(var(--warn)); stroke-dasharray: 4 4; }
   .chart .crosshair { stroke: hsl(var(--muted-foreground) / 0.5); }
   .chart .marker { fill: hsl(var(--primary)); stroke: hsl(var(--card)); stroke-width: 2; }
-  .chart .tooltip { @apply pointer-events-none absolute z-10 rounded-md border bg-popover px-2.5 py-1.5 text-xs text-popover-foreground shadow-lg; }
+  .chart .tooltip { @apply pointer-events-none absolute z-10 rounded-xl border bg-popover px-2.5 py-1.5 text-xs text-popover-foreground shadow-lg; }
 
   /* landscape route diagram */
   .diagram-scroll { @apply overflow-x-auto pb-2; }
@@ -240,7 +244,7 @@
   .diagram-edges path { fill: none; stroke: hsl(var(--primary) / 0.55); stroke-width: 1.6; }
   .diagram-tier { @apply flex min-w-[190px] flex-col gap-3; }
   .lane-head { @apply text-xs font-medium text-muted-foreground; }
-  .diagram-cell { @apply relative z-[1] block rounded-lg border bg-card p-3 text-foreground shadow-sm transition-colors hover:border-primary/50 hover:no-underline; }
+  .diagram-cell { @apply relative z-[1] block rounded-2xl border bg-surface p-3 text-foreground transition-colors hover:border-primary/50 hover:no-underline; }
   .node-top { @apply flex items-center justify-between gap-2; }
   .node-sid { @apply font-mono text-[15px] font-semibold; }
   .node-name { @apply mt-1 truncate text-sm; }
@@ -261,14 +265,14 @@
   .step-status.bad { @apply text-bad; }
   .step-body { @apply grid min-w-0 gap-1; }
   .chips { @apply flex flex-wrap gap-1; }
-  .inst-chip { @apply rounded border bg-muted px-1.5 py-px font-mono text-[11px]; }
+  .inst-chip { @apply rounded-full border bg-surface px-2 py-px font-mono text-[11px]; }
   .inst-chip.GREEN { @apply border-good/20 bg-good-soft text-good; }
   .inst-chip.YELLOW { @apply border-warn/25 bg-warn-soft text-warn; }
   .inst-chip.RED { @apply border-bad/20 bg-bad-soft text-bad; }
   .procedure { @apply mt-4 border-t pt-4; }
   .procedure-head { @apply flex items-start justify-between gap-3; }
   .scope-grid { @apply mb-3 grid gap-2; }
-  .scope-row { @apply flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-card px-4 py-3; }
+  .scope-row { @apply flex flex-wrap items-center justify-between gap-3 rounded-2xl bg-surface px-4 py-3; }
   .scope-row.disabled { @apply opacity-55; }
   details.sequence { @apply my-2; }
   details.sequence summary { @apply cursor-pointer text-[13px] font-medium; }
@@ -290,4 +294,13 @@
   .chart-incident-marker.critical line { stroke: hsl(var(--bad)); }
   .chart-incident-marker circle, .chart-incident-marker path { fill: hsl(var(--warn)); }
   .chart-incident-marker.critical circle, .chart-incident-marker.critical path { fill: hsl(var(--bad)); }
+}
+
+@layer components {
+  /* nested white surfaces inside grey cards, as in the reference layout */
+  .card .table-wrap, .card .collector-form, .card pre { @apply bg-surface; }
+  .procedure { @apply rounded-2xl border-t-0 bg-surface p-4; }
+  .recharts-cartesian-grid line { stroke: hsl(var(--border)); }
+  .recharts-text { fill: hsl(var(--muted-foreground)); font-size: 11px; }
+  .recharts-tooltip-cursor { stroke: hsl(var(--primary) / 0.35); }
 }

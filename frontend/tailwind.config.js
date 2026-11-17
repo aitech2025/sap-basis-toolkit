@@ -8,7 +8,7 @@ export default {
     container: { center: true, padding: "1.5rem", screens: { "2xl": "1440px" } },
     extend: {
       fontFamily: {
-        sans: ['"IBM Plex Sans"', "system-ui", "sans-serif"],
+        sans: ['"Plus Jakarta Sans"', "system-ui", "sans-serif"],
         mono: ['"IBM Plex Mono"', "ui-monospace", "monospace"],
       },
       colors: {
@@ -24,6 +24,7 @@ export default {
         accent: { DEFAULT: "hsl(var(--accent))", foreground: "hsl(var(--accent-foreground))" },
         popover: { DEFAULT: "hsl(var(--popover))", foreground: "hsl(var(--popover-foreground))" },
         card: { DEFAULT: "hsl(var(--card))", foreground: "hsl(var(--card-foreground))" },
+        surface: "hsl(var(--surface))",
         sidebar: {
           DEFAULT: "hsl(var(--sidebar))", foreground: "hsl(var(--sidebar-foreground))",
           muted: "hsl(var(--sidebar-muted))", accent: "hsl(var(--sidebar-accent))", border: "hsl(var(--sidebar-border))",
@@ -33,7 +34,7 @@ export default {
         bad: { DEFAULT: "hsl(var(--bad))", soft: "hsl(var(--bad-soft))" },
         idle: { DEFAULT: "hsl(var(--idle))", soft: "hsl(var(--idle-soft))" },
       },
-      borderRadius: { lg: "var(--radius)", md: "calc(var(--radius) - 2px)", sm: "calc(var(--radius) - 4px)" },
+      borderRadius: { lg: "0.75rem", md: "0.6rem", sm: "0.4rem" },
       keyframes: {
         "pulse-ring": { "0%": { boxShadow: "0 0 0 0 hsl(var(--good) / .45)" }, "100%": { boxShadow: "0 0 0 6px hsl(var(--good) / 0)" } },
       },

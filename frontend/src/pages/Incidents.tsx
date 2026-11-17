@@ -1,7 +1,8 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { api } from "../api";
-import { RefreshCw, Search } from "lucide-react";
+import { BellRing, Flame, RefreshCw, Search, Siren, TriangleAlert, UserCheck } from "lucide-react";
+import { StackedBars } from "../components/charts";
 import { Card, DataTable, ErrorBanner, PageHeader, Pill, Tile, fmtDate, useAsync } from "../components/ui";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
@@ -43,6 +44,7 @@ export default function Incidents() {
   const { data, error, reload, loading } = useAsync(
     () => api.incidents(`?status=${status}${severity ? `&severity=${severity}` : ""}`), [status, severity]);
   const counts = useAsync(() => api.incidentCounts(), [data]);
+  const history = useAsync(() => api.incidents("?status=all"), []);
   const rows = (data ?? []).filter((incident) => {
     const needle = query.trim().toLowerCase();
     if (!needle) return true;
@@ -54,21 +56,31 @@ export default function Incidents() {
   });
 
   const c = counts.data;
+  const trend = Array.from({ length: 14 }, (_, i) => {
+    const day = new Date(); day.setHours(0, 0, 0, 0);
+    const start = day.getTime() - (13 - i) * 86400000;
+    const inDay = (history.data ?? []).filter((x) => { const t = Date.parse(x.opened_at); return t >= start && t < start + 86400000; });
+    return { label: new Date(start).toLocaleDateString(undefined, { day: "2-digit", month: "short" }),
+             critical: inDay.filter((x) => x.severity === "critical").length, warning: inDay.filter((x) => x.severity !== "critical").length };
+  });
   return (
     <>
       <PageHeader title="Incidents" description="Service-impacting events across the SAP estate, critical first, then most recently seen."
         actions={<Button variant="outline" onClick={reload} disabled={loading}><RefreshCw className={cn(loading && "animate-spin")} />Refresh</Button>} />
       <ErrorBanner error={error} />
       {c && (
-        <div className="tiles !grid-cols-2 md:!grid-cols-5">
-          <Tile label="Active" value={c.total} tone={c.total ? "warn" : "good"} hint="Open and acknowledged" />
-          <Tile label="Critical" value={c.critical} tone={c.critical ? "bad" : undefined} hint="Respond immediately" />
-          <Tile label="Warning" value={c.warning} tone={c.warning ? "warn" : undefined} hint="Investigate" />
-          <Tile label="Not acknowledged" value={c.open} hint="Nobody owns these yet" />
-          <Tile label="Acknowledged" value={c.acknowledged} hint="Being worked on" />
+        <div className="tiles !grid-cols-1 sm:!grid-cols-2 xl:!grid-cols-5">
+          <Tile label="Active" icon={Siren} value={c.total} tone={c.total ? "warn" : "good"} hint="Open and acknowledged" />
+          <Tile label="Critical" icon={Flame} value={c.critical} tone={c.critical ? "bad" : undefined} hint="Respond immediately" />
+          <Tile label="Warning" icon={TriangleAlert} value={c.warning} tone={c.warning ? "warn" : undefined} hint="Investigate" />
+          <Tile label="Not acknowledged" icon={BellRing} value={c.open} hint="Nobody owns these yet" />
+          <Tile label="Acknowledged" icon={UserCheck} value={c.acknowledged} hint="Being worked on" />
         </div>
       )}
-      <Card>
+      <Card title="Incidents opened, last 14 days" actions={<span className="text-xs text-muted-foreground">All statuses</span>}>
+        <StackedBars height={180} data={trend} keys={[{ key: "critical", label: "Critical", color: "hsl(var(--bad))" }, { key: "warning", label: "Warning", color: "hsl(var(--warn))" }]} />
+      </Card>
+      <Card title="Queue">
         <div className="mb-4 flex flex-wrap items-center gap-2">
           <div className="relative w-full sm:w-80">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />

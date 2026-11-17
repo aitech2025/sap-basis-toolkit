@@ -1,7 +1,8 @@
-import { Fragment, type ReactNode } from "react";
+import { Fragment, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../../api";
-import { ArrowRight } from "lucide-react";
+import { ArrowRight, Cpu, HardDrive, MemoryStick, Server, Siren } from "lucide-react";
+import { Sparkline, TrendArea } from "../../components/charts";
 import { Card, DataTable, Empty, ErrorBanner, Pill, Tile, fmtDate, fmtNumber, statusTone, useAsync } from "../../components/ui";
 import { Skeleton } from "../../components/ui/skeleton";
 import { cn } from "../../lib/utils";
@@ -18,11 +19,13 @@ function ModuleCard({ to, title, status, children, cta }: {
   to: string; title: string; status: string; children: ReactNode; cta: string;
 }) {
   return (
-    <Link to={to} className="group relative flex min-w-0 flex-col overflow-hidden rounded-lg border bg-card p-4 pl-5 text-foreground shadow-[0_1px_2px_hsl(var(--shadow)/0.06)] transition-colors hover:border-primary/40 hover:no-underline">
-      <span aria-hidden="true" className={cn("absolute inset-y-0 left-0 w-1", EDGE[statusTone(status)])} />
-      <div className="mb-2 flex items-start justify-between gap-2"><h3>{title}</h3><Pill value={status} /></div>
+    <Link to={to} className="group relative flex min-w-0 flex-col rounded-3xl bg-card p-5 text-foreground transition-shadow hover:no-underline hover:shadow-[0_14px_34px_-18px_hsl(var(--shadow)/0.45)]">
+      <div className="mb-3 flex items-start justify-between gap-2">
+        <h3 className="flex items-center gap-2 text-base font-bold"><span aria-hidden="true" className={cn("h-2 w-2 rounded-full", EDGE[statusTone(status)])} />{title}</h3>
+        <Pill value={status} />
+      </div>
       <div className="space-y-1 text-[13px] [&_p]:m-0">{children}</div>
-      <span className="mt-auto inline-flex items-center gap-1 pt-3 text-xs font-medium text-primary">{cta}<ArrowRight className="h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5" /></span>
+      <span className="mt-auto inline-flex items-center gap-1 pt-4 text-xs font-semibold text-primary">{cta}<ArrowRight className="h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5" /></span>
     </Link>
   );
 }
@@ -99,8 +102,33 @@ const RUN_LABEL: Record<string, string> = {
   users: "User & licence analysis", jobs: "Background job upload", "transports-precheck": "Transport pre-check", "transports-postcheck": "Import post-check",
 };
 
+const PERF = [
+  { key: "wp.dia_busy_pct", label: "Dialog load", unit: "%", threshold: { value: 80, label: "80% warning" } },
+  { key: "wp.btc_busy_pct", label: "Batch load", unit: "%", threshold: { value: 90, label: "90% warning" } },
+  { key: "hana.memory_used_pct", label: "HANA memory", unit: "%", threshold: { value: 85, label: "85% warning" } },
+  { key: "hana.cpu_pct", label: "HANA CPU", unit: "%", threshold: { value: 80, label: "80% warning" } },
+  { key: "dumps.last_hour", label: "Dumps / hour", unit: "dumps", threshold: undefined },
+];
+type Series = { points: { ts: string; value: number }[] }[] | null | undefined;
+const pts = (series: Series) => (series?.[0]?.points ?? []).map((p) => ({ t: Date.parse(p.ts), v: p.value }));
+const last = (series: Series, unit: string) => {
+  const p = series?.[0]?.points;
+  return p?.length ? `${Math.round(p[p.length - 1].value)}${unit}` : "–";
+};
+
 export default function OverviewTab({ system }: { system: SystemDetail }) {
   const { data, error } = useAsync(() => api.systemOverview(system.id), [system.id]);
+  const [perf, setPerf] = useState(system.stack === "JAVA" ? "hana.memory_used_pct" : "wp.dia_busy_pct");
+  const opts = { hours: 24, bucketSeconds: 1800, aggregation: "avg" as const, systemId: system.id };
+  const spark = useAsync(async () => {
+    const [down, dia, mem] = await Promise.all([
+      api.analyticsSeries("availability.instances_down", { ...opts, aggregation: "max" }),
+      api.analyticsSeries("wp.dia_busy_pct", opts),
+      system.database === "HANA" ? api.analyticsSeries("hana.memory_used_pct", opts) : Promise.resolve(null),
+    ]);
+    return { down: down.series, dia: dia.series, mem: mem?.series };
+  }, [system.id]);
+  const perfData = useAsync(async () => (await api.analyticsSeries(perf, opts)).series, [system.id, perf]);
   const live = useAsync(() => api.monitors(system.id), [system.id]);
   const active = useAsync(() => api.incidents(`?status=active&system_id=${system.id}`), [system.id]);
   const base = `/systems/${system.id}`;
@@ -122,17 +150,38 @@ export default function OverviewTab({ system }: { system: SystemDetail }) {
 
   return (
     <>
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
-        <Tile label="Overall health" value={<span className="capitalize">{data.health === "unknown" ? "No data" : data.health}</span>}
-              tone={toneOf(data.health)} hint="Worst of all monitored signals" />
-        <Tile label="Instances running" value={runningInstances}
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <Tile label="Instances running" icon={Server} value={runningInstances}
               tone={liveAvailability ? (liveAvailability.system_up && liveAvailability.running === liveAvailability.instances ? "good" : liveAvailability.system_up ? "warn" : "bad") : undefined}
-              hint={liveAvailability ? (liveAvailability.system_up ? "System available" : "System NOT available") : "No availability data"} />
-        <Tile label="Active incidents" value={activeCount} tone={activeCount ? "bad" : "good"} hint={activeCount ? "Needs attention" : "Nothing open"} />
-        <Tile label="Disk used" value={diskValue} tone={toneOf(g.health)}
-              hint={g.days_until_threshold != null ? `${g.days_until_threshold} days to threshold` : "Capacity forecast"} />
-        <Tile label="HANA memory" value={hanaMemory} hint={system.database === "HANA" ? "Used of allocation limit" : `${system.database} database`} />
+              hint={liveAvailability ? (liveAvailability.system_up ? "System available. Instances down, 24 h" : "System NOT available") : "No availability data"}
+              chart={<Sparkline points={pts(spark.data?.down)} color="hsl(var(--warn))" />} />
+        <Tile label="Dialog load" icon={Cpu} value={last(spark.data?.dia, "%")}
+              hint="DIA work processes busy, 24 h" chart={<Sparkline points={pts(spark.data?.dia)} />} />
+        <Tile label="Active incidents" icon={Siren} value={activeCount} tone={activeCount ? "bad" : "good"}
+              hint={`Overall health: ${data.health === "unknown" ? "no data" : data.health}`} />
+        {system.database === "HANA" ? (
+          <Tile label="HANA memory" icon={MemoryStick} value={hanaMemory} tone={toneOf(liveHana ? (liveHana.memory?.pct >= 95 ? "critical" : liveHana.memory?.pct >= 85 ? "warning" : "healthy") : null)}
+                hint="Used of allocation limit, 24 h" chart={<Sparkline points={pts(spark.data?.mem)} />} />
+        ) : (
+          <Tile label="Disk used" icon={HardDrive} value={diskValue} tone={toneOf(g.health)}
+                hint={g.days_until_threshold != null ? `${g.days_until_threshold} days to threshold` : "Capacity forecast"} />
+        )}
       </div>
+
+      <Card title="Performance, last 24 hours" className="mb-0 mt-4"
+            actions={
+              <div className="inline-flex rounded-full bg-surface p-1" role="tablist" aria-label="Metric">
+                {PERF.filter((m) => system.database === "HANA" || !m.key.startsWith("hana")).filter((m) => system.stack !== "JAVA" || !m.key.startsWith("wp") && !m.key.startsWith("dumps")).map((m) => (
+                  <button key={m.key} role="tab" aria-selected={perf === m.key} onClick={() => setPerf(m.key)}
+                    className={cn("rounded-full px-3 py-1.5 text-xs font-semibold transition-colors", perf === m.key ? "bg-foreground text-background" : "text-muted-foreground hover:text-foreground")}>
+                    {m.label}
+                  </button>
+                ))}
+              </div>
+            }>
+          <TrendArea height={240} unit={PERF.find((m) => m.key === perf)?.unit} label={`${system.sid} ${perf}`}
+            points={pts(perfData.data)} threshold={PERF.find((m) => m.key === perf)?.threshold} />
+      </Card>
       {live.data && (
         <div className="mt-3 flex flex-wrap items-center gap-x-5 gap-y-1.5 text-xs text-muted-foreground">
           <span>{live.data.collectors.length} collector{live.data.collectors.length === 1 ? "" : "s"} configured</span>

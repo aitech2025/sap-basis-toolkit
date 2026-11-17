@@ -41,19 +41,20 @@ export default function Login({ onSignedIn }: { onSignedIn: () => void }) {
 
   return (
     <div className="grid min-h-screen lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]">
-      <div className="relative hidden overflow-hidden bg-sidebar p-10 text-sidebar-foreground lg:flex lg:flex-col">
+      <div className="relative m-3 hidden overflow-hidden rounded-[2rem] bg-gradient-to-br from-[hsl(252_90%_74%)] via-[hsl(248_82%_62%)] to-[hsl(258_70%_44%)] p-10 text-white lg:flex lg:flex-col">
         <div className="flex items-center gap-2.5">
-          <svg viewBox="0 0 32 32" className="h-9 w-9" aria-hidden="true">
-            <rect width="32" height="32" rx="8" fill="hsl(var(--primary))" />
-            <path d="M8 18.5h4l2.5-6 3 10 2.5-6h4" fill="none" stroke="white" strokeWidth="2.3" strokeLinecap="round" strokeLinejoin="round" />
+          <svg viewBox="0 0 36 36" className="h-9 w-9" aria-hidden="true">
+            <circle cx="18" cy="18" r="14" fill="none" stroke="white" strokeOpacity="0.55" strokeWidth="4.5" />
+            <circle cx="18" cy="18" r="5" fill="white" />
+            <path d="M18 4a14 14 0 0 1 14 14" fill="none" stroke="white" strokeWidth="4.5" strokeLinecap="round" />
           </svg>
-          <div className="leading-tight"><div className="text-base font-semibold">Sentinel</div><div className="text-xs text-sidebar-muted">SAP Basis operations</div></div>
+          <div className="leading-tight"><div className="text-lg font-bold">Sentinel</div><div className="text-xs text-white/75">SAP Basis operations</div></div>
         </div>
         <div className="mt-auto max-w-md">
-          <p className="text-[28px] font-semibold leading-tight tracking-tight">Every SAP system, from development to production, in one console.</p>
-          <p className="mt-4 text-sm text-sidebar-muted">Availability, work processes, dumps, interfaces, HANA health, certificates and controlled start/stop for ECC, S/4HANA and NetWeaver.</p>
+          <p className="text-[34px] font-bold leading-[1.15] tracking-[-0.02em]">Every SAP system, from development to production, in one console.</p>
+          <p className="mt-4 text-sm text-white/75">Availability, work processes, dumps, interfaces, HANA health, certificates and controlled start/stop for ECC, S/4HANA and NetWeaver.</p>
         </div>
-        <svg className="pointer-events-none mt-24 w-full max-w-[400px] opacity-25" viewBox="0 0 400 180" aria-hidden="true">
+        <svg className="pointer-events-none mt-16 w-full max-w-[400px] opacity-40" viewBox="0 0 400 180" aria-hidden="true">
           {["DEV", "QAS", "PRD"].map((env, i) => (
             <g key={env} transform={`translate(${i * 140}, ${i * 34})`}>
               <rect width="112" height="64" rx="10" fill="none" stroke="currentColor" strokeWidth="1.5" />

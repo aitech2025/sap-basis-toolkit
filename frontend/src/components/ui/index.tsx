@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { AlertTriangle, Inbox } from "lucide-react";
+import { AlertTriangle, Inbox, type LucideIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Badge } from "./badge";
 import { Card as UICard, CardContent, CardDescription, CardHeader, CardTitle } from "./card";
@@ -65,14 +65,33 @@ export function Pill({ value }: { value: string | null | undefined }) {
   );
 }
 
-export function Tile({ label, value, hint, tone }: { label: string; value: ReactNode; hint?: ReactNode; tone?: "good" | "warn" | "bad" }) {
+/**
+ * KPI card in the reference style: title, a dark round icon next to a large value, an optional delta,
+ * and an optional mini chart on the right. `tone` adds a status dot to the title (never colour alone).
+ */
+export function Tile({ label, value, hint, tone, icon: Icon, chart, delta }: {
+  label: string; value: ReactNode; hint?: ReactNode; tone?: "good" | "warn" | "bad";
+  icon?: LucideIcon; chart?: ReactNode; delta?: { text: string; direction: "up" | "down"; good?: boolean };
+}) {
   return (
-    <div className={cn("tile relative overflow-hidden rounded-lg border bg-card px-4 py-3 shadow-[0_1px_2px_hsl(var(--shadow)/0.06)]",
-      tone && "pl-5")}>
-      {tone && <span aria-hidden="true" className={cn("absolute inset-y-0 left-0 w-1", DOT[tone])} />}
-      <div className="text-xs font-medium text-muted-foreground">{label}</div>
-      <div className="mt-1 text-2xl font-semibold tabular-nums tracking-tight">{value ?? "–"}</div>
-      {hint && <div className="mt-0.5 truncate text-xs text-muted-foreground">{hint}</div>}
+    <div className="tile flex min-w-0 flex-col rounded-3xl bg-card p-5">
+      <div className="flex items-center gap-2 text-[15px] font-semibold">
+        {tone && <span aria-hidden="true" className={cn("h-2 w-2 rounded-full", DOT[tone])} />}
+        <span className="truncate">{label}</span>
+      </div>
+      <div className="mt-auto flex items-center justify-between gap-3 pt-4">
+        <div className="flex min-w-0 items-center gap-3">
+          {Icon && <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-foreground text-background"><Icon className="h-5 w-5" /></span>}
+          <span className="whitespace-nowrap text-[28px] font-bold leading-none tracking-tight tabular-nums">{value ?? "–"}</span>
+          {delta && (
+            <span className={cn("self-start whitespace-nowrap text-xs font-bold", delta.good ? "text-good" : "text-bad")} title={delta.text}>
+              {delta.direction === "up" ? "↑" : "↓"}{delta.text.split(" ")[0]}
+            </span>
+          )}
+        </div>
+        {chart && <div className="hidden shrink-0 sm:block">{chart}</div>}
+      </div>
+      {hint && <div className="mt-2.5 truncate text-xs text-muted-foreground">{hint}</div>}
     </div>
   );
 }
@@ -89,7 +108,7 @@ export function ErrorBanner({ error }: { error: string | null | undefined }) {
 
 export function Empty({ children }: { children: ReactNode }) {
   return (
-    <div className="empty flex flex-col items-center justify-center gap-2 rounded-lg border border-dashed px-6 py-10 text-center text-sm text-muted-foreground">
+    <div className="empty flex flex-col items-center justify-center gap-2 rounded-2xl bg-surface px-6 py-10 text-center text-sm text-muted-foreground">
       <Inbox className="h-5 w-5" aria-hidden="true" />
       <div>{children}</div>
     </div>
@@ -112,9 +131,9 @@ export function DataTable<T>({ rows, columns, empty = "Nothing to show.", rowKey
 }) {
   if (!rows.length) return <Empty>{empty}</Empty>;
   return (
-    <div className="table-wrap overflow-hidden rounded-lg border">
+    <div className="table-wrap overflow-hidden rounded-2xl bg-surface">
       <Table>
-        <TableHeader className="bg-muted/50">
+        <TableHeader>
           <TableRow className="hover:bg-transparent">
             {columns.map((c) => <TableHead key={c.key} className={c.numeric ? "num text-right" : undefined}>{c.label}</TableHead>)}
           </TableRow>
@@ -148,9 +167,9 @@ export function PageHeader({ title, description, actions, children }: {
   title: ReactNode; description?: ReactNode; actions?: ReactNode; children?: ReactNode;
 }) {
   return (
-    <div className="mb-6 flex flex-wrap items-end justify-between gap-4">
+    <div className="mb-7 flex flex-wrap items-center justify-between gap-4">
       <div className="min-w-0 space-y-1">
-        <h1 className="text-2xl font-semibold tracking-tight">{title}</h1>
+        <h1>{title}</h1>
         {description && <p className="max-w-3xl text-sm text-muted-foreground">{description}</p>}
         {children}
       </div>
@@ -195,7 +214,7 @@ export function Card({ title, description, actions, children, className }: {
           {actions && <div className="actions">{actions}</div>}
         </CardHeader>
       )}
-      <CardContent className={cn(!(title || actions) && "pt-5")}>{children}</CardContent>
+      <CardContent className={cn(!(title || actions) && "pt-6")}>{children}</CardContent>
     </UICard>
   );
 }

@@ -58,12 +58,12 @@ export default function SystemDetailPage() {
     <>
       <div className="mb-5 flex flex-wrap items-start justify-between gap-4">
         <div className="flex min-w-0 items-start gap-4">
-          <div className="flex h-14 min-w-[72px] items-center justify-center rounded-lg border bg-card px-3 font-mono text-2xl font-semibold tracking-tight shadow-sm">
+          <div className="flex h-16 min-w-[80px] items-center justify-center rounded-3xl bg-gradient-to-br from-[hsl(252_90%_72%)] to-primary px-4 font-mono text-2xl font-bold tracking-tight text-white shadow-[0_14px_30px_-14px_hsl(var(--primary))]">
             {system.sid}
           </div>
           <div className="min-w-0 space-y-1.5">
             <div className="flex flex-wrap items-center gap-2">
-              <h1 className="truncate text-2xl">{system.name}</h1>
+              <h1 className="truncate">{system.name}</h1>
               <Badge variant={system.environment === "PRD" ? "bad" : "secondary"} className="font-mono">{system.environment}</Badge>
               {!system.enabled && <Pill value="disabled" />}
             </div>
@@ -83,12 +83,12 @@ export default function SystemDetailPage() {
           </div>
         </RequireRole>
       </div>
-      <nav aria-label="System sections" className="-mx-4 mb-6 overflow-x-auto border-b px-4 lg:-mx-8 lg:px-8">
-        <div className="flex min-w-max gap-1">
+      <nav aria-label="System sections" className="-mx-4 mb-6 overflow-x-auto px-4 lg:-mx-8 lg:px-8">
+        <div className="flex w-max gap-1 rounded-full bg-card p-1.5">
           {tabs.map(([path, label]) => (
             <NavLink key={path} to={`/systems/${id}${path ? `/${path}` : ""}`} end={!path}
-              className={({ isActive }) => cn("relative -mb-px whitespace-nowrap border-b-2 border-transparent px-3 pb-2.5 pt-1 text-sm text-muted-foreground transition-colors hover:text-foreground hover:no-underline",
-                isActive && "border-primary font-medium text-foreground")}>
+              className={({ isActive }) => cn("whitespace-nowrap rounded-full px-4 py-2 text-sm font-semibold text-muted-foreground transition-colors hover:text-foreground hover:no-underline",
+                isActive && "bg-foreground text-background hover:text-background")}>
               {label}
             </NavLink>
           ))}

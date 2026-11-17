@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api";
 import { LineChart } from "../components/LineChart";
-import { RefreshCw } from "lucide-react";
+import { Clock, Database, Gauge, RefreshCw, Server } from "lucide-react";
 import { Card, Empty, ErrorBanner, PageHeader, Tile } from "../components/ui";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
@@ -108,10 +108,10 @@ export default function Analytics() {
         </>} />
       <ErrorBanner error={error} />
       <div className="tiles !grid-cols-2 lg:!grid-cols-4">
-        <Tile label="Systems reporting" value={summary ? `${summary.systems_reporting}/${summary.systems_total}` : "–"} hint={`With data in the ${rangeLabel?.toLowerCase()}`} />
-        <Tile label="Observations" value={summary ? summary.samples.toLocaleString() : "–"} hint="All metrics, raw samples" />
-        <Tile label="Metrics reporting" value={summary?.metrics_reporting ?? "–"} hint="Distinct metrics observed" />
-        <Tile label="Latest observation" value={<span className="text-lg">{ageLabel(summary?.last_sample_at ?? null)}</span>} hint="Most recent collector sample" />
+        <Tile label="Systems reporting" icon={Server} value={summary ? `${summary.systems_reporting}/${summary.systems_total}` : "–"} hint={`With data in the ${rangeLabel?.toLowerCase()}`} />
+        <Tile label="Observations" icon={Database} value={summary ? summary.samples.toLocaleString() : "–"} hint="All metrics, raw samples" />
+        <Tile label="Metrics reporting" icon={Gauge} value={summary?.metrics_reporting ?? "–"} hint="Distinct metrics observed" />
+        <Tile label="Latest observation" icon={Clock} value={<span className="text-xl">{ageLabel(summary?.last_sample_at ?? null)}</span>} hint="Most recent collector sample" />
       </div>
 
       <Card title="Metric" description={selectedMetric ? `${selectedMetric.description}. Values are aggregated per bucket; gaps stay empty and are never interpolated.` : undefined}
@@ -144,7 +144,7 @@ export default function Analytics() {
               const average = values.reduce((a, b) => a + b, 0) / values.length;
               const peak = Math.max(...values);
               return (
-                <article key={s.system_id} className="rounded-lg border bg-card p-4 shadow-[0_1px_2px_hsl(var(--shadow)/0.06)]">
+                <article key={s.system_id} className="rounded-3xl bg-card p-6">
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
                       <Link to={`/systems/${s.system_id}`} className="font-mono text-base font-semibold text-foreground">{s.sid}</Link>
@@ -154,7 +154,7 @@ export default function Analytics() {
                   </div>
                   <dl className="my-3 grid grid-cols-3 gap-2">
                     {[["Latest", latest], ["Average", average], ["Peak", peak]].map(([label, v]) => (
-                      <div key={label as string}><dt className="text-xs text-muted-foreground">{label}</dt><dd className="m-0 text-base font-semibold tabular-nums">{formatValue(selectedMetric!, v as number)}</dd></div>
+                      <div key={label as string} className="rounded-2xl bg-surface px-3 py-2"><dt className="text-xs text-muted-foreground">{label}</dt><dd className="m-0 text-lg font-bold tabular-nums">{formatValue(selectedMetric!, v as number)}</dd></div>
                     ))}
                   </dl>
                   <LineChart points={chartPoints} unit={selectedMetric!.unit} label={`${s.sid} ${selectedMetric!.label}`} height={190}

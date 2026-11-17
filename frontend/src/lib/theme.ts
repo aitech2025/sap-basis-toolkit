@@ -1,31 +1,35 @@
-import { useEffect, useState } from "react";
+import { useSyncExternalStore } from "react";
 
 export type Theme = "light" | "dark" | "system";
 const KEY = "sentinel.theme";
+const listeners = new Set<() => void>();
+
+function read(): Theme {
+  try { return (localStorage.getItem(KEY) as Theme) || "system"; } catch { return "system"; }
+}
 
 function apply(theme: Theme) {
   const dark = theme === "dark" || (theme === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches);
   document.documentElement.classList.toggle("dark", dark);
 }
 
+export function setTheme(theme: Theme) {
+  try { localStorage.setItem(KEY, theme); } catch { /* storage unavailable */ }
+  apply(theme);
+  listeners.forEach((l) => l());
+}
+
 export function initTheme() {
-  let stored: Theme = "system";
-  try { stored = (localStorage.getItem(KEY) as Theme) || "system"; } catch { /* storage unavailable */ }
-  apply(stored);
+  apply(read());
   window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
-    let current: Theme = "system";
-    try { current = (localStorage.getItem(KEY) as Theme) || "system"; } catch { /* ignore */ }
-    if (current === "system") apply("system");
+    if (read() === "system") { apply("system"); listeners.forEach((l) => l()); }
   });
 }
 
+/** Shared theme state: every component sees the same value. `dark` is the resolved appearance. */
 export function useTheme() {
-  const [theme, setTheme] = useState<Theme>(() => {
-    try { return (localStorage.getItem(KEY) as Theme) || "system"; } catch { return "system"; }
-  });
-  useEffect(() => {
-    apply(theme);
-    try { localStorage.setItem(KEY, theme); } catch { /* ignore */ }
-  }, [theme]);
-  return { theme, setTheme };
+  const theme = useSyncExternalStore((cb) => { listeners.add(cb); return () => listeners.delete(cb); }, read);
+  const dark = useSyncExternalStore((cb) => { listeners.add(cb); return () => listeners.delete(cb); },
+    () => document.documentElement.classList.contains("dark"));
+  return { theme, dark, setTheme };
 }

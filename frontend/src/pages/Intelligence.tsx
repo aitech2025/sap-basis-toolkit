@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api";
-import { RefreshCw, Sparkles } from "lucide-react";
+import { Activity, HardDrive, Link2, RefreshCw, Server, Sparkles } from "lucide-react";
 import { Card, DataTable, Empty, ErrorBanner, PageHeader, Tile } from "../components/ui";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
@@ -96,10 +96,10 @@ export default function Intelligence() {
         </>} />
       <ErrorBanner error={error} />
       <div className="tiles !grid-cols-2 lg:!grid-cols-4">
-        <Tile label="Systems observed" value={`${availability?.systems.filter((s) => s.samples > 0).length ?? "–"}/${availability?.systems.length ?? "–"}`} hint={`${totalSamples.toLocaleString()} availability samples`} />
-        <Tile label="Anomaly signals" value={anomaliesList.length} tone={anomaliesList.some((a) => a.severity === "critical") ? "bad" : anomaliesList.length ? "warn" : undefined} hint="Deviations from the 7-day baseline" />
-        <Tile label="Capacity outlook" value={forecastCount} tone={thresholdCount ? "warn" : undefined} hint={`${thresholdCount} system${thresholdCount === 1 ? "" : "s"} heading for 85%`} />
-        <Tile label="Incidents with context" value={correlationCount} hint="Metric changes near the incident" />
+        <Tile label="Systems observed" icon={Server} value={`${availability?.systems.filter((s) => s.samples > 0).length ?? "–"}/${availability?.systems.length ?? "–"}`} hint={`${totalSamples.toLocaleString()} availability samples`} />
+        <Tile label="Anomaly signals" icon={Activity} value={anomaliesList.length} tone={anomaliesList.some((a) => a.severity === "critical") ? "bad" : anomaliesList.length ? "warn" : undefined} hint="Deviations from the 7-day baseline" />
+        <Tile label="Capacity outlook" icon={HardDrive} value={forecastCount} tone={thresholdCount ? "warn" : undefined} hint={`${thresholdCount} system${thresholdCount === 1 ? "" : "s"} heading for 85%`} />
+        <Tile label="Incidents with context" icon={Link2} value={correlationCount} hint="Metric changes near the incident" />
       </div>
 
       <div className="grid gap-4 xl:grid-cols-2 [&>.card]:mb-0">
@@ -133,7 +133,7 @@ export default function Intelligence() {
         <Section title="Capacity outlook" note="90-day history, 85% threshold"
           method="Linear trend from recorded capacity snapshots; needs at least three snapshots over time. Projections are directional estimates, not exhaustion dates.">
           {capacity?.systems.length ? (
-            <div className="divide-y rounded-lg border">
+            <div className="divide-y divide-border/60 overflow-hidden rounded-2xl bg-surface">
               {capacity.systems.map((s) => (
                 <div key={s.system_id} className="grid gap-3 p-3 sm:grid-cols-[minmax(0,0.8fr)_minmax(0,1fr)_minmax(0,1fr)]">
                   <div className="min-w-0"><Link to={`/systems/${s.system_id}`} className="font-mono font-semibold">{s.sid}</Link>
@@ -152,7 +152,7 @@ export default function Intelligence() {
           {correlations?.incidents.length ? (
             <div className="grid gap-3 lg:grid-cols-2">
               {correlations.incidents.slice(0, showAll ? undefined : 6).map((i) => (
-                <div key={i.incident_id} className="rounded-lg border p-3">
+                <div key={i.incident_id} className="rounded-2xl bg-surface p-4">
                   <div className="flex flex-wrap items-center gap-2">
                     <Badge variant={SEVERITY[i.severity] ?? "idle"} className="capitalize">{i.severity}</Badge>
                     <Link to={`/incidents/${i.incident_id}`} className="min-w-0 flex-1 truncate font-medium text-foreground">#{i.incident_id} {i.title}</Link>
@@ -194,7 +194,7 @@ export default function Intelligence() {
           {rootCause && (
             <div className="space-y-3">
               {rootCause.hypotheses.length ? rootCause.hypotheses.map((h, idx) => (
-                <article key={h.domain} className="rounded-lg border p-4">
+                <article key={h.domain} className="rounded-2xl bg-card p-4">
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="flex h-6 w-6 items-center justify-center rounded-full bg-accent text-xs font-semibold text-accent-foreground">{idx + 1}</span>
                     <strong className="flex-1">{h.title}</strong>

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Link, NavLink, useLocation, useNavigate } from "react-router-dom";
 import {
-  BarChart3, Bell, BellRing, BrainCircuit, CalendarClock, ChevronsLeft, ChevronsRight, FileClock, KeyRound,
+  BarChart3, Bell, BellRing, BrainCircuit, CalendarClock, ChevronRight, FileClock, KeyRound, PanelLeft, UserRound,
   LayoutDashboard, LogOut, Menu, Monitor, Moon, Network, Radar, Search, Server, ShieldCheck, SlidersHorizontal, Sun,
   TriangleAlert, UserCog, Users,
 } from "lucide-react";
@@ -82,16 +82,12 @@ function useIncidentCounts() {
 function Brand({ collapsed }: { collapsed: boolean }) {
   return (
     <Link to="/" className="flex items-center gap-2.5 px-1 text-sidebar-foreground hover:no-underline">
-      <svg viewBox="0 0 32 32" className="h-8 w-8 shrink-0" aria-hidden="true">
-        <rect width="32" height="32" rx="8" fill="hsl(var(--primary))" />
-        <path d="M8 18.5h4l2.5-6 3 10 2.5-6h4" fill="none" stroke="white" strokeWidth="2.3" strokeLinecap="round" strokeLinejoin="round" />
+      <svg viewBox="0 0 36 36" className="h-9 w-9 shrink-0" aria-hidden="true">
+        <circle cx="18" cy="18" r="14" fill="none" stroke="hsl(var(--primary))" strokeWidth="4.5" />
+        <circle cx="18" cy="18" r="5" fill="hsl(var(--foreground))" />
+        <path d="M18 4a14 14 0 0 1 14 14" fill="none" stroke="hsl(var(--foreground))" strokeWidth="4.5" strokeLinecap="round" />
       </svg>
-      {!collapsed && (
-        <span className="leading-tight">
-          <span className="block text-[15px] font-semibold tracking-tight">Sentinel</span>
-          <span className="block text-[11px] text-sidebar-muted">SAP Basis operations</span>
-        </span>
-      )}
+      {!collapsed && <span className="text-[22px] font-bold tracking-[-0.02em]">Sentinel</span>}
     </Link>
   );
 }
@@ -99,33 +95,36 @@ function Brand({ collapsed }: { collapsed: boolean }) {
 function SidebarNav({ collapsed, counts, onNavigate }: { collapsed: boolean; counts: IncidentCounts | null; onNavigate?: () => void }) {
   const { can } = useSession();
   return (
-    <nav className="flex-1 space-y-5 overflow-y-auto px-2 py-2" aria-label="Main navigation">
+    <nav className="flex-1 space-y-5 overflow-y-auto px-3 py-3" aria-label="Main navigation">
       {NAV.map((group) => {
         const items = group.items.filter((i) => !i.role || can(i.role));
         if (!items.length) return null;
         return (
           <div key={group.title}>
-            {!collapsed && <div className="mb-1 px-2.5 text-[11px] font-medium text-sidebar-muted">{group.title}</div>}
-            <ul className="space-y-0.5">
+            {!collapsed && <div className="mb-1.5 px-4 text-xs font-medium text-sidebar-muted">{group.title}</div>}
+            <ul className="space-y-1">
               {items.map((item) => {
                 const Icon = item.icon;
                 const count = item.badge ? counts?.total ?? 0 : 0;
                 const link = (
                   <NavLink to={item.to} end={item.end} onClick={onNavigate}
                     className={({ isActive }) => cn(
-                      "group relative flex h-9 items-center gap-3 rounded-md px-2.5 text-[13.5px] text-sidebar-foreground/75 transition-colors hover:bg-sidebar-accent hover:text-sidebar-foreground hover:no-underline",
-                      isActive && "bg-sidebar-accent font-medium text-sidebar-foreground before:absolute before:inset-y-2 before:left-0 before:w-[3px] before:rounded-full before:bg-primary",
+                      "group relative flex h-11 items-center gap-3 rounded-full px-4 text-sm font-semibold text-sidebar-foreground/80 transition-colors hover:bg-sidebar-accent hover:text-sidebar-foreground hover:no-underline",
+                      isActive && "bg-primary text-primary-foreground shadow-[0_10px_24px_-10px_hsl(var(--primary)/0.9)] hover:bg-primary hover:text-primary-foreground",
                       collapsed && "justify-center px-0",
                     )}>
-                    <Icon className="h-[18px] w-[18px] shrink-0" aria-hidden="true" />
-                    {!collapsed && <span className="truncate">{item.label}</span>}
-                    {count > 0 && (
-                      <span className={cn("ml-auto rounded px-1.5 text-[11px] font-semibold tabular-nums leading-5",
-                        counts?.critical ? "bg-bad text-white" : "bg-warn text-white",
-                        collapsed && "absolute -right-0.5 -top-0.5 ml-0 px-1 text-[10px] leading-4")}>
-                        {count}
-                      </span>
-                    )}
+                    {({ isActive }) => (<>
+                      <Icon className="h-[18px] w-[18px] shrink-0" aria-hidden="true" />
+                      {!collapsed && <span className="truncate">{item.label}</span>}
+                      {count > 0 && (
+                        <span className={cn("ml-auto flex h-5 min-w-5 items-center justify-center rounded-full px-1.5 text-[11px] font-bold tabular-nums",
+                          isActive ? "bg-white/25 text-white" : counts?.critical ? "bg-bad text-white" : "bg-primary text-primary-foreground",
+                          collapsed && "absolute -right-0.5 -top-0.5 ml-0 h-4 min-w-4 px-1 text-[10px]")}>
+                          {count}
+                        </span>
+                      )}
+                      {isActive && !collapsed && !count && <ChevronRight className="ml-auto h-4 w-4" aria-hidden="true" />}
+                    </>)}
                   </NavLink>
                 );
                 return (
@@ -147,17 +146,48 @@ function SidebarNav({ collapsed, counts, onNavigate }: { collapsed: boolean; cou
   );
 }
 
-function OpsStatus({ counts, collapsed }: { counts: IncidentCounts | null; collapsed: boolean }) {
-  if (!counts) return null;
-  const tone = counts.critical ? "bg-bad" : counts.total ? "bg-warn" : "bg-good";
-  const text = counts.critical ? `${counts.critical} critical incident${counts.critical === 1 ? "" : "s"}`
-    : counts.total ? `${counts.total} open incident${counts.total === 1 ? "" : "s"}` : "No open incidents";
+function UserCard({ collapsed }: { collapsed: boolean }) {
+  const { me } = useSession();
+  const initials = (me?.display_name || me?.username || "?").split(/\s+/).map((p) => p[0]).join("").slice(0, 2).toUpperCase();
   return (
-    <Link to="/incidents" className={cn("mx-2 mb-2 flex items-center gap-2.5 rounded-md border border-sidebar-border px-2.5 py-2 text-xs text-sidebar-foreground/80 hover:bg-sidebar-accent hover:no-underline", collapsed && "justify-center px-0")}>
-      <span className={cn("h-2 w-2 shrink-0 rounded-full", tone, !counts.total && "animate-pulse-ring")} aria-hidden="true" />
-      {!collapsed && <span>{text}</span>}
-      {collapsed && <span className="sr-only">{text}</span>}
+    <Link to="/account" className={cn("mx-3 flex items-center gap-3 rounded-full p-1.5 pr-3 text-sidebar-foreground hover:bg-sidebar-accent hover:no-underline", collapsed && "mx-auto pr-1.5")}>
+      <span className="relative">
+        <Avatar><AvatarFallback>{initials}</AvatarFallback></Avatar>
+        <span className="absolute -right-0.5 -top-0.5 h-3 w-3 rounded-full border-2 border-sidebar bg-good" aria-hidden="true" />
+      </span>
+      {!collapsed && (
+        <span className="min-w-0 leading-tight">
+          <span className="block truncate text-sm font-bold">{me?.display_name || me?.username || "…"}</span>
+          <span className="block truncate text-xs capitalize text-sidebar-muted">{me?.role}{me?.kind === "apikey" ? " · API key" : ""}</span>
+        </span>
+      )}
     </Link>
+  );
+}
+
+function ThemeSwitch({ collapsed }: { collapsed: boolean }) {
+  const { dark, setTheme } = useTheme();
+  if (collapsed) {
+    return (
+      <button onClick={() => setTheme(dark ? "light" : "dark")} aria-label={dark ? "Switch to light theme" : "Switch to dark theme"}
+        className="mx-auto flex h-10 w-10 items-center justify-center rounded-full bg-sidebar-accent text-sidebar-foreground">
+        {dark ? <Moon className="h-4 w-4" /> : <Sun className="h-4 w-4" />}
+      </button>
+    );
+  }
+  return (
+    <div className="mx-3 grid grid-cols-2 rounded-full bg-sidebar-accent p-1" role="radiogroup" aria-label="Theme">
+      {([["light", Sun, "Light"], ["dark", Moon, "Dark"]] as const).map(([t, Icon, label]) => {
+        const on = (t === "dark") === dark;
+        return (
+          <button key={t} role="radio" aria-checked={on} onClick={() => setTheme(t)}
+            className={cn("flex h-9 items-center justify-center gap-2 rounded-full text-sm font-semibold transition-colors",
+              on ? "bg-foreground text-background shadow" : "text-sidebar-muted hover:text-sidebar-foreground")}>
+            <Icon className="h-4 w-4" />{label}
+          </button>
+        );
+      })}
+    </div>
   );
 }
 
@@ -226,97 +256,95 @@ export function AppShell({ children }: { children: ReactNode }) {
   useEffect(() => { document.title = `${trail[trail.length - 1].label} · Sentinel`; }, [trail]);
 
   const ThemeIcon = THEME_ICON[theme];
-  const initials = (me?.display_name || me?.username || "?").split(/\s+/).map((p) => p[0]).join("").slice(0, 2).toUpperCase();
 
   return (
-    <div className="flex min-h-screen">
+    <div className="flex min-h-screen bg-background">
       <a href="#main" className="sr-only focus:not-sr-only focus:fixed focus:left-3 focus:top-3 focus:z-[60] focus:rounded-md focus:bg-card focus:px-3 focus:py-2">Skip to content</a>
       {/* Desktop rail */}
-      <aside className={cn("sticky top-0 hidden h-screen shrink-0 flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground transition-[width] duration-200 lg:flex",
-        collapsed ? "w-[64px]" : "w-[248px]")}>
-        <div className={cn("flex h-14 items-center px-3", collapsed && "justify-center px-0")}><Brand collapsed={collapsed} /></div>
+      <aside className={cn("sticky top-0 hidden h-screen shrink-0 flex-col bg-sidebar pb-4 text-sidebar-foreground transition-[width] duration-200 lg:flex",
+        collapsed ? "w-[84px]" : "w-[264px]")}>
+        <div className={cn("flex h-20 items-center justify-between px-5", collapsed && "justify-center px-0")}>
+          <Brand collapsed={collapsed} />
+          {!collapsed && (
+            <button onClick={() => setCollapsed(true)} aria-label="Collapse navigation"
+              className="rounded-lg p-1.5 text-sidebar-muted hover:bg-sidebar-accent hover:text-sidebar-foreground"><PanelLeft className="h-4 w-4" /></button>
+          )}
+        </div>
+        {collapsed && (
+          <button onClick={() => setCollapsed(false)} aria-label="Expand navigation"
+            className="mx-auto mb-1 rounded-lg p-1.5 text-sidebar-muted hover:bg-sidebar-accent hover:text-sidebar-foreground"><PanelLeft className="h-4 w-4" /></button>
+        )}
         <SidebarNav collapsed={collapsed} counts={counts} />
-        <OpsStatus counts={counts} collapsed={collapsed} />
-        <button onClick={() => setCollapsed((c) => !c)}
-          className="mx-2 mb-3 flex h-8 items-center justify-center gap-2 rounded-md text-xs text-sidebar-muted hover:bg-sidebar-accent hover:text-sidebar-foreground"
-          aria-label={collapsed ? "Expand navigation" : "Collapse navigation"}>
-          {collapsed ? <ChevronsRight className="h-4 w-4" /> : <><ChevronsLeft className="h-4 w-4" /> Collapse</>}
-        </button>
+        <div className="space-y-3 pt-3">
+          <UserCard collapsed={collapsed} />
+          <ThemeSwitch collapsed={collapsed} />
+        </div>
       </aside>
 
       {/* Mobile drawer */}
       <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
-        <SheetContent className="flex flex-col border-sidebar-border bg-sidebar p-0 text-sidebar-foreground">
+        <SheetContent className="flex flex-col border-0 bg-sidebar p-0 pb-4 text-sidebar-foreground">
           <SheetTitle className="sr-only">Navigation</SheetTitle>
-          <div className="flex h-14 items-center px-3"><Brand collapsed={false} /></div>
+          <div className="flex h-20 items-center px-5"><Brand collapsed={false} /></div>
           <SidebarNav collapsed={false} counts={counts} onNavigate={() => setMobileOpen(false)} />
-          <OpsStatus counts={counts} collapsed={false} />
+          <div className="space-y-3 pt-3"><UserCard collapsed={false} /><ThemeSwitch collapsed={false} /></div>
         </SheetContent>
       </Sheet>
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="sticky top-0 z-30 flex h-14 items-center gap-3 border-b bg-background/85 px-4 backdrop-blur supports-[backdrop-filter]:bg-background/70 lg:px-6">
+        <header className="sticky top-0 z-30 flex h-20 items-center gap-3 bg-background/80 px-4 backdrop-blur supports-[backdrop-filter]:bg-background/70 lg:px-8">
           <Button variant="ghost" size="icon" className="lg:hidden" onClick={() => setMobileOpen(true)} aria-label="Open navigation">
             <Menu />
           </Button>
           <nav aria-label="Breadcrumb" className="flex min-w-0 items-center gap-1.5 text-sm">
             {trail.map((c, i) => (
               <span key={i} className="flex min-w-0 items-center gap-1.5">
-                {i > 0 && <span className="text-muted-foreground/60">/</span>}
+                {i > 0 && <ChevronRight className="h-3.5 w-3.5 text-muted-foreground/60" />}
                 {c.to ? <Link to={c.to} className="truncate text-muted-foreground hover:text-foreground hover:no-underline">{c.label}</Link>
-                  : <span className="truncate font-medium">{c.label}</span>}
+                  : <span className="truncate font-semibold">{c.label}</span>}
               </span>
             ))}
           </nav>
-          <div className="ml-auto flex items-center gap-1.5">
-            <button onClick={() => setSearchOpen(true)}
-              className="hidden h-9 w-64 items-center gap-2 rounded-md border border-input bg-card px-3 text-sm text-muted-foreground shadow-sm transition-colors hover:bg-accent md:flex">
-              <Search className="h-4 w-4" /> Search systems and pages
-              <kbd className="ml-auto rounded border bg-muted px-1.5 font-mono text-[10px]">⌘K</kbd>
-            </button>
-            <Button variant="ghost" size="icon" className="md:hidden" onClick={() => setSearchOpen(true)} aria-label="Search"><Search /></Button>
+          <div className="ml-auto flex items-center gap-2.5">
             <Tooltip>
               <TooltipTrigger asChild>
-                <Button variant="ghost" size="icon" asChild aria-label="Incidents">
-                  <Link to="/incidents" className="relative">
+                <Button variant="dark" size="icon" asChild aria-label="Incidents">
+                  <Link to="/incidents" className="relative hover:no-underline">
                     <Bell />
-                    {!!counts?.total && <span className={cn("absolute right-1.5 top-1.5 h-2 w-2 rounded-full ring-2 ring-background", counts.critical ? "bg-bad" : "bg-warn")} />}
+                    {!!counts?.total && (
+                      <span className={cn("absolute -right-1 -top-1 flex h-5 min-w-5 items-center justify-center rounded-full px-1 text-[10px] font-bold text-white ring-2 ring-background",
+                        counts.critical ? "bg-bad" : "bg-primary")}>{counts.total > 99 ? "99+" : counts.total}</span>
+                    )}
                   </Link>
                 </Button>
               </TooltipTrigger>
-              <TooltipContent>{counts?.total ? `${counts.total} open incidents` : "No open incidents"}</TooltipContent>
+              <TooltipContent>{counts?.total ? `${counts.total} open incidents${counts.critical ? `, ${counts.critical} critical` : ""}` : "No open incidents"}</TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button variant="dark" size="icon" onClick={() => setSearchOpen(true)} aria-label="Search (Ctrl+K)"><Search /></Button>
+              </TooltipTrigger>
+              <TooltipContent>Search systems and pages <kbd className="ml-1 font-mono">⌘K</kbd></TooltipContent>
             </Tooltip>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="icon" aria-label={`Theme: ${theme}`}><ThemeIcon /></Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="min-w-[9rem]">
-                {(["light", "dark", "system"] as Theme[]).map((t) => {
-                  const Icon = THEME_ICON[t];
-                  return <DropdownMenuItem key={t} onSelect={() => setTheme(t)} className={cn(theme === t && "font-medium")}><Icon />{t[0].toUpperCase() + t.slice(1)}</DropdownMenuItem>;
-                })}
-              </DropdownMenuContent>
-            </DropdownMenu>
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <button className="ml-1 rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" aria-label="Account menu">
-                  <Avatar><AvatarFallback>{initials}</AvatarFallback></Avatar>
-                </button>
+                <Button variant="dark" size="icon" aria-label="Account menu"><UserRound /></Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
                 <DropdownMenuLabel className="font-normal">
-                  <div className="text-sm font-medium">{me?.display_name || me?.username}</div>
+                  <div className="text-sm font-semibold">{me?.display_name || me?.username}</div>
                   <div className="text-xs capitalize text-muted-foreground">{me?.role}{me?.kind === "apikey" ? " · API key" : ""}</div>
                 </DropdownMenuLabel>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem asChild><Link to="/account" className="hover:no-underline"><UserCog />Account &amp; password</Link></DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => setTheme(theme === "dark" ? "light" : "dark")}><ThemeIcon />Toggle theme</DropdownMenuItem>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem onSelect={logout}><LogOut />Sign out</DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
           </div>
         </header>
-        <main id="main" className="mx-auto w-full min-w-0 max-w-[1440px] flex-1 px-4 py-6 lg:px-8 lg:py-8">
+        <main id="main" className="mx-auto w-full min-w-0 max-w-[1480px] flex-1 px-4 pb-10 pt-2 lg:px-8">
           {children}
         </main>
       </div>
