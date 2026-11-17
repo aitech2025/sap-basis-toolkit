@@ -40,7 +40,7 @@ export default function Analytics() {
   const [result, setResult] = useState<AnalyticsSeries | null>(null);
   const [correlations, setCorrelations] = useState<IncidentCorrelationResponse | null>(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);\n  const [refreshKey, setRefreshKey] = useState(0);
 
   useEffect(() => {
     let active = true;
@@ -72,7 +72,7 @@ export default function Analytics() {
     }).catch((e) => active && setError(e instanceof Error ? e.message : "Unable to load historical telemetry"))
       .finally(() => active && setLoading(false));
     return () => { active = false; };
-  }, [metricKey, hours, bucketSeconds, aggregation, landscape, systemId]);
+  }, [metricKey, hours, bucketSeconds, aggregation, landscape, systemId, refreshKey]);
 
   const visibleSystems = useMemo(() => systems.filter((s) => !landscape || s.landscape === landscape), [systems, landscape]);
   const groupedMetrics = useMemo(() => {
@@ -95,13 +95,7 @@ export default function Analytics() {
         <div className="dashboard-actions">
           <label className="filter-select"><span>LANDSCAPE</span><select value={landscape} onChange={(e) => { setLandscape(e.target.value); setSystemId(""); }}><option value="">All landscapes</option>{[...new Set(systems.map((s) => s.landscape))].sort().map((name) => <option key={name} value={name}>{name}</option>)}</select></label>
           <label className="filter-select"><span>TIME RANGE</span><select value={hours} onChange={(e) => setHours(Number(e.target.value))}>{RANGES.map((r) => <option key={r.hours} value={r.hours}>{r.label}</option>)}</select></label>
-          <button className="btn refresh-btn" onClick={() => {
-            setLoading(true);
-            Promise.all([api.analyticsSummary(hours, landscape || undefined), api.analyticsSeries(metricKey, { hours, bucketSeconds, aggregation, landscape: landscape || undefined, systemId: systemId ? Number(systemId) : undefined })])
-              .then(([s, r]) => { setSummary(s); setResult(r); setError(null); })
-              .catch((e) => setError(e instanceof Error ? e.message : "Refresh failed"))
-              .finally(() => setLoading(false));
-          }} disabled={loading}>↻ <span>Refresh</span></button>
+          <button className="btn refresh-btn" onClick={() => setRefreshKey((v) => v + 1)} disabled={loading}>↻ <span>Refresh</span></button>
         </div>
       </div>
       <ErrorBanner error={error} />
