@@ -1,8 +1,4 @@
-"""Idempotent schema baseline and target uniqueness enforcement.
-
-This migration supports both fresh databases and installations created by the
-original MVP's SQLAlchemy metadata.create_all() bootstrap.
-"""
+"""Idempotent schema baseline and target uniqueness enforcement."""
 from alembic import op
 
 from app.db import metadata, ensure_target_uniqueness
@@ -15,6 +11,8 @@ depends_on = None
 
 def upgrade() -> None:
     bind = op.get_bind()
+    # Check existing installations before create_all attempts to add the unique index.
+    ensure_target_uniqueness(bind)
     metadata.create_all(bind=bind)
     ensure_target_uniqueness(bind)
 

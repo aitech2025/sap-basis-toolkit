@@ -3,7 +3,7 @@ from pathlib import Path
 
 from sqlalchemy import (
     Boolean, Column, DateTime, ForeignKey, Index, Integer, MetaData, String,
-    Table, Text, create_engine, inspect, select, text,
+    Table, Text, create_engine, inspect, text,
 )
 from sqlalchemy.engine import Connection, Engine
 
@@ -85,7 +85,7 @@ def get_db():
 
 
 def ensure_target_uniqueness(connection: Connection) -> None:
-    """Upgrade legacy targets tables without silently accepting duplicate endpoints."""
+    """Safely enforce endpoint uniqueness on fresh and legacy databases."""
     inspector = inspect(connection)
     if "targets" not in inspector.get_table_names():
         return
@@ -120,6 +120,10 @@ def ensure_target_uniqueness(connection: Connection) -> None:
 
 def init_db() -> None:
     engine = get_engine()
+    # Preflight existing targets before metadata.create_all attempts to create
+    # the unique index. This produces an actionable error for legacy duplicates.
+    with engine.begin() as connection:
+        ensure_target_uniqueness(connection)
     metadata.create_all(engine)
     with engine.begin() as connection:
         ensure_target_uniqueness(connection)

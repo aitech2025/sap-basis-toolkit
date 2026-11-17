@@ -6,18 +6,31 @@ from cryptography import x509
 from cryptography.hazmat.backends import default_backend
 
 from ..config import CERTIFICATE_TIMEOUT_SECONDS, DEFAULT_WARNING_DAYS
+from .target_policy import resolve_approved_addresses
+
+
+def _connect_pinned(addresses: list[str], port: int, timeout: float):
+    last_error = None
+    for address in addresses:
+        try:
+            return socket.create_connection((address, port), timeout=timeout)
+        except OSError as exc:
+            last_error = exc
+    if last_error:
+        raise last_error
+    raise OSError("No approved target addresses available")
 
 
 def inspect_certificate(hostname: str, port: int = 443) -> dict:
-    """Read the presented certificate, even when trust validation fails.
+    """Read the presented certificate using a DNS-resolved, policy-checked IP.
 
-    A second verified handshake determines whether the endpoint certificate
-    validates against the local trust store and hostname.
+    The original hostname is retained for TLS SNI and hostname verification.
+    Pinning the socket to the validated DNS answer prevents a second DNS lookup
+    during connection establishment.
     """
+    addresses = resolve_approved_addresses(hostname, port)
     context = ssl._create_unverified_context()
-    with socket.create_connection(
-        (hostname, port), timeout=CERTIFICATE_TIMEOUT_SECONDS
-    ) as sock:
+    with _connect_pinned(addresses, port, CERTIFICATE_TIMEOUT_SECONDS) as sock:
         with context.wrap_socket(sock, server_hostname=hostname) as tls:
             der_certificate = tls.getpeercert(binary_form=True)
 
@@ -29,9 +42,7 @@ def inspect_certificate(hostname: str, port: int = 443) -> dict:
 
     try:
         verified_context = ssl.create_default_context()
-        with socket.create_connection(
-            (hostname, port), timeout=CERTIFICATE_TIMEOUT_SECONDS
-        ) as sock:
+        with _connect_pinned(addresses, port, CERTIFICATE_TIMEOUT_SECONDS) as sock:
             with verified_context.wrap_socket(sock, server_hostname=hostname):
                 tls_verified = True
         verification_error = None

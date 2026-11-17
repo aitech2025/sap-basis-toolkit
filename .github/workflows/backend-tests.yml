@@ -22,3 +22,13 @@ jobs:
         working-directory: backend
         env:
           PYTHONPATH: ${{ github.workspace }}/backend
+      - name: Validate Docker Compose configuration
+        env:
+          POSTGRES_PASSWORD: ci-test-password
+          API_AUTH_TOKEN: ci-test-api-token
+          ALLOWED_TARGET_HOSTS: ci.example.test
+          ALLOWED_TARGET_CIDRS: ""
+          ALLOWED_TARGET_PORTS: "443"
+        run: docker compose config -q
+      - name: Build backend image
+        run: docker build -t sap-basis-sentinel-ci ./backend

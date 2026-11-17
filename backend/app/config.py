@@ -15,3 +15,8 @@ SMTP_FROM = os.getenv("SMTP_FROM", "")
 ALERT_EMAIL_TO = tuple(v.strip() for v in os.getenv("ALERT_EMAIL_TO", "").split(",") if v.strip())
 SMTP_STARTTLS = os.getenv("SMTP_STARTTLS", "true").lower() == "true"
 API_AUTH_TOKEN = os.getenv("API_AUTH_TOKEN", "").strip()
+
+# Only these TCP destination ports may be probed on approved hosts.
+ALLOWED_TARGET_PORTS = tuple(
+    int(item.strip()) for item in os.getenv("ALLOWED_TARGET_PORTS", "443").split(",") if item.strip()
+)

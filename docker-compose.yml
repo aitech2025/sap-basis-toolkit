@@ -1,0 +1,72 @@
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: sentinel
+      POSTGRES_USER: sentinel
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in the project .env file}
+    volumes:
+      - sentinel-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sentinel -d sentinel"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  migrate:
+    build:
+      context: ./backend
+    command: ["alembic", "upgrade", "head"]
+    environment: &app-environment
+      DATABASE_URL: postgresql+psycopg://sentinel:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}@db:5432/sentinel
+      API_AUTH_TOKEN: ${API_AUTH_TOKEN:?Set API_AUTH_TOKEN in the project .env file}
+      ALLOWED_TARGET_HOSTS: ${ALLOWED_TARGET_HOSTS:?Set ALLOWED_TARGET_HOSTS}
+      ALLOWED_TARGET_CIDRS: ${ALLOWED_TARGET_CIDRS:-}
+      ALLOWED_TARGET_PORTS: ${ALLOWED_TARGET_PORTS:-443}
+      CHECK_INTERVAL_MINUTES: ${CHECK_INTERVAL_MINUTES:-360}
+      CERTIFICATE_TIMEOUT_SECONDS: ${CERTIFICATE_TIMEOUT_SECONDS:-8}
+      DEFAULT_WARNING_DAYS: ${DEFAULT_WARNING_DAYS:-30}
+      ALERT_THRESHOLDS_DAYS: ${ALERT_THRESHOLDS_DAYS:-90,60,30,14,7}
+      ALERT_WEBHOOK_URL: ${ALERT_WEBHOOK_URL:-}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM: ${SMTP_FROM:-}
+      SMTP_STARTTLS: ${SMTP_STARTTLS:-true}
+      ALERT_EMAIL_TO: ${ALERT_EMAIL_TO:-}
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    build:
+      context: ./backend
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    environment: *app-environment
+    ports:
+      - "8000:8000"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  scheduler:
+    build:
+      context: ./backend
+    command: ["python", "-m", "app.worker"]
+    environment: *app-environment
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+volumes:
+  sentinel-postgres:

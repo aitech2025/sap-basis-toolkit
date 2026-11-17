@@ -6,6 +6,7 @@ from ..config import ALERT_EMAIL_TO, ALERT_THRESHOLDS_DAYS, ALERT_WEBHOOK_URL, S
 from ..db import certificate_checks, get_db, notification_events, targets
 from .certificates import inspect_certificate
 from .notifications import send_email, send_webhook
+from .target_policy import TargetPolicyError
 
 
 def check_target(target_id: int) -> dict:
@@ -18,6 +19,12 @@ def check_target(target_id: int) -> dict:
 
     try:
         result = inspect_certificate(target["hostname"], target["port"])
+    except TargetPolicyError as exc:
+        result = {
+            "subject": None, "issuer": None, "serial_number": None,
+            "not_before": None, "not_after": None, "days_remaining": None,
+            "tls_verified": False, "status": "blocked", "error": str(exc)[:1000],
+        }
     except Exception as exc:
         result = {
             "subject": None, "issuer": None, "serial_number": None,
@@ -37,11 +44,12 @@ def check_target(target_id: int) -> dict:
         last_healthy = connection.execute(
             select(certificate_checks.c.id).where(
                 certificate_checks.c.target_id == target_id,
-                certificate_checks.c.status != "unreachable",
+                certificate_checks.c.status.notin_(("unreachable", "blocked")),
             ).order_by(certificate_checks.c.id.desc()).limit(1)
         ).scalar_one_or_none()
 
-    dispatch_alerts(dict(target), result, last_healthy)
+    if result["status"] != "blocked":
+        dispatch_alerts(dict(target), result, last_healthy)
     return check
 
 

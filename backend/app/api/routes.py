@@ -1,10 +1,12 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
+
 from ..db import get_db, certificate_checks, notification_events, targets
 from ..schemas import TargetCreate
 from ..security import require_api_key
 from ..services.checks import check_target
+from ..services.target_policy import TargetPolicyError, validate_target
 
 router = APIRouter(prefix="/api/v1", dependencies=[Depends(require_api_key)])
 
@@ -22,6 +24,10 @@ def serialize(row):
 
 @router.post("/targets", status_code=201)
 def create_target(payload: TargetCreate):
+    try:
+        validate_target(payload.hostname, payload.port)
+    except TargetPolicyError as exc:
+        raise HTTPException(403, str(exc))
     try:
         with get_db() as connection:
             exists = connection.execute(

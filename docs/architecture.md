@@ -4,59 +4,40 @@
 
 - HTTPS endpoint certificate discovery and X.509 metadata extraction.
 - Separate trust and hostname validation.
-- On-demand and scheduled checks.
+- On-demand checks and a dedicated blocking scheduler worker.
 - Configurable expiry thresholds (default 90/60/30/14/7 days).
-- Generic JSON webhook notifications (Slack/Teams incoming webhooks) and SMTP email.
-- Notification event history and successful-alert de-duplication per certificate, threshold and channel; failed deliveries are retried on later checks.
-- Endpoint-unreachable alerts, de-duplicated per outage and re-armed after a successful check.
-- Target disable operation that preserves target and check history.
-- API-key protection for all management endpoints; /health remains public.
-- SQLAlchemy storage supporting SQLite for local development and PostgreSQL for shared deployments.
-- Alembic baseline migration compatible with fresh databases and earlier MVP databases created through metadata.create_all().
+- Webhook and SMTP notifications with event history and deduplication.
+- Endpoint-unreachable alerts, de-duplicated per outage and re-armed after recovery.
+- Target disable operation preserving target and check history.
+- API-key protection for management endpoints; /health remains public.
+- Explicit hostname, destination-port and DNS/IP network policy.
+- SQLAlchemy storage for SQLite development and PostgreSQL deployment.
+- Alembic baseline migration and Docker Compose deployment.
 
-## API
+## Scheduler topology
 
-- GET /health (public)
-- POST /api/v1/targets
-- GET /api/v1/targets
-- PATCH /api/v1/targets/{target_id}/disable
-- POST /api/v1/targets/{target_id}/check
-- GET /api/v1/checks?limit=100
-- GET /api/v1/notifications?limit=100
+FastAPI does not start a scheduler. Run one instance of `python -m app.worker`; it performs an immediate sweep and then repeats every `CHECK_INTERVAL_MINUTES`. API replicas can scale independently. Do not run multiple scheduler replicas without distributed locking or leader election.
 
-All /api/v1 endpoints require the configured X-API-Key header. If API_AUTH_TOKEN is absent, these endpoints fail closed with HTTP 503.
+## Target security policy
+
+`ALLOWED_TARGET_HOSTS` is mandatory and accepts exact hostnames, explicitly listed IP literals and wildcard subdomains such as `*.corp.example.com` (not the apex domain). `ALLOWED_TARGET_PORTS` defaults to TCP 443; add SAP HTTPS listener ports only when needed. Registration fails closed if the hostname or port is not allowed.
+
+Before every check, all DNS answers are validated. The socket is pinned to a validated IP while TLS SNI and hostname verification use the original hostname. Non-global addresses (private, loopback, link-local, etc.) require a matching `ALLOWED_TARGET_CIDRS` entry. When CIDRs are configured, every DNS answer must fall inside an approved range.
+
+Application controls do not replace network egress filtering. Restrict API and scheduler egress to approved target networks and ports, and protect DNS infrastructure.
 
 ## Database migrations
 
-Run `alembic upgrade head` from the backend directory before deploying. The initial migration creates missing tables and adds a unique index for hostname/port where absent. It does not delete or rewrite certificate history. If duplicate hostname/port pairs exist in a legacy database, the migration fails with examples rather than silently deleting records. Resolve duplicates and retry. Always take a database backup first.
+Run `alembic upgrade head` before deployment. The baseline creates missing tables and adds a unique index on hostname/port. It does not delete history. Legacy duplicates cause a clear migration failure; resolve them and back up before retrying.
 
-## Configuration
+## SAP STRUST/PSE boundary
 
-Set API_AUTH_TOKEN to a long random secret and provide it in the X-API-Key request header. Copy backend/.env.example and set environment variables in the process environment. PostgreSQL URL example: postgresql+psycopg://user:password@host:5432/database.
+Endpoint TLS discovery sees only certificates presented during a network handshake. It cannot inventory all certificates stored in STRUST, including client PSEs and certificates not presented by an endpoint. The included collector is a contract only; a production RFC adapter must be built and tested against the supported SAP_BASIS release and a least-privilege SAP interface. Do not treat the current scaffold as working STRUST integration.
 
-The scheduler runs every CHECK_INTERVAL_MINUTES (default 360). It performs its first sweep after the first interval; use the API for an immediate check after registering a target.
-
-## SAP STRUST/PSE integration boundary
-
-Endpoint TLS discovery only sees certificates presented during a network handshake. It cannot inventory all certificates stored in STRUST, including client PSEs and certificates not currently presented by an endpoint.
-
-A typed SAP PSE collector contract is included, but the RFC implementation is deliberately not enabled. It must be built and tested against a supported, release-specific SAP interface with a dedicated least-privilege RFC identity. Do not read or modify STRUST filesystem files directly, guess internal table layouts, or use unrestricted RFC_READ_TABLE as a production integration contract. Until tested against a real SAP system, inventory must be labelled endpoint-only.
-
-## Operational and security notes
-
-- Deploy inside the customer network to reach private SAP endpoints.
-- Restrict outbound network access to approved target hosts and ports; API-key authentication does not replace network segmentation or an egress allowlist. Target registration can otherwise be abused as an SSRF/network-probing primitive.
-- Terminate TLS at a trusted reverse proxy; do not expose API keys over plaintext networks.
-- Store API tokens, SMTP credentials and webhook URLs in a secrets manager or deployment environment, never source control.
-- The single API key is suitable for a controlled MVP, not multi-user identity, tenant isolation or fine-grained RBAC.
-- Use PostgreSQL for multi-instance/production deployments. SQLite is for local development only.
-- Multiple API worker processes each starting an in-process scheduler would create duplicate sweeps. Run one scheduler instance (or a dedicated worker) in production.
-
-## Next
+## Remaining production hardening
 
 1. Tenant isolation, user identities/RBAC and audit trail.
-2. Dedicated scheduler worker and retry/backoff policy.
-3. Add strict target registration allowlisting and egress policy enforcement.
-4. Implement and validate the SAP STRUST/PSE adapter for target SAP_BASIS releases.
-5. Certificate chain inventory and endpoint discovery.
-6. Dashboard and deployment packaging.
+2. Distributed scheduler locking if multiple scheduler replicas are required.
+3. Centralized secrets management, TLS reverse proxy, network egress firewall and backup/restore runbooks.
+4. SAP STRUST/PSE adapter and certificate-chain inventory.
+5. Dashboard and operational observability.

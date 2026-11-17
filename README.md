@@ -6,18 +6,41 @@ A lightweight, modular toolkit for SAP Basis operations. The first MVP is SAP Ba
 
 - Register HTTPS endpoints and inspect their presented TLS certificates.
 - Store certificate metadata and check history.
-- Schedule landscape-wide checks.
-- Configure 90/60/30/14/7-day expiry thresholds.
-- Send generic webhook alerts (including Slack/Teams incoming webhooks) and SMTP email.
+- Run scheduled sweeps in a dedicated worker, independent of API scaling.
+- Configure 90/60/30/14/7-day expiry thresholds and webhook/email notifications.
 - De-duplicate expiry and endpoint-unreachable alerts.
-- Disable targets without deleting their monitoring history.
-- Protect all management APIs with an API key.
-- Use SQLite locally or PostgreSQL for shared deployments.
-- Version the database schema with Alembic, including an upgrade path for databases created by earlier MVP versions.
+- Disable targets without deleting monitoring history.
+- Protect management APIs with an API key.
+- Enforce hostname, destination-port and DNS/IP network allowlists.
+- Deploy with Docker Compose and PostgreSQL.
+- Manage schema upgrades with Alembic.
 
-**Scope note:** this release monitors certificates presented by network endpoints. It does not yet inventory all certificates stored internally in SAP STRUST/PSE. The SAP-specific collector is a separate integration requiring validation against the target SAP_BASIS release.
+**Scope note:** this release monitors certificates presented by network endpoints. It does not yet inventory all certificates stored internally in SAP STRUST/PSE. The SAP-specific collector requires validation against the target SAP_BASIS release.
 
-## Quick start
+## Docker Compose deployment
+
+Requires Docker Engine and the Docker Compose plugin.
+
+1. Copy the root `.env.example` to `.env`.
+2. Replace `POSTGRES_PASSWORD` and `API_AUTH_TOKEN` with strong unique secrets.
+3. Set `ALLOWED_TARGET_HOSTS` to approved exact hostnames and/or wildcard subdomains.
+4. For private SAP networks, set `ALLOWED_TARGET_CIDRS` to the narrowest possible ranges. Never use broad ranges such as `0.0.0.0/0`.
+5. Set `ALLOWED_TARGET_PORTS` to the required HTTPS listener ports only (default 443; SAP examples may include 44300 or 8443).
+6. Start with `docker compose up --build -d`.
+
+The stack runs PostgreSQL, a one-shot Alembic migration, the API and one dedicated scheduler worker. The API does not start a scheduler, so it can scale horizontally without duplicating sweeps. Keep exactly one scheduler replica unless distributed scheduler locking is added.
+
+The API is available at `http://localhost:8000`; send the configured key in `X-API-Key`. Use a TLS-terminating reverse proxy and restrict API network exposure for non-local access.
+
+## Outbound target security
+
+`ALLOWED_TARGET_HOSTS` is mandatory and supports exact hostnames, explicitly listed IP literals and wildcard subdomains such as `*.corp.example.com`. Wildcards match subdomains, not the apex domain. Empty allowlists fail closed. `ALLOWED_TARGET_PORTS` limits TCP destination ports.
+
+Before each check, DNS is resolved and every returned IP is validated. The socket connects to a validated, pinned IP while TLS SNI and hostname validation continue to use the configured hostname. Public IPs are permitted only for allowlisted hosts. Private, loopback, link-local and other non-global addresses require a matching `ALLOWED_TARGET_CIDRS` entry. If CIDRs are configured, every DNS answer must fall inside one of them.
+
+These controls are defense in depth, not a replacement for network egress filtering. Restrict API and scheduler container egress to approved networks and ports, and protect DNS infrastructure.
+
+## Local Python development
 
 Requires Python 3.11+.
 
@@ -26,35 +49,28 @@ Requires Python 3.11+.
     # Windows: .venv\\Scripts\\activate
     # Linux/macOS: source .venv/bin/activate
     pip install -r requirements.txt
-
-Set `API_AUTH_TOKEN` to a long random secret before starting the API:
-
-    # Linux/macOS
     export API_AUTH_TOKEN="replace-with-a-long-random-secret"
+    export ALLOWED_TARGET_HOSTS="qa.example.test"
     uvicorn app.main:app --reload
 
-Open http://127.0.0.1:8000/docs for the API. Send the configured key in the `X-API-Key` header. `/health` remains public for health probes. If the token is missing, management APIs fail closed with HTTP 503.
-
-Copy backend/.env.example to .env and export its settings into the process environment. For PostgreSQL set DATABASE_URL to postgresql+psycopg://sentinel:password@localhost:5432/sentinel.
+For private SAP targets, also configure their network in `ALLOWED_TARGET_CIDRS`. Environment example files are templates; export their values or use your deployment's environment-file support.
 
 ## Database upgrades
 
-Run migrations from the backend directory before deploying a release:
+Run from the backend directory:
 
     alembic upgrade head
 
-The baseline migration supports fresh databases and databases initialized by earlier MVP versions. It creates missing tables and enforces uniqueness on `(hostname, port)` without dropping certificate history. If an older database contains duplicate hostname/port pairs, migration stops with examples; resolve those duplicates before retrying. Back up the database before every production migration.
-
-For new local development databases, the API bootstrap also creates the current schema. Alembic remains the deployment mechanism for controlled upgrades and schema version tracking.
+The baseline migration supports fresh and earlier MVP databases. It creates missing tables and enforces uniqueness on `(hostname, port)` without deleting certificate history. If duplicates exist, migration stops with examples; resolve them and back up before retrying.
 
 ## API
 
 - GET /health (public)
-- POST /api/v1/targets (X-API-Key required)
-- GET /api/v1/targets (X-API-Key required)
-- PATCH /api/v1/targets/{target_id}/disable (X-API-Key required)
-- POST /api/v1/targets/{target_id}/check (X-API-Key required)
-- GET /api/v1/checks (X-API-Key required)
-- GET /api/v1/notifications (X-API-Key required)
+- POST /api/v1/targets
+- GET /api/v1/targets
+- PATCH /api/v1/targets/{target_id}/disable
+- POST /api/v1/targets/{target_id}/check
+- GET /api/v1/checks
+- GET /api/v1/notifications
 
-Run tests with pytest from the backend directory. See docs/architecture.md for production notes.
+All management endpoints require `X-API-Key`. Run tests from `backend` with `pytest -q`.
