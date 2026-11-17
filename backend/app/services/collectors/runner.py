@@ -80,6 +80,13 @@ def get(collector_id: int) -> dict:
 def create(system_id: int, data: dict) -> dict:
     data = {**data, "host": data["host"].strip().lower(), "abap_schema": (data.get("abap_schema") or "").strip().upper() or None}
     validate(data)
+    if data["type"] == "node_exporter":
+        with get_db() as connection:
+            existing = connection.execute(select(collectors.c.id).where(
+                collectors.c.system_id == system_id, collectors.c.type == "node_exporter"
+            )).first()
+        if existing:
+            raise CollectorError("Only one node_exporter collector per SAP system is supported until host-level metric dimensions are available")
     password = data.pop("password", None)
     with get_db() as connection:
         row = connection.execute(collectors.insert().values(
@@ -225,7 +232,7 @@ def _run_hana(row: dict, system: dict, persist: bool) -> tuple[dict, dict]:
 def _run_node_exporter(row: dict, system: dict, persist: bool) -> tuple[dict, dict]:
     raw = node_exporter.collect(row["host"], int(row["port"]), bool(row["use_tls"]), bool(row["verify_tls"]))
     metrics = raw["metrics"]
-    summary = {"signals": sorted(metrics), "collected_at": raw["collected_at"].isoformat()}
+    summary = {"host": row["host"], "signals": sorted(metrics), "collected_at": raw["collected_at"].isoformat()}
     if persist:
         health = "critical" if metrics.get("host.memory_used_pct", 0) >= 95 or metrics.get("host.disk_used_pct", 0) >= 95 else "warning" if metrics.get("host.memory_used_pct", 0) >= 85 or metrics.get("host.disk_used_pct", 0) >= 85 else "healthy"
         monitors.store(system["id"], "host", "node_exporter", {"metrics": metrics, "summary": summary}, health, raw["collected_at"])
