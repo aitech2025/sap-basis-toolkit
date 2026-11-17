@@ -26,6 +26,13 @@ def test_api_requires_key(monkeypatch, tmp_path):
         assert client.get("/api/v1/targets", headers={"X-API-Key": "test-secret"}).status_code == 200
 
 
+def test_api_fails_closed_without_configured_token(monkeypatch, tmp_path):
+    setup_test_db(monkeypatch, tmp_path)
+    monkeypatch.setattr(config, "API_AUTH_TOKEN", "")
+    with TestClient(app) as client:
+        assert client.get("/api/v1/targets", headers={"X-API-Key": "anything"}).status_code == 503
+
+
 def test_target_registration_and_duplicate(monkeypatch, tmp_path):
     setup_test_db(monkeypatch, tmp_path)
     headers = {"X-API-Key": "test-secret"}
@@ -73,7 +80,7 @@ def test_unreachable_alert_is_sent_once_per_outage(monkeypatch, tmp_path):
     setup_test_db(monkeypatch, tmp_path)
     from app.services import checks
     sent = []
-    monkeypatch.setattr(config, "ALERT_WEBHOOK_URL", "https://hooks.example.test")
+    monkeypatch.setattr(checks, "ALERT_WEBHOOK_URL", "https://hooks.example.test")
     monkeypatch.setattr(checks, "send_webhook", lambda payload: (sent.append(payload) or True, None))
     headers = {"X-API-Key": "test-secret"}
     with TestClient(app) as client:
