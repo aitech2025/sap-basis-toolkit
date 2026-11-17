@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, type FormEvent } from "react";
 import { api } from "../../api";
 import { Card, Empty, ErrorBanner, useAsync } from "../../components/ui";
 import { RequireRole } from "../../components/session";
@@ -22,7 +22,7 @@ export default function DependencyTopologyCard({ system }: { system: SystemDetai
   const assets = data?.assets ?? [];
   const byId = useMemo(() => new Map(assets.map((asset) => [asset.id, asset])), [assets]);
 
-  const addAsset = async (event: React.FormEvent) => {
+  const addAsset = async (event: FormEvent) => {
     event.preventDefault();
     setBusy(true); setActionError(null);
     try {
