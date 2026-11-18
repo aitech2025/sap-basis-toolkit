@@ -59,6 +59,28 @@ Passwords are hashed with scrypt and must be at least 12 characters. Five failed
 
 The environment is suggested from the SID's last letter (P → PRD, Q/T → QAS, D → DEV). If the SID is already registered, you can update that system instead of creating a duplicate.
 
+### OS login discovery (recommended): all three layers from one login
+
+Choose **OS login (root or <sid>adm)** in *Discover system*. Enter one application server (the ASCS or PAS host) and its OS user and password, or a private key. Sentinel connects over SSH (port 22; see `SSH_ALLOWED_PORTS`) and runs only fixed, read-only commands. Nothing you type is passed to the shell.
+
+| Layer | Read from |
+|---|---|
+| Application | `/usr/sap/sapservices` (every sapstartsrv and its profile: SID, instance name, number and host). Then the SAP Start Service of that instance for live state, roles, product and release. |
+| Database | `DEFAULT.PFL` (`SAPDBHOST`, `dbms/type`, `dbs/hdb/dbname`, `dbs/hdb/schema`). On the database server: the HANA `manifest` (version), `saphostctrl -function ListDatabases` (as root) and the `/oracle`, `/db2`, `/sybase` and `/sapdb` directories. |
+| Operating system | `/etc/os-release`, `uname`, CPU, memory, swap, load, uptime, virtualisation (`systemd-detect-virt`), time zone, IP addresses, and the usage of `/`, `/usr/sap`, `/sapmnt`, `/hana/*` and the database file systems. |
+
+- The database server is reached with the same login unless you enter a different one. If it cannot be reached, the application and database layers are still recorded and a warning says how to add the OS layer.
+- Each layer is stored as a discovery-sourced topology asset (application, database or hana, host), linked as follows: application *runs on* host, application *uses database* database, database *runs on* host.
+- The new **Infrastructure** tab on the system page shows all three layers.
+- One **OS inventory (SSH)** collector per server refreshes the OS facts every 15 minutes. The application host also feeds `host.memory_used_pct`, `host.load1` and `host.disk_used_pct` when no node_exporter collector exists.
+
+**Security**
+- SSH host keys are pinned on first use. A changed key stops collection until an admin sets *trust new host key* on the collector.
+- Passwords and private keys are encrypted with `SECRET_KEY` and are never returned by the API.
+- Only admins can run discovery.
+- root sees everything. `<sid>adm` also works, but `saphostctrl ListDatabases` needs root.
+- When you log in as root, enter the `<sid>adm` password as well to enable start/stop.
+
 ## 4. Start, stop and restart
 
 The *Instances & control* tab can start, stop or restart the whole system or one instance through sapstartsrv:

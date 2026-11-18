@@ -23,7 +23,7 @@ from datetime import datetime, timezone
 from sqlalchemy import select, update
 
 from .. import config
-from ..db import collectors, get_db, sap_instances, sap_systems
+from ..db import collectors, get_db, sap_instances, sap_systems, topology_assets, topology_links
 from . import systems
 from .collectors import CollectorError, runner, sapcontrol, simulator
 from .target_policy import TargetPolicyError, resolve_approved_addresses
@@ -441,8 +441,18 @@ def detect_hana(db_host: str, use_tls: bool, verify_tls: bool) -> dict:
 def register(data: dict) -> dict:
     """Scan again (never trust a client-side instance list), create or update the system, store the inventory,
     create collectors and run the first collection."""
-    found = scan(data["host"], data.get("username"), data.get("password"), bool(data.get("use_tls")),
-                 data.get("verify_tls", True), data.get("instance_nr"))
+    os_method = data.get("method") == "os"
+    db_target = None
+    if os_method:
+        found, os_target, db_target, (sap_user, sap_password) = _os_scan(data)
+        data = {**data, "username": sap_user, "password": sap_password}
+        if not found.get("collector"):
+            raise DiscoveryError("The SAP Start Service of this system is not reachable; start it or open port 5<NN>13 and scan again.")
+        if data.get("hana") and not data["hana"].get("abap_schema") and (found.get("database_layer") or {}).get("schema"):
+            data["hana"] = {**data["hana"], "abap_schema": found["database_layer"]["schema"]}
+    else:
+        found = scan(data["host"], data.get("username"), data.get("password"), bool(data.get("use_tls")),
+                     data.get("verify_tls", True), data.get("instance_nr"))
     if data.get("expected_sid") and data["expected_sid"].upper() != found["sid"]:
         raise DiscoveryError(f"The host now reports SID {found['sid']}, not {data['expected_sid'].upper()}; scan again")
     fields = {
@@ -523,8 +533,295 @@ def register(data: dict) -> dict:
                 "interval_seconds": int(data.get("interval_seconds") or 300)}))
         except CollectorError as exc:
             raise DiscoveryError(f"HANA collector: {exc}") from exc
+    if os_method:
+        persist_layers(systems.get_system(system["id"]), found)
+        for tgt in (os_target, db_target):
+            if tgt is None:
+                continue
+            with get_db() as connection:
+                existing_os = connection.execute(select(collectors).where(collectors.c.system_id == system["id"],
+                                                                          collectors.c.type == "os_ssh",
+                                                                          collectors.c.host == tgt.host)).mappings().first()
+            cfg = {"host": tgt.host, "port": tgt.port, "use_tls": False, "verify_tls": False, "username": tgt.username,
+                   "host_key": (found["host_key"] if tgt is os_target else found.get("db_host_key")),
+                   "interval_seconds": max(int(data.get("interval_seconds") or 300), 900)}
+            try:
+                if existing_os:
+                    created_collectors.append(runner.update_collector(existing_os["id"], {**cfg, "password": tgt.password, "private_key": tgt.private_key}))
+                else:
+                    created_collectors.append(runner.create(system["id"], {"type": "os_ssh", **cfg, "password": tgt.password,
+                                                                            "private_key": tgt.private_key}))
+            except CollectorError as exc:
+                found["warnings"].append(f"OS inventory for {tgt.host} not scheduled: {exc}")
     first_runs = [runner.run(c["id"]) for c in created_collectors] if data.get("start_monitoring", True) else []
     return {"system": systems.get_system(system["id"]), "created": created, "instances": list_instances(system["id"]),
             "collectors": [runner.view(runner.get(c["id"])) for c in created_collectors],
             "first_runs": [{"collector_id": r["collector_id"], "status": r["status"], "error": r["error"]} for r in first_runs],
             "warnings": found["warnings"]}
+
+
+# ----------------------------------------------------------------------------- OS-level discovery (SSH)
+SIDADM_RE = re.compile(r"^([a-z][a-z0-9]{2})adm$")
+
+
+def _sid_kind(instances: list[dict]) -> str:
+    names = [i["instance_name"] or "" for i in instances]
+    if names and all(n.startswith("SMDA") for n in names):
+        return "agent"
+    if names and all(n.startswith("HDB") for n in names):
+        return "database"
+    if names and all(re.match(r"^W\d\d$", n) for n in names):
+        return "webdispatcher"
+    return "application"
+
+
+def _fallback_from_profiles(host: str, sid: str, instances: list[dict], profile: dict) -> dict:
+    """When sapstartsrv cannot be reached, describe the system from the OS profiles alone."""
+    rows = [{"hostname": (i["profile_host"] or host).lower(), "instance_nr": i["instance_nr"], "instance_name": i["instance_name"],
+             "features": "", "http_port": None, "https_port": None, "start_priority": None, "status": "GRAY", "reachable": False}
+            for i in instances if i["instance_nr"]]
+    assign_roles(rows)
+    dbms = DBMS_TYPES.get((profile.get("dbms/type") or "").lower())
+    java = any(r["role"] in ("JAVA", "SCS") for r in rows) and not any(r["role"] in ("PAS", "AAS", "ASCS") for r in rows)
+    return {"host": host, "sid": sid, "instances": rows, "stack": "JAVA" if java else "ABAP", "database": dbms,
+            "db_host": profile.get("SAPDBHOST"), "product": "NW_JAVA" if java else "NW_ABAP", "product_version": None,
+            "basis_release": None, "product_evidence": None, "components": [], "suggested_environment": suggest_environment(sid),
+            "control_access": None, "collector": None, "hana_instance": None, "existing_systems": [], "warnings": [],
+            "scanned_at": datetime.now(timezone.utc).isoformat()}
+
+
+def _os_scan(data: dict):
+    from .collectors import ssh
+
+    host = (data.get("host") or "").strip().lower()
+    if not host:
+        raise DiscoveryError("Enter the hostname or IP address of an application server")
+    port = int(data.get("ssh_port") or 22)
+    os_user = (data.get("os_user") or "").strip()
+    target = ssh.SshTarget(host, port, os_user, data.get("os_password") or None, data.get("os_private_key") or None,
+                           data.get("expected_host_key") or None)
+    try:
+        inv = ssh.inventory(target)
+    except CollectorError as exc:
+        raise DiscoveryError(str(exc)) from exc
+    warnings: list[str] = []
+    grouped: dict[str, list[dict]] = {}
+    for inst in inv["instances"]:
+        grouped.setdefault(inst["sid"], []).append(inst)
+    sids = [{"sid": sid, "kind": _sid_kind(insts), "instances": [i["instance_name"] for i in insts if i["instance_name"]]}
+            for sid, insts in sorted(grouped.items())]
+    apps = [s for s in sids if s["kind"] == "application"]
+    if not apps:
+        hana = [s["sid"] for s in sids if s["kind"] == "database"]
+        if hana:
+            raise DiscoveryError(f"{host} runs only the HANA database {', '.join(hana)}. Enter an application server "
+                                 "(ASCS or PAS host); the database host is detected from the SAP profiles.")
+        raise DiscoveryError(f"No SAP system found on {host}: /usr/sap/sapservices lists no instances.")
+    sidadm = SIDADM_RE.match(os_user)
+    requested = (data.get("sid") or "").upper()
+    chosen = next((s for s in apps if s["sid"] == requested), None) \
+        or next((s for s in apps if sidadm and s["sid"] == sidadm.group(1).upper()), None) or apps[0]
+    sid = chosen["sid"]
+    if requested and requested != sid:
+        warnings.append(f"SID {requested} is not installed on {host}; using {sid}.")
+
+    sap_user, sap_password = data.get("sap_user") or None, data.get("sap_password") or None
+    if not sap_user and sidadm and sidadm.group(1).upper() == sid and data.get("os_password"):
+        sap_user, sap_password = os_user, data["os_password"]  # <sid>adm works for SSH and sapstartsrv alike
+    profile = inv["profiles"].get(sid, {})
+    local_instances = grouped[sid]
+    sap_result, last_error = None, None
+    for inst in sorted(local_instances, key=lambda i: i["instance_nr"] or "99"):
+        if not inst["instance_nr"]:
+            continue
+        try:
+            sap_result = scan(host, sap_user, sap_password, bool(data.get("use_tls")), data.get("verify_tls", True), inst["instance_nr"])
+            break
+        except DiscoveryError as exc:
+            last_error = exc
+    if sap_result is None:
+        sap_result = _fallback_from_profiles(host, sid, local_instances, profile)
+        warnings.append(f"SAP Start Service not reachable ({last_error}); instances were read from the profiles and their state is unknown.")
+    elif sap_result["sid"] != sid:
+        warnings.append(f"sapstartsrv reports SID {sap_result['sid']} while the OS profiles list {sid}.")
+    if not sap_user:
+        warnings.append(f"Logged in as {os_user}: enter the {sid.lower()}adm password to enable protected monitoring and start/stop.")
+
+    # Database layer: SAPDBHOST / dbms/type from DEFAULT.PFL, then the database host itself.
+    os_info = inv["os"]
+    db_type = DBMS_TYPES.get((profile.get("dbms/type") or "").lower()) or sap_result.get("database")
+    db_host = (profile.get("SAPDBHOST") or profile.get("j2ee/dbhost") or sap_result.get("db_host") or "").strip().lower() or None
+    local_names = {host, (os_info.get("hostname") or "").lower(), (os_info.get("fqdn") or "").lower(), *os_info.get("ip_addresses", [])}
+    local_hana = [s for s in sids if s["kind"] == "database"]
+    db_local = bool(db_host and (db_host in local_names or db_host.split(".")[0] in local_names)) or (db_type == "HANA" and bool(local_hana) and not db_host)
+    db_inv, db_target = (inv if db_local else None), None
+    if db_host and not db_local:
+        db_user = (data.get("db_os_user") or "").strip() or os_user
+        same = db_user == os_user and not (data.get("db_os_password") or data.get("db_os_private_key"))
+        db_target = ssh.SshTarget(db_host, port, db_user, data.get("db_os_password") or (target.password if same else None),
+                                  data.get("db_os_private_key") or (target.private_key if same else None),
+                                  data.get("expected_db_host_key") or None)
+        try:
+            db_inv = ssh.inventory(db_target)
+        except CollectorError as exc:
+            db_target = None
+            warnings.append(f"Database host {db_host} was not inventoried: {exc}. Enter its OS credentials to add the OS layer.")
+    database = {"type": db_type, "host": db_host or host, "on_application_host": db_local,
+                "tenant": profile.get("dbs/hdb/dbname"), "schema": profile.get("dbs/hdb/schema") or profile.get("dbs/ora/schema"),
+                "db_sid": None, "instance_nr": None, "version": None, "status": None}
+    if db_inv:
+        hdb = [i for i in db_inv["instances"] if (i["instance_name"] or "").startswith("HDB")]
+        if hdb and db_type in (None, "HANA"):
+            database.update(type="HANA", db_sid=hdb[0]["sid"], instance_nr=hdb[0]["instance_nr"],
+                            version=db_inv["hana_versions"].get(hdb[0]["sid"]))
+        elif db_inv["other_databases"]:
+            match = next((d for d in db_inv["other_databases"] if d["type"] == db_type), db_inv["other_databases"][0])
+            database.update(db_sid=match["db_sid"], version=match["version"], type=db_type or match["type"])
+        if db_inv["hostctrl_databases"]:
+            hc = db_inv["hostctrl_databases"][0]
+            database["status"] = hc.get("status")
+            database["tenant"] = database["tenant"] or hc.get("name")
+    if sap_result.get("database") is None and database["type"]:
+        sap_result["database"] = database["type"]
+    sap_warnings = [w for w in sap_result.get("warnings", []) if not w.startswith("No OS credentials given")]
+    result = {**sap_result, "method": "os", "sid": sid, "sids_on_host": sids, "host_key": inv["host_key"],
+              "os": os_info, "os_user": os_user, "database_layer": database,
+              "db_os": db_inv["os"] if db_inv and not db_local else None,
+              "db_host_key": db_inv["host_key"] if db_inv and not db_local else None,
+              "sap_credentials": bool(sap_user), "warnings": sap_warnings + warnings}
+    if not result.get("existing_systems"):
+        with get_db() as connection:
+            result["existing_systems"] = [dict(r) for r in connection.execute(
+                select(sap_systems.c.id, sap_systems.c.sid, sap_systems.c.landscape, sap_systems.c.name)
+                .where(sap_systems.c.sid == sid)).mappings().all()]
+    return result, target, db_target, (sap_user, sap_password)
+
+
+def os_scan(data: dict) -> dict:
+    """Detect application, database and OS layers from one host login (root or <sid>adm)."""
+    return _os_scan(data)[0]
+
+
+def _upsert_asset(connection, system: dict, kind: str, name: str, hostname: str | None, attributes: dict) -> int:
+    from .topology import _safe_attributes
+    import json as _json
+
+    attrs = _safe_attributes(attributes)
+    encoded = _json.dumps(attrs, separators=(",", ":"), default=str)[:8000]
+    cond = [topology_assets.c.system_id == system["id"], topology_assets.c.kind == kind, topology_assets.c.source == "discovery"]
+    cond.append(topology_assets.c.hostname == hostname if hostname else topology_assets.c.name == name)
+    row = connection.execute(select(topology_assets.c.id).where(*cond)).first()
+    now = datetime.now(timezone.utc)
+    if row:
+        connection.execute(update(topology_assets).where(topology_assets.c.id == row[0]).values(
+            name=name, attributes_json=encoded, updated_at=now, landscape=system["landscape"]))
+        return row[0]
+    return connection.execute(topology_assets.insert().values(
+        landscape=system["landscape"], system_id=system["id"], kind=kind, name=name, hostname=hostname,
+        attributes_json=encoded, source="discovery", updated_at=now).returning(topology_assets.c.id)).scalar_one()
+
+
+def _link(connection, source: int, target: int, relationship: str) -> None:
+    exists = connection.execute(select(topology_links.c.id).where(
+        topology_links.c.source_asset_id == source, topology_links.c.target_asset_id == target,
+        topology_links.c.relationship == relationship)).first()
+    now = datetime.now(timezone.utc)
+    if exists:
+        connection.execute(update(topology_links).where(topology_links.c.id == exists[0]).values(verified_at=now))
+    else:
+        connection.execute(topology_links.insert().values(source_asset_id=source, target_asset_id=target, relationship=relationship,
+                                                          source="discovery", verified_at=now,
+                                                          notes="Read from the SAP profiles and the hosts during discovery"))
+
+
+def _host_attributes(os_info: dict, host_key: str | None, role: str) -> dict:
+    keep = ("fqdn", "ip_addresses", "os_name", "os_version", "os_pretty", "kernel", "arch", "cpu_count", "cpu_model",
+            "memory_gb", "memory_used_pct", "swap_gb", "load1", "uptime_days", "virtualization", "timezone", "filesystems", "processes")
+    attrs = {k: os_info.get(k) for k in keep}
+    attrs.update(role=role, ssh_host_key=host_key, inventoried_at=datetime.now(timezone.utc).isoformat())
+    return attrs
+
+
+def persist_layers(system: dict, found: dict) -> None:
+    """Record application, database and OS layers as discovery-sourced topology assets and links."""
+    db = found.get("database_layer") or {}
+    with get_db() as connection:
+        app_host = _upsert_asset(connection, system, "host", found["os"].get("fqdn") or found["host"], found["host"],
+                                 _host_attributes(found["os"], found.get("host_key"), "application" + (" + database" if db.get("on_application_host") else "")))
+        application = _upsert_asset(connection, system, "application", f"{system['sid']} {system.get('product_label') or system['product']}", None, {
+            "sid": system["sid"], "stack": found.get("stack"), "product": found.get("product"), "product_version": found.get("product_version"),
+            "basis_release": found.get("basis_release"),
+            "instances": [{"name": i.get("instance_name"), "nr": i["instance_nr"], "host": i["hostname"], "role": i["role"]} for i in found["instances"]][:40],
+        })
+        _link(connection, application, app_host, "runs_on")
+        if db.get("type"):
+            kind = "hana" if db["type"] == "HANA" else "database"
+            database = _upsert_asset(connection, system, kind, f"{db.get('db_sid') or system['sid']} ({db['type']})", None, {
+                "type": db["type"], "db_sid": db.get("db_sid"), "tenant": db.get("tenant"), "schema": db.get("schema"),
+                "instance_nr": db.get("instance_nr"), "version": db.get("version"), "status": db.get("status"), "host": db.get("host"),
+            })
+            _link(connection, application, database, "uses_database")
+            if db.get("on_application_host"):
+                _link(connection, database, app_host, "runs_on")
+            elif found.get("db_os"):
+                db_host = _upsert_asset(connection, system, "host", found["db_os"].get("fqdn") or db["host"], db["host"],
+                                        _host_attributes(found["db_os"], found.get("db_host_key"), "database"))
+                _link(connection, database, db_host, "runs_on")
+
+
+def update_host_asset(system: dict, hostname: str, os_info: dict, host_key: str | None, observed_role: str = "application") -> str:
+    """Refresh a host's OS facts (called by the os_ssh collector) and return its role.
+
+    The role recorded by discovery wins; a role observed on the host is added to it (never removed, so a database that
+    stops does not turn its host into an application-only host and silence the process check)."""
+    import json as _json
+
+    with get_db() as connection:
+        row = connection.execute(select(topology_assets).where(topology_assets.c.system_id == system["id"],
+                                                               topology_assets.c.kind == "host",
+                                                               topology_assets.c.hostname == hostname)).mappings().first()
+        known = _json.loads(row["attributes_json"] or "{}").get("role") if row else None
+        parts = {p.strip() for r in (known, observed_role) if r for p in r.split("+")}
+        role = " + ".join(p for p in ("application", "database") if p in parts) or "application"
+        _upsert_asset(connection, system, "host", os_info.get("fqdn") or hostname, hostname, _host_attributes(os_info, host_key, role))
+    return role
+
+
+def infrastructure(system_id: int) -> dict:
+    """Application, database and OS layers of one system, as discovered."""
+    import json as _json
+
+    system = systems.get_system(system_id)
+    with get_db() as connection:
+        assets = [dict(r) for r in connection.execute(select(topology_assets).where(topology_assets.c.system_id == system_id)
+                                                      .order_by(topology_assets.c.kind, topology_assets.c.id)).mappings().all()]
+        ids = [a["id"] for a in assets]
+        links = [dict(r) for r in connection.execute(select(topology_links).where(topology_links.c.source_asset_id.in_(ids)))
+                 .mappings().all()] if ids else []
+        os_collectors = [runner.view(r) for r in connection.execute(select(collectors).where(
+            collectors.c.system_id == system_id, collectors.c.type == "os_ssh")).mappings().all()]
+    for a in assets:
+        a["attributes"] = _json.loads(a.pop("attributes_json") or "{}")
+        for k in ("created_at", "updated_at"):
+            a[k] = a[k].isoformat() if hasattr(a.get(k), "isoformat") else a.get(k)
+    for link in links:
+        for k in ("created_at", "verified_at"):
+            link[k] = link[k].isoformat() if hasattr(link.get(k), "isoformat") else link.get(k)
+    return {"system": {"id": system["id"], "sid": system["sid"], "product_label": system.get("product_label"),
+                       "stack": system["stack"], "database": system["database"], "host": system.get("host")},
+            "application": next((a for a in assets if a["kind"] == "application"), None),
+            "database": next((a for a in assets if a["kind"] in ("hana", "database")), None),
+            "hosts": [a for a in assets if a["kind"] == "host"],
+            "instances": list_instances(system_id), "links": links, "collectors": os_collectors}
+
+
+def refresh_infrastructure(system_id: int) -> dict:
+    with get_db() as connection:
+        ids = [r[0] for r in connection.execute(select(collectors.c.id).where(collectors.c.system_id == system_id,
+                                                                              collectors.c.type == "os_ssh")).all()]
+    if not ids:
+        raise DiscoveryError("No OS inventory is configured. Run discovery with an OS login (root or <sid>adm) first.")
+    results = [runner.run(i) for i in ids]
+    out = infrastructure(system_id)
+    out["refresh"] = [{"collector_id": r["collector_id"], "status": r["status"], "error": r["error"]} for r in results]
+    return out

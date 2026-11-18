@@ -11,7 +11,21 @@ router = APIRouter(prefix="/api/v1", dependencies=[Depends(authorize)])
 
 
 class ScanIn(BaseModel):
+    method: str = Field(default="sapcontrol", pattern="^(sapcontrol|os)$")
     host: str = Field(min_length=1, max_length=253)
+    # OS login (method=os): root or <sid>adm over SSH; only fixed read-only commands are run
+    os_user: str | None = Field(default=None, max_length=32)
+    os_password: str | None = Field(default=None, max_length=512)
+    os_private_key: str | None = Field(default=None, max_length=16384)
+    ssh_port: int = Field(default=22, ge=1, le=65535)
+    expected_host_key: str | None = Field(default=None, max_length=120)
+    sid: str | None = Field(default=None, max_length=3)
+    sap_user: str | None = Field(default=None, max_length=120)
+    sap_password: str | None = Field(default=None, max_length=512)
+    db_os_user: str | None = Field(default=None, max_length=32)
+    db_os_password: str | None = Field(default=None, max_length=512)
+    db_os_private_key: str | None = Field(default=None, max_length=16384)
+    expected_db_host_key: str | None = Field(default=None, max_length=120)
     username: str | None = Field(default=None, max_length=120)
     password: str | None = Field(default=None, max_length=512)
     use_tls: bool = False
@@ -71,6 +85,8 @@ def _discovery(fn, *args):
 @router.post("/discovery/scan")
 def scan(payload: ScanIn):
     """Probe a host's sapstartsrv ports and describe the SAP system found (nothing is stored)."""
+    if payload.method == "os":
+        return _discovery(discovery.os_scan, payload.model_dump())
     return _discovery(discovery.scan, payload.host, payload.username, payload.password, payload.use_tls,
                       payload.verify_tls, payload.instance_nr)
 
@@ -82,6 +98,19 @@ def register(payload: RegisterIn):
     if data.get("hana") and not data["hana"].get("host"):
         data["hana"] = None
     return _discovery(discovery.register, data)
+
+
+@router.get("/systems/{system_id}/infrastructure")
+def infrastructure(system_id: int):
+    """Application, database and OS layers recorded by discovery."""
+    load_system(system_id)
+    return discovery.infrastructure(system_id)
+
+
+@router.post("/systems/{system_id}/infrastructure/refresh")
+def refresh_infrastructure(system_id: int):
+    load_system(system_id)
+    return _discovery(discovery.refresh_infrastructure, system_id)
 
 
 @router.get("/systems/{system_id}/instances")

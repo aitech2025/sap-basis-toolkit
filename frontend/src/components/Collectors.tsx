@@ -9,9 +9,10 @@ const DEFAULTS = {
   hana: { port: 30015, interval_seconds: 300, username: "", abap_schema: "SAPHANADB" },
   node_exporter: { port: 9100, interval_seconds: 60, username: "", abap_schema: "", use_tls: false, verify_tls: false },
   hana_sapcontrol: { port: 50013, interval_seconds: 120, username: "", abap_schema: "", use_tls: false, verify_tls: false },
+  os_ssh: { port: 22, interval_seconds: 900, username: "root", abap_schema: "", use_tls: false, verify_tls: false },
 };
 type CollectorType = keyof typeof DEFAULTS;
-const TYPE_LABEL: Record<string, string> = { sapcontrol: "SAP Start Service", hana: "HANA SQL", hana_sapcontrol: "HANA instance (sapcontrol)", node_exporter: "node_exporter" };
+const TYPE_LABEL: Record<string, string> = { sapcontrol: "SAP Start Service", hana: "HANA SQL", hana_sapcontrol: "HANA instance (sapcontrol)", node_exporter: "node_exporter", os_ssh: "OS inventory (SSH)" };
 
 export function CollectorsCard({ system }: { system: SystemDetail }) {
   const { can } = useSession();
@@ -108,12 +109,13 @@ export function CollectorsCard({ system }: { system: SystemDetail }) {
                 <option value="hana" disabled={system.database !== "HANA"}>HANA SQL{system.database !== "HANA" ? " (HANA systems only)" : ""}</option>
                 <option value="hana_sapcontrol" disabled={system.database !== "HANA"}>HANA instance — sapcontrol of HDB&lt;NN&gt; (DB availability + start/stop)</option>
                 <option value="node_exporter">Host metrics (Prometheus node_exporter)</option>
+                <option value="os_ssh">OS inventory over SSH (root or &lt;sid&gt;adm, read-only)</option>
               </select></label>
             <label className="field"><span>Host</span><input required value={form.host} onChange={(e) => setForm({ ...form, host: e.target.value })} placeholder={type === "hana" ? "hdb.corp.example.com" : "sapascs.corp.example.com"} />
               <small>Use "simulator" for demo data when enabled on the server.</small></label>
             <label className="field"><span>Port</span><input type="number" required value={form.port} onChange={(e) => setForm({ ...form, port: Number(e.target.value) })} />
-              <small>{type === "hana" ? "3<NN>15 tenant / 3<NN>13 SYSTEMDB" : type === "node_exporter" ? "9100 (node_exporter)" : "5<NN>13 HTTP / 5<NN>14 HTTPS" + (type === "hana_sapcontrol" ? " of the HDB instance" : "")}</small></label>
-            {type !== "node_exporter" && <><label className="field"><span>{type === "hana" ? "Database user" : type === "hana_sapcontrol" ? "OS user (<hanasid>adm)" : "OS user (<sid>adm)"}</span><input value={form.username} autoComplete="off" onChange={(e) => setForm({ ...form, username: e.target.value })} placeholder={type === "hana" ? "MONITORING_RO" : "s4padm"} /></label>
+              <small>{type === "hana" ? "3<NN>15 tenant / 3<NN>13 SYSTEMDB" : type === "node_exporter" ? "9100 (node_exporter)" : type === "os_ssh" ? "22 (SSH); the host key is pinned on first contact" : "5<NN>13 HTTP / 5<NN>14 HTTPS" + (type === "hana_sapcontrol" ? " of the HDB instance" : "")}</small></label>
+            {type !== "node_exporter" && <><label className="field"><span>{type === "hana" ? "Database user" : type === "hana_sapcontrol" ? "OS user (<hanasid>adm)" : type === "os_ssh" ? "OS user (root or <sid>adm)" : "OS user (<sid>adm)"}</span><input value={form.username} autoComplete="off" onChange={(e) => setForm({ ...form, username: e.target.value })} placeholder={type === "hana" ? "MONITORING_RO" : "s4padm"} /></label>
             <label className="field"><span>Password</span><input type="password" autoComplete="new-password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} /><small>Stored encrypted; never shown again.</small></label></>}
             {type === "node_exporter" && <p className="muted small">No credentials are sent. Restrict port 9100 to Sentinel or expose it through a trusted TLS reverse proxy.</p>}
             {type === "hana" && <label className="field"><span>ABAP schema (optional)</span><input value={form.abap_schema} onChange={(e) => setForm({ ...form, abap_schema: e.target.value.toUpperCase() })} placeholder="SAPHANADB" /><small>Enables dumps, RFC, IDoc, job and import monitors.</small></label>}

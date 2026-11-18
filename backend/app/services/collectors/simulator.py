@@ -402,3 +402,99 @@ class SimulatedHana:
 
     def close(self) -> None:
         pass
+
+
+# ---------------------------------------------------------------------------------------- SSH (OS layer)
+def ssh_host_key(host: str) -> str:
+    import base64
+    import hashlib
+    return "SHA256:" + base64.b64encode(hashlib.sha256(f"sim-hostkey:{host}".encode()).digest()).decode().rstrip("=")
+
+
+def _sim_os(host: str, sid: str, db: bool) -> dict:
+    r = _rng(f"{host}:os")
+    redhat = sim_kind(sid) == "ecc"
+    return {
+        "name": "Red Hat Enterprise Linux" if redhat else "SLES",
+        "version": "8.8 (Ootpa)" if redhat else "15-SP5",
+        "pretty": "Red Hat Enterprise Linux 8.8 (Ootpa)" if redhat else "SUSE Linux Enterprise Server 15 SP5",
+        "id": "rhel" if redhat else "sles",
+        "kernel": "4.18.0-477.27.1.el8_8.x86_64" if redhat else "5.14.21-150500.55.49-default",
+        "cpus": 64 if db else r.choice([8, 16, 32]),
+        "mem_kb": (1024 if db else r.choice([64, 128, 256])) * 1024 * 1024,
+        "avail_ratio": r.uniform(0.15, 0.6),
+        "virt": r.choice(["kvm", "vmware", "none"]) if not db else "none",
+    }
+
+
+def ssh_command(host: str, user: str, command: str) -> str:
+    db = host.endswith("-db")
+    sid = sim_sid(host)
+    kind = sim_kind(sid)
+    hana_sid = f"{sid[:2]}H"
+    o = _sim_os(host, sid, db)
+    short = (f"hdb{sid.lower()}" if db else f"{sid.lower()}app") if kind != "ecc" or not db else f"db{sid.lower()}"
+    if "@@os-release" in command:
+        lines = ["@@os-release", f'NAME="{o["name"]}"', f'VERSION="{o["version"]}"', f'ID="{o["id"]}"', f'PRETTY_NAME="{o["pretty"]}"',
+                 "@@uname", f"Linux {o['kernel']} x86_64",
+                 "@@hostname", short, f"{short}.corp.example.test",
+                 "@@ip", f"10.20.{_rng(host).randint(1, 250)}.{_rng(host + 'x').randint(2, 250)}",
+                 "@@cpu", str(o["cpus"]), "model name\t: Intel(R) Xeon(R) Platinum 8380 CPU @ 2.30GHz",
+                 "@@mem", f"MemTotal:       {o['mem_kb']} kB", f"MemAvailable:   {int(o['mem_kb'] * o['avail_ratio'])} kB",
+                 f"SwapTotal:      {8 * 1024 * 1024} kB", "SwapFree:       8000000 kB",
+                 "@@load", f"{_rng(host + 'l').uniform(0.5, 6):.2f} 1.10 0.95 2/1450 31337",
+                 "@@uptime", f"{_rng(host + 'u').randint(5, 140) * 86400 + 4711}.33 1000.00",
+                 "@@virt", o["virt"], "@@tz", "UTC+0000",
+                 "@@df", "Filesystem 1024-blocks Used Available Capacity Mounted on",
+                 "/dev/sda2 104857600 41943040 62914560 40% /"]
+        if db and kind != "ecc":
+            lines += ["/dev/sdb1 4294967296 2920577761 1374389535 68% /hana/data",
+                      "/dev/sdc1 1073741824 322122547 751619277 30% /hana/log",
+                      "/dev/sdd1 1073741824 429496730 644245094 40% /hana/shared"]
+        elif db:
+            lines += ["/dev/sdb1 3221225472 2254857830 966367642 70% /oracle"]
+        else:
+            lines += [f"/dev/sdb1 209715200 {int(209715200 * 0.45)} {int(209715200 * 0.55)} 45% /usr/sap",
+                      "nfs:/sapmnt 104857600 31457280 73400320 30% /sapmnt"]
+        lines += ["@@whoami", user, "@@sapservices"]
+        if db and kind != "ecc":
+            lines.append(f"systemctl --no-ask-password start SAP{hana_sid}_00 # sapstartsrv pf=/usr/sap/{hana_sid}/SYS/profile/{hana_sid}_HDB00_hdb{sid.lower()}")
+        elif not db:
+            java = kind == "java"
+            for row in _layout(host, java):
+                lines.append(f"LD_LIBRARY_PATH=/usr/sap/{sid}/{row['name']}/exe; export LD_LIBRARY_PATH; "
+                             f"/usr/sap/{sid}/{row['name']}/exe/sapstartsrv pf=/usr/sap/{sid}/SYS/profile/{sid}_{row['name']}_{row['hostname']} -D -u {sid.lower()}adm")
+            lines.append("/usr/sap/DAA/SMDA98/exe/sapstartsrv pf=/usr/sap/DAA/SYS/profile/DAA_SMDA98_" + short + " -D -u daaadm")
+        lines.append("@@procs")
+        if db and kind != "ecc":
+            if db_running(host[: -len("-db")]) is not False and all(v == "GREEN" for v in _state(host, False)["status"].values()):
+                lines += ["hdbdaemon", "hdbindexserver", "hdbnameserver", "sapstartsrv"]
+            else:
+                lines += ["sapstartsrv"]
+        elif db:
+            lines += ["ora_pmon_" + sid, "ora_smon_" + sid, "saphostexec"]
+        else:
+            lines += ["disp+work", "enq_server", "gwrd", "icman", "msg_server", "sapstartsrv", "saphostexec"]
+        lines.append("@@usrsap")
+        lines.append("@@dbdirs")
+        if db and kind == "ecc":
+            lines.append(f"/oracle/{sid}/19")
+        lines.append("@@end")
+        return "\n".join(lines) + "\n"
+    if "DEFAULT.PFL" in command:
+        if f"/{sid}/" not in command:
+            return ""
+        dbms = DBMS.get(kind, "hdb")
+        return "\n".join([f"SAPSYSTEMNAME = {sid}", f"SAPGLOBALHOST = sap{'scs' if kind == 'java' else 'ascs'}",
+                          f"SAPDBHOST = {db_host_for(sid)}", f"dbms/type = {dbms}", "rdisp/mshost = sapascs",
+                          f"dbs/hdb/dbname = {sid}" if dbms == "hdb" else f"dbs/ora/tnsname = {sid}",
+                          "dbs/hdb/schema = SAPHANADB" if dbms == "hdb" else f"dbs/ora/schema = SAP{sid}"]) + "\n"
+    if "manifest" in command:
+        return "release: 2.00.079.00\nfullversion: 2.00.079.00.1720500000\nbuilt: 2024-07-09\n"
+    if "saphostctrl" in command:
+        if db and kind != "ecc":
+            return f"Instance name: HDB00, Database name: {sid}, Database type: hdb, Database status: Running\n"
+        if db:
+            return f"Instance name: {sid}, Database name: {sid}, Database type: ora, Database status: Running\n"
+        return ""
+    return ""

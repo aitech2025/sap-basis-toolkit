@@ -313,8 +313,11 @@ def build_hana(parts: dict, now: datetime | None = None) -> tuple[dict, dict, st
         metrics["hana.replication_ok"] = 1.0 if ok else 0.0
         levels.append("healthy" if ok else "critical")
     services = parts.get("services") or []
-    if any((s.get("active") or "").upper() not in ("YES", "TRUE", "1") for s in services):
-        levels.append("critical")
+    if "services" in parts:
+        inactive = sum(1 for s in services if (s.get("active") or "").upper() not in ("YES", "TRUE", "1"))
+        metrics["hana.services_inactive"] = float(inactive)
+        if inactive:
+            levels.append("critical")
     levels.append("warning" if high else "healthy")
     data = {"version": parts.get("version"), "memory": mem, "cpu_pct": parts.get("cpu_pct"), "disk": disk,
             "alerts": sorted(alerts, key=lambda a: -int(a.get("rating") or 0))[:50], "backups": backups,

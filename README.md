@@ -2,6 +2,7 @@
 
 An end-to-end SAP monitoring and Basis operations platform (SAP Basis Sentinel) with a web UI and REST API. Register every SAP system in your landscape once, from ECC and S/4HANA to BW, CRM, Solution Manager, PI/PO and NetWeaver ABAP or Java. Then:
 
+- **Three-layer discovery from one OS login:** enter an application server and its root or `<sid>adm` login. Sentinel reads the SAP profiles and the OS over read-only SSH, follows `SAPDBHOST` to the database server, and records the application, database and operating-system layers. It then keeps them refreshed and shows them in the system's *Infrastructure* tab.
 - **Auto-discovery:** enter a hostname or IP and the `<sid>adm` login. Sentinel finds the SAP Start Service, reads the SID, product, release and database, and maps every instance (ASCS/SCS, ERS, PAS, AAS, Java, Web Dispatcher). It then registers the system and starts monitoring.
 - **Start / stop / restart:** whole systems (in start-priority order) or single instances through sapstartsrv. Includes live progress, SID confirmation, a mandatory reason, an audit trail, an optional maintenance window, and production opt-in.
 - **Live monitoring:** availability, instances and work processes through the SAP Start Service (sapcontrol); HANA memory/CPU/disk, alerts, backups and system replication through read-only HANA SQL; and ABAP short dumps, system log, update errors, tRFC/qRFC and IDocs.
@@ -9,7 +10,7 @@ An end-to-end SAP monitoring and Basis operations platform (SAP Basis Sentinel) 
 - **Basis operations:** certificate expiry, table growth forecasts, user and licence optimisation, transport pre/post checks and landscape routes, background job failures and long-running locks.
 - **Security:** named users with viewer/operator/admin roles, signed sessions, an audit log, encrypted collector credentials and an outbound host allowlist.
 
-See [docs/monitoring.md](docs/monitoring.md) for collector setup, required SAP/HANA authorisations, rules and incidents. See [docs/monitoring-analytics.md](docs/monitoring-analytics.md) for historical analytics APIs, aggregation and data-quality semantics. See [docs/intelligent-operations.md](docs/intelligent-operations.md) for availability, anomaly detection, capacity projections and correlation methodology. See [docs/timeseries-storage.md](docs/timeseries-storage.md) for the telemetry storage architecture, migration and retention behaviour.
+See [docs/monitoring.md](docs/monitoring.md) for collector setup, required SAP/HANA authorisations, rules and incidents. See [docs/monitoring-analytics.md](docs/monitoring-analytics.md) for historical analytics APIs, aggregation and data-quality semantics. See [docs/intelligent-operations.md](docs/intelligent-operations.md) for availability, anomaly detection, capacity projections and correlation methodology. See [docs/timeseries-storage.md](docs/timeseries-storage.md) for the telemetry storage architecture, migration and retention behaviour. See [docs/collector-audit.md](docs/collector-audit.md) for which collector covers the application, database and OS layers, how that was verified, and known limits.
 
 ## Supported systems
 

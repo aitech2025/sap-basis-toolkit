@@ -40,8 +40,14 @@ QUERIES: dict[str, tuple[str, bool, bool]] = {
                     "FROM M_SERVICE_REPLICATION", False, False),
     "services": ("SELECT HOST, SERVICE_NAME, ACTIVE_STATUS FROM M_SERVICES", False, False),
     # These views are optional and release/privilege dependent; failures are diagnostics, not collector-wide failures.
-    "active_statements": ("SELECT COUNT(*) AS ACTIVE_COUNT, SUM(CASE WHEN DURATION_MICROSEC >= 30000000 THEN 1 ELSE 0 END) AS LONG_RUNNING, MAX(DURATION_MICROSEC) AS MAX_DURATION_US FROM M_ACTIVE_STATEMENTS", False, True),
-    "service_threads": ("SELECT COUNT(*) AS THREAD_COUNT, SUM(CASE WHEN THREAD_STATE = 'WAITING' THEN 1 ELSE 0 END) AS WAITING_THREADS FROM M_SERVICE_THREADS", False, True),
+    # M_ACTIVE_STATEMENTS has no duration column: age is derived from LAST_EXECUTED_TIME of statements still ACTIVE.
+    "active_statements": ("SELECT COUNT(*) AS ACTIVE_COUNT, "
+                          "SUM(CASE WHEN SECONDS_BETWEEN(LAST_EXECUTED_TIME, CURRENT_TIMESTAMP) >= 30 THEN 1 ELSE 0 END) AS LONG_RUNNING, "
+                          "MAX(SECONDS_BETWEEN(LAST_EXECUTED_TIME, CURRENT_TIMESTAMP)) * 1000000 AS MAX_DURATION_US "
+                          "FROM M_ACTIVE_STATEMENTS WHERE STATEMENT_STATUS = 'ACTIVE'", False, True),
+    # THREAD_STATE values are e.g. 'Running', 'Inactive', 'Semaphore Wait', 'Network Read' (mixed case, never 'WAITING').
+    "service_threads": ("SELECT SUM(CASE WHEN THREAD_STATE <> 'Inactive' THEN 1 ELSE 0 END) AS THREAD_COUNT, "
+                        "SUM(CASE WHEN THREAD_STATE LIKE '%Wait%' THEN 1 ELSE 0 END) AS WAITING_THREADS FROM M_SERVICE_THREADS", False, True),
     "expensive_statements": ("SELECT COUNT(*) AS STATEMENT_COUNT, MAX(DURATION_MICROSEC) AS MAX_DURATION_US FROM M_EXPENSIVE_STATEMENTS WHERE START_TIME >= ADD_SECONDS(CURRENT_TIMESTAMP, -3600)", False, True),
     "table_sizes": ("SELECT TABLE_NAME, SUM(MEMORY_SIZE_IN_TOTAL) AS MEMORY_SIZE_IN_TOTAL, SUM(RECORD_COUNT) AS RECORD_COUNT "
                     "FROM M_CS_TABLES WHERE SCHEMA_NAME = ? GROUP BY TABLE_NAME ORDER BY 2 DESC LIMIT 300", True, False),
