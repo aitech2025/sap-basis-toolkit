@@ -13,10 +13,11 @@ from ...db import collectors, get_db, sap_systems
 from .. import growth, incidents, monitors, ops, transports, vault
 from ..systems import system_zone
 from ..tabular import parse_sap_datetime
-from . import CollectorError, hana, node_exporter, sapcontrol, simulator, validate_port
+from . import CollectorError, ssh, hana, node_exporter, sapcontrol, simulator, validate_port
 
 logger = logging.getLogger(__name__)
-TYPES = ("sapcontrol", "hana", "hana_sapcontrol", "node_exporter")
+TYPES = ("sapcontrol", "hana", "hana_sapcontrol", "node_exporter", "os_ssh")
+# os_ssh: read-only SSH inventory of an application or database host (OS layer).
 # hana_sapcontrol: the HANA instance's own sapstartsrv (5<NN>13/14, <hanasid>adm) for DB availability and start/stop.
 
 
@@ -36,6 +37,8 @@ def view(row) -> dict:
     for k in ("use_tls", "verify_tls", "enabled"):
         item[k] = bool(item[k])
     item["has_password"] = bool(row["password_enc"])
+    item["has_private_key"] = bool(row.get("private_key_enc"))
+    item["host_key"] = row.get("host_key")
     item["last_run_at"] = _iso(row["last_run_at"])
     item["created_at"] = _iso(row["created_at"])
     item["diagnostics"] = json.loads(row["last_details"]) if row["last_details"] else []
@@ -49,8 +52,14 @@ def validate(data: dict) -> None:
     if simulator.is_sim(data["host"]):
         if not config.SIMULATOR_ENABLED:
             raise CollectorError("The demo simulator is disabled (SIMULATOR_ENABLED=false)")
+    elif data["type"] == "os_ssh":
+        allowed = {int(p) for p in str(config.SSH_ALLOWED_PORTS).split(",") if p.strip()}
+        if int(data["port"]) not in allowed:
+            raise CollectorError(f"SSH port {data['port']} is not allowed (SSH_ALLOWED_PORTS={config.SSH_ALLOWED_PORTS})")
     else:
         validate_port("sapcontrol" if data["type"] == "hana_sapcontrol" else data["type"], int(data["port"]))
+    if data["type"] == "os_ssh" and not data.get("username"):
+        raise CollectorError("OS inventory needs an OS user (root or <sid>adm)")
     if data["type"] == "hana" and not simulator.is_sim(data["host"]) and not data.get("username"):
         raise CollectorError("HANA collectors need a database user")
     if data["type"] == "node_exporter" and simulator.is_sim(data["host"]):
@@ -89,9 +98,13 @@ def create(system_id: int, data: dict) -> dict:
         if existing:
             raise CollectorError("Only one node_exporter collector per SAP system is supported until host-level metric dimensions are available")
     password = data.pop("password", None)
+    private_key = data.pop("private_key", None)
+    if data["type"] == "os_ssh" and not (password or private_key):
+        raise CollectorError("OS inventory needs the OS password or a private key")
     with get_db() as connection:
         row = connection.execute(collectors.insert().values(
-            system_id=system_id, password_enc=vault.encrypt(password), **data).returning(collectors)).mappings().one()
+            system_id=system_id, password_enc=vault.encrypt(password), private_key_enc=vault.encrypt(private_key),
+            **data).returning(collectors)).mappings().one()
     return view(row)
 
 
@@ -103,6 +116,9 @@ def update_collector(collector_id: int, changes: dict) -> dict:
         changes["abap_schema"] = (changes["abap_schema"] or "").strip().upper() or None
     password = changes.pop("password", None)
     clear_password = changes.pop("clear_password", False)
+    private_key = changes.pop("private_key", None)
+    if changes.pop("trust_new_host_key", False):
+        changes["host_key"] = None  # the next successful connection pins the new key
     if current["type"] == "node_exporter" and (password or changes.get("username")):
         raise CollectorError("node_exporter credentials are not accepted; secure the endpoint at the network or reverse-proxy layer")
     validate({**current, **changes})
@@ -110,8 +126,12 @@ def update_collector(collector_id: int, changes: dict) -> dict:
         changes["password_enc"] = vault.encrypt(password)
     elif clear_password:
         changes["password_enc"] = None
-    with get_db() as connection:
-        connection.execute(update(collectors).where(collectors.c.id == collector_id).values(**changes))
+    if private_key:
+        changes["private_key_enc"] = vault.encrypt(private_key)
+    changes = {k: v for k, v in changes.items() if k in collectors.c}
+    if changes:
+        with get_db() as connection:
+            connection.execute(update(collectors).where(collectors.c.id == collector_id).values(**changes))
     return view(get(collector_id))
 
 
@@ -281,8 +301,40 @@ def _run_node_exporter(row: dict, system: dict, persist: bool) -> tuple[dict, di
     return {"metrics": metrics, "summary": summary}, {"diagnostics": [{"call": "GET /metrics", "ok": True, "signals": sorted(metrics)}]}
 
 
+def ssh_target(row: dict) -> "ssh.SshTarget":
+    return ssh.SshTarget(row["host"], int(row["port"]), row["username"] or "", vault.decrypt(row["password_enc"]),
+                         vault.decrypt(row.get("private_key_enc")), row.get("host_key"))
+
+
+def _run_os_ssh(row: dict, system: dict, persist: bool) -> tuple[dict, dict]:
+    """Refresh the OS layer of one host: facts and current utilisation (read-only SSH)."""
+    raw = ssh.utilisation(ssh_target(row))
+    os_info = raw["os"]
+    disks = os_info.get("filesystems") or []
+    worst_disk = max((d["used_pct"] for d in disks), default=None)
+    metrics = {}
+    # host.* metrics have no host dimension yet: only the primary (application) host feeds them, and only
+    # when no node_exporter collector exists, so two sources never write the same series.
+    if persist and row["host"] == (system.get("host") or "").lower():
+        with get_db() as connection:
+            has_node = connection.execute(select(collectors.c.id).where(collectors.c.system_id == system["id"],
+                                                                      collectors.c.type == "node_exporter")).first()
+        if not has_node:
+            metrics = {k: v for k, v in {"host.memory_used_pct": os_info.get("memory_used_pct"), "host.load1": os_info.get("load1"),
+                                         "host.disk_used_pct": worst_disk}.items() if v is not None}
+    if persist:
+        from .. import discovery
+        discovery.update_host_asset(system, row["host"], os_info, raw["host_key"])
+        if not row.get("host_key") and raw["host_key"]:
+            with get_db() as connection:  # first successful contact pins the key (TOFU)
+                connection.execute(update(collectors).where(collectors.c.id == row["id"]).values(host_key=raw["host_key"]))
+    summary = {"host": row["host"], "os": os_info.get("os_pretty"), "kernel": os_info.get("kernel"),
+               "memory_used_pct": os_info.get("memory_used_pct"), "load1": os_info.get("load1"), "disk_used_pct": worst_disk}
+    return {"metrics": metrics, "summary": summary}, {"diagnostics": [{"call": "ssh inventory", "ok": True, "host_key": raw["host_key"]}]}
+
+
 RUNNERS = {"sapcontrol": _run_sapcontrol, "hana": _run_hana, "hana_sapcontrol": _run_hana_sapcontrol,
-           "node_exporter": _run_node_exporter}
+           "node_exporter": _run_node_exporter, "os_ssh": _run_os_ssh}
 
 
 def run(collector_id: int, persist: bool = True) -> dict:

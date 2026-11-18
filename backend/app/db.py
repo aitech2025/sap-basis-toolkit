@@ -263,6 +263,8 @@ collectors = Table(
     Column("password_enc", Text),
     Column("database_name", String(64)),                # HANA tenant (informational / SYSTEMDB routing)
     Column("abap_schema", String(64)),                  # e.g. SAPHANADB / SAPABAP1: enables ABAP table monitors
+    Column("private_key_enc", Text),                     # os_ssh: encrypted private key (alternative to password)
+    Column("host_key", String(120)),                     # os_ssh: pinned SSH host key fingerprint (TOFU)
     Column("interval_seconds", Integer, nullable=False, default=300),
     Column("enabled", Boolean, nullable=False, default=True),
     Column("last_run_at", DateTime(timezone=True)),
@@ -473,6 +475,7 @@ Index("ix_topology_links_target", topology_links.c.target_asset_id)
 ADDED_COLUMNS = {
     "targets": [("system_id", "INTEGER REFERENCES sap_systems(id) ON DELETE SET NULL")],
     "sap_systems": [("timezone", "VARCHAR(64)"), ("control_enabled", "BOOLEAN")],
+    "collectors": [("private_key_enc", "TEXT"), ("host_key", "VARCHAR(120)")],
     "system_operations": [("steps", "TEXT"), ("checklist", "TEXT"), ("force", "BOOLEAN"), ("abort_requested", "BOOLEAN")],
 }
 

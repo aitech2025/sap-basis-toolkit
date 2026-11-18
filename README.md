@@ -2,6 +2,7 @@
 
 An end-to-end SAP monitoring and Basis operations platform (SAP Basis Sentinel) with a web UI and REST API. Register every SAP system in your landscape once, from ECC and S/4HANA to BW, CRM, Solution Manager, PI/PO and NetWeaver ABAP or Java. Then:
 
+- **Three-layer discovery from one OS login:** enter an application server and its root or `<sid>adm` login. Sentinel reads the SAP profiles and the OS over read-only SSH, follows `SAPDBHOST` to the database server, and records the application, database and operating-system layers. It then keeps them refreshed and shows them in the system's *Infrastructure* tab.
 - **Auto-discovery:** enter a hostname or IP and the `<sid>adm` login. Sentinel finds the SAP Start Service, reads the SID, product, release and database, and maps every instance (ASCS/SCS, ERS, PAS, AAS, Java, Web Dispatcher). It then registers the system and starts monitoring.
 - **Start / stop / restart:** whole systems (in start-priority order) or single instances through sapstartsrv. Includes live progress, SID confirmation, a mandatory reason, an audit trail, an optional maintenance window, and production opt-in.
 - **Live monitoring:** availability, instances and work processes through the SAP Start Service (sapcontrol); HANA memory/CPU/disk, alerts, backups and system replication through read-only HANA SQL; and ABAP short dumps, system log, update errors, tRFC/qRFC and IDocs.
