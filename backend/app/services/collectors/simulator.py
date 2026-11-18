@@ -71,7 +71,26 @@ def sim_kind(sid: str) -> str:
     return "s4"
 
 
+def is_db_seed(seed: str) -> bool:
+    return seed.startswith(SIM_HOST + "-") and seed.endswith("-db")
+
+
+def db_host_for(sid: str) -> str:
+    return f"{SIM_HOST}-{sid.lower()}-db"
+
+
+def db_running(app_seed: str) -> bool | None:
+    """State of the simulated HANA belonging to an application seed (None: never contacted)."""
+    db_seed = f"{app_seed}-db"
+    if db_seed not in _STATE:
+        return None
+    return all(v == "GREEN" for v in _state(db_seed, False)["status"].values())
+
+
 def _layout(seed: str, java: bool) -> list[dict]:
+    if is_db_seed(seed):
+        sid = sim_sid(seed)
+        return [{"nr": "00", "hostname": f"hdb{sid.lower()}", "name": "HDB00", "features": "HDB|HDB_WORKER", "prio": "0.3"}]
     p = profile(seed)
     central = "SCS" if java else "ASCS"
     rows = [
@@ -88,7 +107,8 @@ def _state(seed: str, java: bool) -> dict:
     with _STATE_LOCK:
         if seed not in _STATE:
             p = profile(seed)
-            down_nr = f"{p['instances'] - 1:02d}" if p["fragile"] and _rng(f"{seed}:down").random() < 0.5 else None
+            down_nr = (f"{p['instances'] - 1:02d}" if p["fragile"] and not is_db_seed(seed)
+                       and _rng(f"{seed}:down").random() < 0.5 else None)
             _STATE[seed] = {"layout": _layout(seed, java),
                             "status": {row["nr"]: ("GRAY" if row["nr"] == down_nr else "GREEN") for row in _layout(seed, java)},
                             "pending": []}
@@ -139,7 +159,7 @@ def sapcontrol_transport(seed: str, java: bool = False):
     p = profile(seed)
     named = seed.startswith(SIM_HOST + "-")
     sid = sim_sid(seed) if named else "SIM"
-    kind = "java" if java else sim_kind(sid if named else "S4")
+    kind = "hana" if is_db_seed(seed) else ("java" if java else sim_kind(sid if named else "S4"))
     java = java or kind == "java"
 
     def transport(endpoint, method: str, body: str) -> str:
@@ -163,14 +183,15 @@ def sapcontrol_transport(seed: str, java: bool = False):
                  "httpsPort": int(f"5{x['nr']}14"), "startPriority": x["prio"], "features": x["features"],
                  "dispstatus": f"SAPControl-{state['status'][x['nr']]}"} for x in state["layout"]]))
         if method == "GetInstanceProperties":
-            props = [("SAPSYSTEMNAME", sid), ("SAPSYSTEM", instance_nr), ("INSTANCE_NAME", row["name"]),
+            props = [("SAPSYSTEMNAME", f"{sid[:2]}H" if kind == "hana" else sid), ("SAPSYSTEM", instance_nr), ("INSTANCE_NAME", row["name"]),
                      ("SAPLOCALHOST", row["hostname"]), ("StartPriority", row["prio"])]
             return _envelope(method, "<properties>" + "".join(
                 f"<item><property>{k}</property><propertytype>Attribute</propertytype><value>{v}</value></item>" for k, v in props)
                 + "</properties>")
         if method == "ParameterValue":
             name = body.split("<parameter>", 1)[1].split("</parameter>", 1)[0] if "<parameter>" in body else ""
-            value = {"dbms/type": DBMS.get(kind, "hdb"), "SAPDBHOST": f"hdb{sid.lower()}",
+            value = {"dbms/type": DBMS.get(kind, "hdb"),
+                     "SAPDBHOST": db_host_for(sid) if named and DBMS.get(kind, "hdb") == "hdb" else f"db{sid.lower()}",
                      "SAPSYSTEMNAME": sid}.get(name, "")
             return _envelope(method, f"<value>{value}</value>")
         if method == "ABAPGetComponentList":
@@ -179,8 +200,14 @@ def sapcontrol_transport(seed: str, java: bool = False):
             return _envelope(method, _items("component", [
                 {"component": c, "release": rel, "patchlevel": pl, "componenttype": "S", "description": c}
                 for c, rel, pl in COMPONENTS.get(kind, COMPONENTS["s4"])]))
+        # Application servers cannot connect when the (simulated) database is down: they end RED.
+        db_down = named and kind not in ("hana",) and db_running(seed) is False
+        app_target = "RED" if db_down and ("ABAP" in row["features"] or "J2EE" in row["features"]) else "GREEN"
         if method in ("Start", "Stop", "RestartInstance"):
-            steps = {"Start": [(3, "GREEN")], "Stop": [(3, "GRAY")], "RestartInstance": [(2, "GRAY"), (5, "GREEN")]}[method]
+            steps = {"Start": [(3, app_target)], "Stop": [(3, "GRAY")],
+                     "RestartInstance": [(2, "GRAY"), (5, app_target)]}[method]
+            if kind == "hana":
+                steps = {"Start": [(6, "GREEN")], "Stop": [(4, "GRAY")], "RestartInstance": [(4, "GRAY"), (10, "GREEN")]}[method]
             _schedule(seed, java, [instance_nr], steps)
             return _envelope(method, "")
         if method in ("StartSystem", "StopSystem", "RestartSystem"):
@@ -198,7 +225,10 @@ def sapcontrol_transport(seed: str, java: bool = False):
                 _schedule(seed, java, central, [(4, "GRAY"), (6, "GREEN")])
             return _envelope(method, "")
         if method == "GetProcessList":
-            if "MESSAGESERVER" in row["features"]:
+            if kind == "hana":
+                procs = [("hdbdaemon", "HDB Daemon"), ("hdbnameserver", "HDB Nameserver"), ("hdbindexserver", "HDB Indexserver-" + sid[:2] + "H"),
+                         ("hdbcompileserver", "HDB Compileserver"), ("hdbpreprocessor", "HDB Preprocessor"), ("hdbwebdispatcher", "HDB Web Dispatcher")]
+            elif "MESSAGESERVER" in row["features"]:
                 procs = [("msg_server", "MessageServer"), ("enq_server", "Enqueue Server 2")]
             elif "ENQREP" in row["features"]:
                 procs = [("enq_replicator", "Enqueue Replicator 2")]
@@ -265,7 +295,16 @@ class SimulatedHana:
         self.now = datetime.now(timezone.utc)
 
     def query(self, name: str, sql: str, params: tuple = ()) -> list[dict]:
+        if is_db_seed(self.seed) and self.seed in _STATE and not all(
+                v == "GREEN" for v in _state(self.seed, False)["status"].values()):
+            raise ConnectionError("Connection refused: SAP HANA is not running")
         r, p, now = self.r, self.p, self.now
+        if name == "ping":
+            return [{"OK": 1}]
+        if name == "pending_updates":
+            return [{"N": 0}]
+        if name == "running_jobs":
+            return [{"N": r.randint(0, 3)}]
         gb = 1024 ** 3
         if name == "version":
             return [{"VERSION": "2.00.079.00.1720500000"}]
@@ -363,3 +402,99 @@ class SimulatedHana:
 
     def close(self) -> None:
         pass
+
+
+# ---------------------------------------------------------------------------------------- SSH (OS layer)
+def ssh_host_key(host: str) -> str:
+    import base64
+    import hashlib
+    return "SHA256:" + base64.b64encode(hashlib.sha256(f"sim-hostkey:{host}".encode()).digest()).decode().rstrip("=")
+
+
+def _sim_os(host: str, sid: str, db: bool) -> dict:
+    r = _rng(f"{host}:os")
+    redhat = sim_kind(sid) == "ecc"
+    return {
+        "name": "Red Hat Enterprise Linux" if redhat else "SLES",
+        "version": "8.8 (Ootpa)" if redhat else "15-SP5",
+        "pretty": "Red Hat Enterprise Linux 8.8 (Ootpa)" if redhat else "SUSE Linux Enterprise Server 15 SP5",
+        "id": "rhel" if redhat else "sles",
+        "kernel": "4.18.0-477.27.1.el8_8.x86_64" if redhat else "5.14.21-150500.55.49-default",
+        "cpus": 64 if db else r.choice([8, 16, 32]),
+        "mem_kb": (1024 if db else r.choice([64, 128, 256])) * 1024 * 1024,
+        "avail_ratio": r.uniform(0.15, 0.6),
+        "virt": r.choice(["kvm", "vmware", "none"]) if not db else "none",
+    }
+
+
+def ssh_command(host: str, user: str, command: str) -> str:
+    db = host.endswith("-db")
+    sid = sim_sid(host)
+    kind = sim_kind(sid)
+    hana_sid = f"{sid[:2]}H"
+    o = _sim_os(host, sid, db)
+    short = (f"hdb{sid.lower()}" if db else f"{sid.lower()}app") if kind != "ecc" or not db else f"db{sid.lower()}"
+    if "@@os-release" in command:
+        lines = ["@@os-release", f'NAME="{o["name"]}"', f'VERSION="{o["version"]}"', f'ID="{o["id"]}"', f'PRETTY_NAME="{o["pretty"]}"',
+                 "@@uname", f"Linux {o['kernel']} x86_64",
+                 "@@hostname", short, f"{short}.corp.example.test",
+                 "@@ip", f"10.20.{_rng(host).randint(1, 250)}.{_rng(host + 'x').randint(2, 250)}",
+                 "@@cpu", str(o["cpus"]), "model name\t: Intel(R) Xeon(R) Platinum 8380 CPU @ 2.30GHz",
+                 "@@mem", f"MemTotal:       {o['mem_kb']} kB", f"MemAvailable:   {int(o['mem_kb'] * o['avail_ratio'])} kB",
+                 f"SwapTotal:      {8 * 1024 * 1024} kB", "SwapFree:       8000000 kB",
+                 "@@load", f"{_rng(host + 'l').uniform(0.5, 6):.2f} 1.10 0.95 2/1450 31337",
+                 "@@uptime", f"{_rng(host + 'u').randint(5, 140) * 86400 + 4711}.33 1000.00",
+                 "@@virt", o["virt"], "@@tz", "UTC+0000",
+                 "@@df", "Filesystem 1024-blocks Used Available Capacity Mounted on",
+                 "/dev/sda2 104857600 41943040 62914560 40% /"]
+        if db and kind != "ecc":
+            lines += ["/dev/sdb1 4294967296 2920577761 1374389535 68% /hana/data",
+                      "/dev/sdc1 1073741824 322122547 751619277 30% /hana/log",
+                      "/dev/sdd1 1073741824 429496730 644245094 40% /hana/shared"]
+        elif db:
+            lines += ["/dev/sdb1 3221225472 2254857830 966367642 70% /oracle"]
+        else:
+            lines += [f"/dev/sdb1 209715200 {int(209715200 * 0.45)} {int(209715200 * 0.55)} 45% /usr/sap",
+                      "nfs:/sapmnt 104857600 31457280 73400320 30% /sapmnt"]
+        lines += ["@@whoami", user, "@@sapservices"]
+        if db and kind != "ecc":
+            lines.append(f"systemctl --no-ask-password start SAP{hana_sid}_00 # sapstartsrv pf=/usr/sap/{hana_sid}/SYS/profile/{hana_sid}_HDB00_hdb{sid.lower()}")
+        elif not db:
+            java = kind == "java"
+            for row in _layout(host, java):
+                lines.append(f"LD_LIBRARY_PATH=/usr/sap/{sid}/{row['name']}/exe; export LD_LIBRARY_PATH; "
+                             f"/usr/sap/{sid}/{row['name']}/exe/sapstartsrv pf=/usr/sap/{sid}/SYS/profile/{sid}_{row['name']}_{row['hostname']} -D -u {sid.lower()}adm")
+            lines.append("/usr/sap/DAA/SMDA98/exe/sapstartsrv pf=/usr/sap/DAA/SYS/profile/DAA_SMDA98_" + short + " -D -u daaadm")
+        lines.append("@@procs")
+        if db and kind != "ecc":
+            if db_running(host[: -len("-db")]) is not False and all(v == "GREEN" for v in _state(host, False)["status"].values()):
+                lines += ["hdbdaemon", "hdbindexserver", "hdbnameserver", "sapstartsrv"]
+            else:
+                lines += ["sapstartsrv"]
+        elif db:
+            lines += ["ora_pmon_" + sid, "ora_smon_" + sid, "saphostexec"]
+        else:
+            lines += ["disp+work", "enq_server", "gwrd", "icman", "msg_server", "sapstartsrv", "saphostexec"]
+        lines.append("@@usrsap")
+        lines.append("@@dbdirs")
+        if db and kind == "ecc":
+            lines.append(f"/oracle/{sid}/19")
+        lines.append("@@end")
+        return "\n".join(lines) + "\n"
+    if "DEFAULT.PFL" in command:
+        if f"/{sid}/" not in command:
+            return ""
+        dbms = DBMS.get(kind, "hdb")
+        return "\n".join([f"SAPSYSTEMNAME = {sid}", f"SAPGLOBALHOST = sap{'scs' if kind == 'java' else 'ascs'}",
+                          f"SAPDBHOST = {db_host_for(sid)}", f"dbms/type = {dbms}", "rdisp/mshost = sapascs",
+                          f"dbs/hdb/dbname = {sid}" if dbms == "hdb" else f"dbs/ora/tnsname = {sid}",
+                          "dbs/hdb/schema = SAPHANADB" if dbms == "hdb" else f"dbs/ora/schema = SAP{sid}"]) + "\n"
+    if "manifest" in command:
+        return "release: 2.00.079.00\nfullversion: 2.00.079.00.1720500000\nbuilt: 2024-07-09\n"
+    if "saphostctrl" in command:
+        if db and kind != "ecc":
+            return f"Instance name: HDB00, Database name: {sid}, Database type: hdb, Database status: Running\n"
+        if db:
+            return f"Instance name: {sid}, Database name: {sid}, Database type: ora, Database status: Running\n"
+        return ""
+    return ""

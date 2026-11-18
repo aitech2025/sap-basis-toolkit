@@ -1,18 +1,31 @@
-import { Fragment, type ReactNode } from "react";
+import { Fragment, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../../api";
-import { Card, DataTable, Empty, ErrorBanner, Pill, fmtDate, fmtNumber, useAsync } from "../../components/ui";
+import { ArrowRight, Cpu, HardDrive, MemoryStick, Server, Siren } from "lucide-react";
+import { Sparkline, TrendArea } from "../../components/charts";
+import { Card, DataTable, Empty, ErrorBanner, Pill, Tile, fmtDate, fmtNumber, statusTone, useAsync } from "../../components/ui";
+import { Skeleton } from "../../components/ui/skeleton";
+import { cn } from "../../lib/utils";
 import type { MonitorsResponse, SystemDetail } from "../../types";
 import { IncidentTable } from "../Incidents";
+
+const EDGE: Record<string, string> = { good: "bg-good", warn: "bg-warn", bad: "bg-bad", idle: "bg-idle/40" };
+const toneOf = (h: string | null | undefined) => {
+  const t = statusTone(h);
+  return t === "idle" ? undefined : t;
+};
 
 function ModuleCard({ to, title, status, children, cta }: {
   to: string; title: string; status: string; children: ReactNode; cta: string;
 }) {
   return (
-    <Link to={to} className="module-card">
-      <div className="module-head"><h3>{title}</h3><Pill value={status} /></div>
-      <div className="module-body">{children}</div>
-      <span className="module-cta">{cta} →</span>
+    <Link to={to} className="group relative flex min-w-0 flex-col rounded-3xl bg-card p-5 text-foreground transition-shadow hover:no-underline hover:shadow-[0_14px_34px_-18px_hsl(var(--shadow)/0.45)]">
+      <div className="mb-3 flex items-start justify-between gap-2">
+        <h3 className="flex items-center gap-2 text-base font-bold"><span aria-hidden="true" className={cn("h-2 w-2 rounded-full", EDGE[statusTone(status)])} />{title}</h3>
+        <Pill value={status} />
+      </div>
+      <div className="space-y-1 text-[13px] [&_p]:m-0">{children}</div>
+      <span className="mt-auto inline-flex items-center gap-1 pt-4 text-xs font-semibold text-primary">{cta}<ArrowRight className="h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5" /></span>
     </Link>
   );
 }
@@ -30,10 +43,13 @@ function LiveRow({ system, base, live }: { system: SystemDetail; base: string; l
   const collectorErrors = live.collectors.filter((c) => c.last_status === "error");
   return (
     <>
-      <h2 className="section-title">Live status {!live.collectors.length && <Link className="small" to={`${base}/setup`} style={{ fontWeight: 500 }}>· set up a live collector →</Link>}</h2>
+      <div className="mb-3 mt-8 flex items-baseline justify-between gap-3">
+        <h2 className="text-base">Live monitoring</h2>
+        {!live.collectors.length && <Link className="text-sm" to={`${base}/setup`}>Set up a live collector</Link>}
+      </div>
       {collectorErrors.map((c) => <div key={c.id} className="banner error">Collector {c.type} ({c.host}) failed: {c.last_error}</div>)}
       {!has && live.collectors.length > 0 && <div className="banner info">Collectors are configured; the first results appear after their next run.</div>}
-      <div className="module-grid live">
+      <div className="mb-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
         <ModuleCard to={`${base}/availability`} title="Availability" status={m.availability ? (av?.system_up ? m.availability.health : "critical") : "unknown"} cta="Instances & work processes">
           {av ? (
             <>
@@ -86,13 +102,38 @@ const RUN_LABEL: Record<string, string> = {
   users: "User & licence analysis", jobs: "Background job upload", "transports-precheck": "Transport pre-check", "transports-postcheck": "Import post-check",
 };
 
+const PERF = [
+  { key: "wp.dia_busy_pct", label: "Dialog load", unit: "%", threshold: { value: 80, label: "80% warning" } },
+  { key: "wp.btc_busy_pct", label: "Batch load", unit: "%", threshold: { value: 90, label: "90% warning" } },
+  { key: "hana.memory_used_pct", label: "HANA memory", unit: "%", threshold: { value: 85, label: "85% warning" } },
+  { key: "hana.cpu_pct", label: "HANA CPU", unit: "%", threshold: { value: 80, label: "80% warning" } },
+  { key: "dumps.last_hour", label: "Dumps / hour", unit: "dumps", threshold: undefined },
+];
+type Series = { points: { ts: string; value: number }[] }[] | null | undefined;
+const pts = (series: Series) => (series?.[0]?.points ?? []).map((p) => ({ t: Date.parse(p.ts), v: p.value }));
+const last = (series: Series, unit: string) => {
+  const p = series?.[0]?.points;
+  return p?.length ? `${Math.round(p[p.length - 1].value)}${unit}` : "–";
+};
+
 export default function OverviewTab({ system }: { system: SystemDetail }) {
   const { data, error } = useAsync(() => api.systemOverview(system.id), [system.id]);
+  const [perf, setPerf] = useState(system.stack === "JAVA" ? "hana.memory_used_pct" : "wp.dia_busy_pct");
+  const opts = { hours: 24, bucketSeconds: 1800, aggregation: "avg" as const, systemId: system.id };
+  const spark = useAsync(async () => {
+    const [down, dia, mem] = await Promise.all([
+      api.analyticsSeries("availability.instances_down", { ...opts, aggregation: "max" }),
+      api.analyticsSeries("wp.dia_busy_pct", opts),
+      system.database === "HANA" ? api.analyticsSeries("hana.memory_used_pct", opts) : Promise.resolve(null),
+    ]);
+    return { down: down.series, dia: dia.series, mem: mem?.series };
+  }, [system.id]);
+  const perfData = useAsync(async () => (await api.analyticsSeries(perf, opts)).series, [system.id, perf]);
   const live = useAsync(() => api.monitors(system.id), [system.id]);
   const active = useAsync(() => api.incidents(`?status=active&system_id=${system.id}`), [system.id]);
   const base = `/systems/${system.id}`;
   if (error) return <ErrorBanner error={error} />;
-  if (!data) return <p className="muted">Loading {system.sid}…</p>;
+  if (!data) return <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">{[0, 1, 2, 3, 4].map((i) => <Skeleton key={i} className="h-[88px]" />)}</div>;
 
   const caps = data.system.capabilities;
   const c = data.certificates, g = data.growth, u = data.users?.summary, pre = data.transports.precheck, post = data.transports.postcheck;
@@ -109,33 +150,48 @@ export default function OverviewTab({ system }: { system: SystemDetail }) {
 
   return (
     <>
-      <section className="system-command-center">
-        <div className="system-command-top">
-          <div>
-            <span className="eyebrow">SYSTEM COMMAND CENTER · {system.environment} ENVIRONMENT</span>
-            <h2>{system.sid} operational posture</h2>
-            <p>Live telemetry, platform health and operational risk for this SAP system.</p>
-          </div>
-          <div className="system-command-status"><span className={`system-status-dot ${data.health === "healthy" ? "is-good" : data.health === "critical" ? "is-bad" : data.health === "warning" ? "is-warn" : ""}`} /><Pill value={data.health} /></div>
-        </div>
-        <div className="system-kpi-grid">
-          <div className="system-kpi"><span>Overall health</span><strong>{data.health === "healthy" ? "Healthy" : data.health === "unknown" ? "No data" : data.health}</strong><small>Composite system signal</small></div>
-          <div className="system-kpi"><span>Instances running</span><strong>{runningInstances}</strong><small>{liveAvailability?.system_up ? "SAP system available" : "Latest availability snapshot"}</small></div>
-          <div className={`system-kpi ${activeCount ? "kpi-alert" : ""}`}><span>Active incidents</span><strong>{activeCount}</strong><small>{activeCount ? "Requires operator attention" : "No active incidents"}</small></div>
-          <div className="system-kpi"><span>Disk / HANA memory</span><strong>{diskValue} <i>·</i> {hanaMemory}</strong><small>Disk used · HANA memory used</small></div>
-        </div>
-        <div className="system-command-footer">
-          <span><i className="live-dot" /> Collector telemetry</span>
-          <span>{live.data?.collectors.length ?? 0} configured collectors</span>
-          <span>{live.data?.collectors.filter((c) => c.last_status === "error").length ?? 0} collector errors</span>
-          <span>Certificate posture: <Pill value={c.health} /></span>
-          <span>Capacity posture: <Pill value={g.health} /></span>
-        </div>
-      </section>
-      <div className={`banner ${data.health === "critical" ? "error" : data.health === "healthy" ? "ok" : "info"}`}>
-        <strong>{system.sid}</strong> overall health: <Pill value={data.health} />
-        <span className="muted"> · worst of live availability, open incidents, certificates, capacity forecast, jobs, locks and the last import</span>
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <Tile label="Instances running" icon={Server} value={runningInstances}
+              tone={liveAvailability ? (liveAvailability.system_up && liveAvailability.running === liveAvailability.instances ? "good" : liveAvailability.system_up ? "warn" : "bad") : undefined}
+              hint={liveAvailability ? (liveAvailability.system_up ? "System available. Instances down, 24 h" : "System NOT available") : "No availability data"}
+              chart={<Sparkline points={pts(spark.data?.down)} color="hsl(var(--warn))" />} />
+        <Tile label="Dialog load" icon={Cpu} value={last(spark.data?.dia, "%")}
+              hint="DIA work processes busy, 24 h" chart={<Sparkline points={pts(spark.data?.dia)} />} />
+        <Tile label="Active incidents" icon={Siren} value={activeCount} tone={activeCount ? "bad" : "good"}
+              hint={`Overall health: ${data.health === "unknown" ? "no data" : data.health}`} />
+        {system.database === "HANA" ? (
+          <Tile label="HANA memory" icon={MemoryStick} value={hanaMemory} tone={toneOf(liveHana ? (liveHana.memory?.pct >= 95 ? "critical" : liveHana.memory?.pct >= 85 ? "warning" : "healthy") : null)}
+                hint="Used of allocation limit, 24 h" chart={<Sparkline points={pts(spark.data?.mem)} />} />
+        ) : (
+          <Tile label="Disk used" icon={HardDrive} value={diskValue} tone={toneOf(g.health)}
+                hint={g.days_until_threshold != null ? `${g.days_until_threshold} days to threshold` : "Capacity forecast"} />
+        )}
       </div>
+
+      <Card title="Performance, last 24 hours" className="mb-0 mt-4"
+            actions={
+              <div className="inline-flex rounded-full bg-surface p-1" role="tablist" aria-label="Metric">
+                {PERF.filter((m) => system.database === "HANA" || !m.key.startsWith("hana")).filter((m) => system.stack !== "JAVA" || !m.key.startsWith("wp") && !m.key.startsWith("dumps")).map((m) => (
+                  <button key={m.key} role="tab" aria-selected={perf === m.key} onClick={() => setPerf(m.key)}
+                    className={cn("rounded-full px-3 py-1.5 text-xs font-semibold transition-colors", perf === m.key ? "bg-foreground text-background" : "text-muted-foreground hover:text-foreground")}>
+                    {m.label}
+                  </button>
+                ))}
+              </div>
+            }>
+          <TrendArea height={240} unit={PERF.find((m) => m.key === perf)?.unit} label={`${system.sid} ${perf}`}
+            points={pts(perfData.data)} threshold={PERF.find((m) => m.key === perf)?.threshold} />
+      </Card>
+      {live.data && (
+        <div className="mt-3 flex flex-wrap items-center gap-x-5 gap-y-1.5 text-xs text-muted-foreground">
+          <span>{live.data.collectors.length} collector{live.data.collectors.length === 1 ? "" : "s"} configured</span>
+          {live.data.collectors.some((x) => x.last_status === "error") && (
+            <span className="text-bad">{live.data.collectors.filter((x) => x.last_status === "error").length} collector error(s)</span>
+          )}
+          <span className="flex items-center gap-1.5">Certificates <Pill value={c.health} /></span>
+          <span className="flex items-center gap-1.5">Capacity <Pill value={g.health} /></span>
+        </div>
+      )}
 
       <LiveRow system={system} base={base} live={live.data} />
       {!!active.data?.length && (
@@ -143,8 +199,8 @@ export default function OverviewTab({ system }: { system: SystemDetail }) {
           <IncidentTable rows={active.data.slice(0, 8)} showSystem={false} />
         </Card>
       )}
-      <h2 className="section-title">Operations</h2>
-      <div className="module-grid">
+      <h2 className="mb-3 mt-8 text-base">Operations</h2>
+      <div className="mb-6 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
         <ModuleCard to={`${base}/certificates`} title="Certificates" status={c.count ? c.health : "unknown"} cta="Manage certificates">
           {c.count ? (
             <>

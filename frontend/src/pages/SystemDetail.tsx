@@ -3,7 +3,12 @@ import { NavLink, Navigate, Route, Routes, useNavigate, useParams } from "react-
 import { api } from "../api";
 import { SystemForm } from "../components/SystemForm";
 import { RequireRole } from "../components/session";
+import { Pencil, Trash2 } from "lucide-react";
 import { ErrorBanner, Pill, useAsync } from "../components/ui";
+import { Badge } from "../components/ui/badge";
+import { Button } from "../components/ui/button";
+import { Skeleton } from "../components/ui/skeleton";
+import { cn } from "../lib/utils";
 import AvailabilityTab from "./system/AvailabilityTab";
 import CertificatesTab from "./system/CertificatesTab";
 import ErrorsTab from "./system/ErrorsTab";
@@ -11,6 +16,7 @@ import HanaTab from "./system/HanaTab";
 import InterfacesTab from "./system/InterfacesTab";
 import GrowthTab from "./system/GrowthTab";
 import HistoryTab from "./system/HistoryTab";
+import InfrastructureTab from "./system/InfrastructureTab";
 import InstancesTab from "./system/InstancesTab";
 import JobsTab from "./system/JobsTab";
 import LocksTab from "./system/LocksTab";
@@ -34,10 +40,10 @@ export default function SystemDetailPage() {
   };
 
   if (error) return <ErrorBanner error={error} />;
-  if (!system || system.id !== id) return <p className="muted">Loading…</p>;
+  if (!system || system.id !== id) return <div className="space-y-4"><Skeleton className="h-14 w-96" /><Skeleton className="h-9 w-full" /><Skeleton className="h-64 w-full" /></div>;
   const abap = system.stack !== "JAVA";
   const tabs = [
-    ["", "Overview"], ["instances", "Instances & control"], ["availability", "Availability"],
+    ["", "Overview"], ["infrastructure", "Infrastructure"], ["instances", "Instances & control"], ["availability", "Availability"],
     ...(abap ? [["errors", "Errors"], ["interfaces", "Interfaces"]] : []),
     ...(system.database === "HANA" ? [["hana", "HANA"]] : []),
     ["certificates", "Certificates"], ["growth", "Table growth"],
@@ -48,42 +54,52 @@ export default function SystemDetailPage() {
     ["history", "History"], ["setup", "Setup & export guide"],
   ] as [string, string][];
 
+  const host = system.host ? <span className="font-mono">{system.host}</span> : null;
   return (
     <>
-      <section className="system-masthead">
-        <div className="system-masthead-main">
-          <div className="system-breadcrumb"><NavLink to="/systems">SAP systems</NavLink><span>/</span><NavLink to={`/landscapes/${encodeURIComponent(system.landscape)}`}>{system.landscape}</NavLink><span>/</span><strong>{system.sid}</strong></div>
-          <div className="system-title-row">
-            <div className="system-monogram">{system.sid.slice(0, 1)}</div>
-            <div><span className="eyebrow">SAP SYSTEM WORKSPACE · {system.environment}</span><h1>{system.sid} <span>{system.name}</span></h1></div>
-            <Pill value={system.enabled ? "enabled" : "disabled"} />
+      <div className="mb-5 flex flex-wrap items-start justify-between gap-4">
+        <div className="flex min-w-0 items-start gap-4">
+          <div className="flex h-16 min-w-[80px] items-center justify-center rounded-3xl bg-gradient-to-br from-[hsl(252_90%_72%)] to-primary px-4 font-mono text-2xl font-bold tracking-tight text-white shadow-[0_14px_30px_-14px_hsl(var(--primary))]">
+            {system.sid}
           </div>
-          <div className="system-meta-strip">
-            <span>{system.product_label}{system.product_version ? ` ${system.product_version}` : ""}</span>
-            <i />
-            <span>{system.stack}</span>
-            <i />
-            <span>{system.database}</span>
-            {system.host && <><i /><span>{system.host}</span></>}
-            {system.basis_release && <><i /><span>SAP_BASIS {system.basis_release}</span></>}
+          <div className="min-w-0 space-y-1.5">
+            <div className="flex flex-wrap items-center gap-2">
+              <h1 className="truncate">{system.name}</h1>
+              <Badge variant={system.environment === "PRD" ? "bad" : "secondary"} className="font-mono">{system.environment}</Badge>
+              {!system.enabled && <Pill value="disabled" />}
+            </div>
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-muted-foreground">
+              <span>{system.product_label}{system.product_version ? ` ${system.product_version}` : ""}</span>
+              <span>{system.stack} on {system.database}</span>
+              {system.basis_release && <span>SAP_BASIS {system.basis_release}</span>}
+              {host}
+              <NavLink to={`/landscapes/${encodeURIComponent(system.landscape)}`}>Landscape {system.landscape}</NavLink>
+            </div>
           </div>
         </div>
-        <div className="system-masthead-actions">
-          <RequireRole role="operator">
-            <button className="btn" onClick={() => setEditing(true)}>Edit system</button>
-            <button className="btn danger" onClick={remove}>Delete</button>
-          </RequireRole>
+        <RequireRole role="operator">
+          <div className="flex gap-2">
+            <Button variant="outline" onClick={() => setEditing(true)}><Pencil />Edit</Button>
+            <Button variant="outline" className="text-bad hover:bg-bad-soft hover:text-bad" onClick={remove}><Trash2 />Delete</Button>
+          </div>
+        </RequireRole>
+      </div>
+      <nav aria-label="System sections" className="-mx-4 mb-6 overflow-x-auto px-4 lg:-mx-8 lg:px-8">
+        <div className="flex w-max gap-1 rounded-full bg-card p-1.5">
+          {tabs.map(([path, label]) => (
+            <NavLink key={path} to={`/systems/${id}${path ? `/${path}` : ""}`} end={!path}
+              className={({ isActive }) => cn("whitespace-nowrap rounded-full px-4 py-2 text-sm font-semibold text-muted-foreground transition-colors hover:text-foreground hover:no-underline",
+                isActive && "bg-foreground text-background hover:text-background")}>
+              {label}
+            </NavLink>
+          ))}
         </div>
-      </section>
-      <nav className="system-tabs">
-        {tabs.map(([path, label]) => (
-          <NavLink key={path} to={`/systems/${id}${path ? `/${path}` : ""}`} end={!path}>{label}</NavLink>
-        ))}
       </nav>
       {/* key: remount every tab per system so uploads/results never carry over between systems */}
       <Routes key={system.id}>
         <Route index element={<OverviewTab system={system} />} />
         <Route path="setup" element={<SetupTab system={system} />} />
+        <Route path="infrastructure" element={<InfrastructureTab system={system} />} />
         <Route path="instances" element={<InstancesTab system={system} />} />
         <Route path="availability" element={<AvailabilityTab system={system} />} />
         <Route path="errors" element={<ErrorsTab system={system} />} />

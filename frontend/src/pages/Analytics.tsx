@@ -2,7 +2,12 @@ import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api";
 import { LineChart } from "../components/LineChart";
-import { ErrorBanner } from "../components/ui";
+import { Clock, Database, Gauge, RefreshCw, Server } from "lucide-react";
+import { Card, Empty, ErrorBanner, PageHeader, Tile } from "../components/ui";
+import { Badge } from "../components/ui/badge";
+import { Button } from "../components/ui/button";
+import { Skeleton } from "../components/ui/skeleton";
+import { cn } from "../lib/utils";
 import type { SapSystem } from "../types";
 import type { AnalyticsMetric, AnalyticsSeries, AnalyticsSummary } from "../types/analytics";
 import type { IncidentCorrelationResponse } from "../types/intelligence";
@@ -86,63 +91,81 @@ export default function Analytics() {
   const series = result?.series ?? [];
   const pointsCount = series.reduce((n, s) => n + s.points.reduce((sum, p) => sum + p.samples, 0), 0);
 
+  const rangeLabel = RANGES.find((r) => r.hours === hours)?.label;
+  const bucketLabel = BUCKETS.find((b) => b.seconds === bucketSeconds)?.label;
   return (
-    <div className="analytics-page">
-      <div className="dashboard-heading">
-        <div>
-          <div className="eyebrow">OBSERVABILITY <span className="eyebrow-dot" /> HISTORICAL TELEMETRY</div>
-          <h1>Monitoring analytics</h1>
-          <p>Explore SAP and HANA performance trends across your landscape.</p>
-        </div>
-        <div className="dashboard-actions">
-          <label className="filter-select"><span>LANDSCAPE</span><select value={landscape} onChange={(e) => { setLandscape(e.target.value); setSystemId(""); }}><option value="">All landscapes</option>{[...new Set(systems.map((s) => s.landscape))].sort().map((name) => <option key={name} value={name}>{name}</option>)}</select></label>
-          <label className="filter-select"><span>TIME RANGE</span><select value={hours} onChange={(e) => setHours(Number(e.target.value))}>{RANGES.map((r) => <option key={r.hours} value={r.hours}>{r.label}</option>)}</select></label>
-          <button className="btn refresh-btn" onClick={() => setRefreshKey((v) => v + 1)} disabled={loading}>↻ <span>Refresh</span></button>
-        </div>
-      </div>
+    <>
+      <PageHeader title="Analytics" description="Explore how SAP and HANA metrics developed over time, per system."
+        actions={<>
+          <select aria-label="Landscape" className="filter-select !w-auto" value={landscape} onChange={(e) => { setLandscape(e.target.value); setSystemId(""); }}>
+            <option value="">All landscapes</option>
+            {[...new Set(systems.map((s) => s.landscape))].sort().map((name) => <option key={name} value={name}>{name}</option>)}
+          </select>
+          <select aria-label="Time range" className="filter-select !w-auto" value={hours} onChange={(e) => setHours(Number(e.target.value))}>
+            {RANGES.map((r) => <option key={r.hours} value={r.hours}>{r.label}</option>)}
+          </select>
+          <Button variant="outline" onClick={() => setRefreshKey((v) => v + 1)} disabled={loading}><RefreshCw className={cn(loading && "animate-spin")} />Refresh</Button>
+        </>} />
       <ErrorBanner error={error} />
-      <div className="analytics-kpis">
-        <div className="analytics-kpi"><span>Systems reporting</span><strong>{summary ? `${summary.systems_reporting}/${summary.systems_total}` : "—"}</strong><small>With telemetry in selected window</small></div>
-        <div className="analytics-kpi"><span>Metric observations</span><strong>{summary ? summary.samples.toLocaleString() : "—"}</strong><small>Across all collected metrics</small></div>
-        <div className="analytics-kpi"><span>Metrics reporting</span><strong>{summary?.metrics_reporting ?? "—"}</strong><small>Distinct metrics observed</small></div>
-        <div className="analytics-kpi"><span>Last telemetry</span><strong className="analytics-last">{ageLabel(summary?.last_sample_at ?? null)}</strong><small>Latest recorded observation</small></div>
+      <div className="tiles !grid-cols-2 lg:!grid-cols-4">
+        <Tile label="Systems reporting" icon={Server} value={summary ? `${summary.systems_reporting}/${summary.systems_total}` : "–"} hint={`With data in the ${rangeLabel?.toLowerCase()}`} />
+        <Tile label="Observations" icon={Database} value={summary ? summary.samples.toLocaleString() : "–"} hint="All metrics, raw samples" />
+        <Tile label="Metrics reporting" icon={Gauge} value={summary?.metrics_reporting ?? "–"} hint="Distinct metrics observed" />
+        <Tile label="Latest observation" icon={Clock} value={<span className="text-xl">{ageLabel(summary?.last_sample_at ?? null)}</span>} hint="Most recent collector sample" />
       </div>
 
-      <section className="panel analytics-controls">
-        <div className="panel-heading"><div><span className="eyebrow">TREND EXPLORER</span><h2>Metric performance</h2></div><span className="panel-note">{pointsCount.toLocaleString()} observations in chart</span></div>
-        <div className="analytics-filter-grid">
-          <label className="field"><span>METRIC</span><select value={metricKey} onChange={(e) => setMetricKey(e.target.value)}>{groupedMetrics.map(([category, items]) => <optgroup key={category} label={category}>{items.map((m) => <option key={m.key} value={m.key}>{m.label}</option>)}</optgroup>)}</select></label>
-          <label className="field"><span>SYSTEM</span><select value={systemId} onChange={(e) => setSystemId(e.target.value)}><option value="">All systems</option>{visibleSystems.map((s) => <option key={s.id} value={s.id}>{s.sid} · {s.environment}</option>)}</select></label>
-          <label className="field"><span>AGGREGATION</span><select value={aggregation} onChange={(e) => setAggregation(e.target.value as typeof aggregation)}><option value="avg">Average</option><option value="max">Maximum</option><option value="min">Minimum</option><option value="last">Latest in bucket</option></select></label>
-          <label className="field"><span>BUCKET SIZE</span><select value={bucketSeconds} onChange={(e) => setBucketSeconds(Number(e.target.value))}>{BUCKETS.map((b) => <option key={b.seconds} value={b.seconds}>{b.label}</option>)}</select></label>
+      <Card title="Metric" description={selectedMetric ? `${selectedMetric.description}. Values are aggregated per bucket; gaps stay empty and are never interpolated.` : undefined}
+            actions={<span className="text-xs text-muted-foreground">{pointsCount.toLocaleString()} observations charted</span>}>
+        <div className="form-grid">
+          <label className="field"><span>Metric</span><select value={metricKey} onChange={(e) => setMetricKey(e.target.value)}>{groupedMetrics.map(([category, items]) => <optgroup key={category} label={category}>{items.map((m) => <option key={m.key} value={m.key}>{m.label}</option>)}</optgroup>)}</select></label>
+          <label className="field"><span>System</span><select value={systemId} onChange={(e) => setSystemId(e.target.value)}><option value="">All systems</option>{visibleSystems.map((s) => <option key={s.id} value={s.id}>{s.sid} ({s.environment})</option>)}</select></label>
+          <label className="field"><span>Aggregation</span><select value={aggregation} onChange={(e) => setAggregation(e.target.value as typeof aggregation)}><option value="avg">Average</option><option value="max">Maximum</option><option value="min">Minimum</option><option value="last">Latest in bucket</option></select></label>
+          <label className="field"><span>Bucket size</span><select value={bucketSeconds} onChange={(e) => setBucketSeconds(Number(e.target.value))}>{BUCKETS.map((b) => <option key={b.seconds} value={b.seconds}>{b.label}</option>)}</select></label>
         </div>
-        {selectedMetric && <p className="analytics-description">{selectedMetric.description}. Values are aggregated per time bucket; missing intervals are left blank rather than interpolated.</p>}
-      </section>
+      </Card>
 
-      <section className="analytics-chart-section">
-        <div className="analytics-section-head"><div><span className="eyebrow">TIME SERIES</span><h2>{selectedMetric?.label ?? "Metric trend"}</h2></div><span className="panel-note">{RANGES.find((r) => r.hours === hours)?.label} · {BUCKETS.find((b) => b.seconds === bucketSeconds)?.label} buckets</span></div>
-        {loading && !result ? <div className="loading-panel">Loading historical telemetry…</div> : !series.length || !series.some((s) => s.points.length) ? (
-          <div className="analytics-empty"><strong>No historical data for this selection</strong><p>Check that a collector is configured and has completed runs during this time range. Sentinel does not generate sample telemetry.</p><Link to="/systems">Review SAP system collectors →</Link></div>
+      <div className="mb-3 mt-6 flex flex-wrap items-baseline justify-between gap-2">
+        <h2 className="text-base">{selectedMetric?.label ?? "Metric trend"}</h2>
+        <span className="text-xs text-muted-foreground">{rangeLabel}, {bucketLabel} buckets</span>
+      </div>
+      {loading && !result ? <div className="grid gap-4 xl:grid-cols-2">{[0, 1].map((i) => <Skeleton key={i} className="h-72" />)}</div>
+        : !series.length || !series.some((s) => s.points.length) ? (
+          <Empty>
+            <div className="font-medium text-foreground">No data for this selection</div>
+            <div className="mt-1">Check that a collector is configured and ran during this period. Sentinel never invents sample data.</div>
+            <Link to="/systems" className="mt-2 inline-block">Review system collectors</Link>
+          </Empty>
         ) : (
-          <div className="analytics-series-grid">
+          <div className="grid gap-4 xl:grid-cols-2">
             {series.filter((s) => s.points.length).map((s) => {
               const chartPoints = s.points.map((p) => ({ t: new Date(p.ts).getTime(), v: valueFor(selectedMetric!, p.value) }));
               const values = s.points.map((p) => valueFor(selectedMetric!, p.value));
               const latest = values[values.length - 1];
               const average = values.reduce((a, b) => a + b, 0) / values.length;
               const peak = Math.max(...values);
-              return <article className="analytics-series-card" key={s.system_id}>
-                <div className="analytics-series-heading"><div><Link to={`/systems/${s.system_id}`}><strong>{s.sid}</strong></Link><span>{s.name} · {s.landscape}</span></div><span className="analytics-env">{s.environment}</span></div>
-                <div className="analytics-series-stats"><span>Latest <strong>{formatValue(selectedMetric!, latest)}</strong></span><span>Average <strong>{formatValue(selectedMetric!, average)}</strong></span><span>Peak <strong>{formatValue(selectedMetric!, peak)}</strong></span></div>
-                <LineChart points={chartPoints} unit={selectedMetric!.unit} label={`${s.sid} ${selectedMetric!.label}`} height={190} markers={(correlations?.incidents ?? []).filter((i) => i.system_id === s.system_id && i.metric === metricKey).map((i) => ({ t: new Date(i.opened_at).getTime(), label: `#${i.incident_id} ${i.title}`, severity: i.severity }))} />
-                <div className="analytics-series-foot"><span>{s.points.length} time buckets</span><span>{s.points.reduce((n, p) => n + p.samples, 0)} raw samples</span></div>
-              </article>;
+              return (
+                <article key={s.system_id} className="rounded-3xl bg-card p-6">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <Link to={`/systems/${s.system_id}`} className="font-mono text-base font-semibold text-foreground">{s.sid}</Link>
+                      <div className="truncate text-xs text-muted-foreground">{s.name}, {s.landscape}</div>
+                    </div>
+                    <Badge variant={s.environment === "PRD" ? "bad" : "secondary"} className="font-mono">{s.environment}</Badge>
+                  </div>
+                  <dl className="my-3 grid grid-cols-3 gap-2">
+                    {[["Latest", latest], ["Average", average], ["Peak", peak]].map(([label, v]) => (
+                      <div key={label as string} className="rounded-2xl bg-surface px-3 py-2"><dt className="text-xs text-muted-foreground">{label}</dt><dd className="m-0 text-lg font-bold tabular-nums">{formatValue(selectedMetric!, v as number)}</dd></div>
+                    ))}
+                  </dl>
+                  <LineChart points={chartPoints} unit={selectedMetric!.unit} label={`${s.sid} ${selectedMetric!.label}`} height={190}
+                    markers={(correlations?.incidents ?? []).filter((i) => i.system_id === s.system_id && i.metric === metricKey).map((i) => ({ t: new Date(i.opened_at).getTime(), label: `#${i.incident_id} ${i.title}`, severity: i.severity }))} />
+                  <div className="mt-2 flex justify-between text-xs text-muted-foreground"><span>{s.points.length} buckets</span><span>{s.points.reduce((n, p) => n + p.samples, 0)} raw samples</span></div>
+                </article>
+              );
             })}
           </div>
         )}
-        {result?.truncated && <div className="banner info">The query reached the 100,000-observation safety limit. Narrow the time range or select a system for a complete view.</div>}
-      </section>
-      <div className="dashboard-footer"><span>Sentinel · TimescaleDB telemetry</span><span>Only recorded collector observations are shown. Aggregation does not fill gaps or infer missing values.</span></div>
-    </div>
+      {result?.truncated && <div className="banner info mt-4">This query hit the 100,000-observation limit. Narrow the time range or pick one system to see everything.</div>}
+    </>
   );
 }

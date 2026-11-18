@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { api } from "../api";
 import { Card, DataTable, ErrorBanner, Pill, Tile, useAsync } from "../components/ui";
+import { DatabaseCard, HostCard, LayerStack } from "../components/layers";
 import type { DiscoveredInstance, RegisterResult, ScanResult } from "../types";
 
 export const ROLES = ["ASCS", "SCS", "ERS", "PAS", "AAS", "JAVA", "HANA", "WEBDISP", "SMDA", "GATEWAY", "OTHER"];
@@ -28,16 +29,27 @@ export default function Discover() {
   const [form, setForm] = useState<Record<string, string>>({});
   const [roles, setRoles] = useState<Record<string, string>>({});
   const [target, setTarget] = useState<string>("new");
-  const [hana, setHana] = useState({ enabled: false, host: "", port: "30015", username: "", password: "", database_name: "", abap_schema: "" });
+  const [hana, setHana] = useState({ enabled: false, host: "", port: "30015", username: "", password: "", database_name: "", abap_schema: "SAPHANADB" });
   const [result, setResult] = useState<RegisterResult | null>(null);
+  const [dbCtl, setDbCtl] = useState({ enabled: true, username: "", password: "" });
+  const [method, setMethod] = useState<"os" | "sapcontrol">("os");
+  const [os, setOs] = useState({ os_user: "root", os_password: "", use_key: false, os_private_key: "", ssh_port: "22",
+    sap_password: "", db_show: false, db_os_user: "", db_os_password: "", sid: "" });
+  const osPayload = (sid?: string) => ({
+    method: "os", host: conn.host.trim(), os_user: os.os_user.trim(), ssh_port: Number(os.ssh_port) || 22,
+    os_password: os.use_key ? null : os.os_password || null, os_private_key: os.use_key ? os.os_private_key || null : null,
+    sid: (sid ?? os.sid) || null, use_tls: conn.use_tls, verify_tls: conn.verify_tls,
+    db_os_user: os.db_show ? os.db_os_user || null : null, db_os_password: os.db_show ? os.db_os_password || null : null,
+  });
 
-  const doScan = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const doScan = async (e?: React.FormEvent, sid?: string) => {
+    e?.preventDefault();
     setBusy("scan");
     setError(null);
     setScan(null);
+    if (sid !== undefined) setOs((o) => ({ ...o, sid }));
     try {
-      const found = await api.discoveryScan({
+      const found = await api.discoveryScan(method === "os" ? osPayload(sid) : {
         host: conn.host.trim(), instance_nr: conn.instance_nr || null, use_tls: conn.use_tls, verify_tls: conn.verify_tls,
         username: conn.username || null, password: conn.password || null,
       });
@@ -49,7 +61,9 @@ export default function Discover() {
         environment: found.suggested_environment, landscape: found.existing_systems[0]?.landscape ?? "default",
         product: found.product, database: found.database ?? "", interval_seconds: "300", control_enabled: "",
       });
-      setHana((h) => ({ ...h, enabled: false, host: found.db_host ?? "" }));
+      setHana((h) => ({ ...h, enabled: false, host: found.database_layer?.host ?? found.db_host ?? "",
+        abap_schema: found.database_layer?.schema ?? h.abap_schema, database_name: found.database_layer?.tenant ?? "" }));
+      setDbCtl({ enabled: !!found.hana_instance, username: found.hana_instance?.suggested_user ?? "", password: "" });
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -63,13 +77,21 @@ export default function Discover() {
     setError(null);
     try {
       const res = await api.discoveryRegister({
-        host: conn.host.trim(), instance_nr: conn.instance_nr || null, use_tls: conn.use_tls, verify_tls: conn.verify_tls,
-        username: conn.username || null, password: conn.password || null, expected_sid: scan.sid,
+        ...(method === "os" ? {
+          ...osPayload(scan.sid), expected_host_key: scan.host_key, expected_db_host_key: scan.db_host_key ?? null,
+          sap_user: !scan.sap_credentials && os.sap_password ? `${scan.sid.toLowerCase()}adm` : null,
+          sap_password: !scan.sap_credentials && os.sap_password ? os.sap_password : null,
+        } : {
+          host: conn.host.trim(), instance_nr: conn.instance_nr || null, use_tls: conn.use_tls, verify_tls: conn.verify_tls,
+          username: conn.username || null, password: conn.password || null,
+        }),
+        expected_sid: scan.sid,
         system_id: target === "new" ? null : Number(target),
         name: form.name || null, environment: form.environment, landscape: form.landscape || "default",
         product: form.product, database: form.database || null, interval_seconds: Number(form.interval_seconds) || 300,
         control_enabled: form.control_enabled === "" ? null : form.control_enabled === "on",
         role_overrides: roles,
+        db_control: dbCtl.enabled && scan.hana_instance ? { username: dbCtl.username, password: dbCtl.password } : null,
         hana: hana.enabled ? { host: hana.host, port: Number(hana.port) || 30015, username: hana.username,
           password: hana.password, database_name: hana.database_name || null, abap_schema: hana.abap_schema || null } : null,
       });
@@ -116,35 +138,117 @@ export default function Discover() {
     <>
       <div className="page-head">
         <div><h1>Discover SAP system</h1>
-          <p>Enter a host and the &lt;sid&gt;adm credentials. Sentinel finds the SAP Start Service, reads the SID, every
-            instance (ASCS/SCS, ERS, PAS, AAS, Java, Web Dispatcher), the product and database, then registers it and starts monitoring.</p></div>
+          <p>Enter one application server and an OS login. Sentinel detects the SID, every instance, the database server and the
+            operating system of each host, registers all three layers and starts monitoring.</p></div>
       </div>
       <ErrorBanner error={error || catalogue.error} />
-      <Card title="1 · Connect">
-        <form onSubmit={doScan}>
+      <Card title="1 · Connect" description={method === "os"
+        ? "Log in to an application server (ASCS or PAS host) as root or <sid>adm. Sentinel reads the SAP profiles and the OS over SSH with fixed, read-only commands, then follows SAPDBHOST to the database server."
+        : "Connect to the SAP Start Service directly (no OS access). The OS layer is not inventoried in this mode."}>
+        <div className="mb-5 inline-flex rounded-full bg-surface p-1" role="radiogroup" aria-label="Discovery method">
+          {([["os", "OS login (root or <sid>adm)"], ["sapcontrol", "SAP Start Service only"]] as const).map(([m, label]) => (
+            <button key={m} type="button" role="radio" aria-checked={method === m} onClick={() => { setMethod(m); setScan(null); }}
+              className={`rounded-full px-4 py-2 text-sm font-semibold transition-colors ${method === m ? "bg-foreground text-background" : "text-muted-foreground hover:text-foreground"}`}>
+              {label}
+            </button>
+          ))}
+        </div>
+        <form onSubmit={(e) => doScan(e)}>
           <div className="form-grid">
-            <label className="field"><span>Hostname or IP</span>
+            <label className="field"><span>Application server host or IP</span>
               <input required value={conn.host} onChange={(e) => setConn({ ...conn, host: e.target.value })}
-                     placeholder="s4hprd.corp.example.com" autoComplete="off" />
+                     placeholder="s4hascs.corp.example.com" autoComplete="off" />
               <small>Must be allowed by ALLOWED_TARGET_HOSTS / CIDRS. Demo: simulator-s4p, simulator-ecd, simulator-epq.</small></label>
-            <label className="field"><span>Instance number (optional)</span>
-              <input value={conn.instance_nr} maxLength={2} inputMode="numeric" placeholder="scan 00–99"
-                     onChange={(e) => setConn({ ...conn, instance_nr: e.target.value.replace(/\D/g, "") })} /></label>
-            <label className="field"><span>OS user</span>
-              <input value={conn.username} onChange={(e) => setConn({ ...conn, username: e.target.value })} placeholder="s4hadm" autoComplete="off" />
-              <small>&lt;sid&gt;adm or a user in service/admin_users. Needed for protected methods and start/stop.</small></label>
-            <label className="field"><span>Password</span>
-              <input type="password" value={conn.password} onChange={(e) => setConn({ ...conn, password: e.target.value })} autoComplete="new-password" /></label>
+            {method === "os" ? (
+              <>
+                <label className="field"><span>OS user</span>
+                  <input required value={os.os_user} onChange={(e) => setOs({ ...os, os_user: e.target.value })} placeholder="root or s4hadm" autoComplete="off" />
+                  <small>root reads everything; &lt;sid&gt;adm also unlocks start/stop.</small></label>
+                {os.use_key ? (
+                  <label className="field wide"><span>Private key (OpenSSH or PEM)</span>
+                    <textarea rows={4} className="font-mono text-xs" value={os.os_private_key} onChange={(e) => setOs({ ...os, os_private_key: e.target.value })}
+                              placeholder="-----BEGIN OPENSSH PRIVATE KEY-----" spellCheck={false} /></label>
+                ) : (
+                  <label className="field"><span>Password</span>
+                    <input type="password" required value={os.os_password} onChange={(e) => setOs({ ...os, os_password: e.target.value })} autoComplete="new-password" /></label>
+                )}
+                <label className="field"><span>SSH port</span>
+                  <input inputMode="numeric" value={os.ssh_port} onChange={(e) => setOs({ ...os, ssh_port: e.target.value.replace(/\D/g, "") })} /></label>
+                <label className="field check"><input type="checkbox" checked={os.use_key} onChange={(e) => setOs({ ...os, use_key: e.target.checked })} />
+                  <span>Use a private key instead of a password</span></label>
+                <label className="field check"><input type="checkbox" checked={os.db_show} onChange={(e) => setOs({ ...os, db_show: e.target.checked })} />
+                  <span>The database server uses a different login</span></label>
+                {os.db_show && (
+                  <>
+                    <label className="field"><span>Database server OS user</span>
+                      <input value={os.db_os_user} onChange={(e) => setOs({ ...os, db_os_user: e.target.value })} placeholder="root or <hanasid>adm" autoComplete="off" /></label>
+                    <label className="field"><span>Database server password</span>
+                      <input type="password" value={os.db_os_password} onChange={(e) => setOs({ ...os, db_os_password: e.target.value })} autoComplete="new-password" /></label>
+                  </>
+                )}
+              </>
+            ) : (
+              <>
+                <label className="field"><span>Instance number (optional)</span>
+                  <input value={conn.instance_nr} maxLength={2} inputMode="numeric" placeholder="scan 00–99"
+                         onChange={(e) => setConn({ ...conn, instance_nr: e.target.value.replace(/\D/g, "") })} /></label>
+                <label className="field"><span>OS user</span>
+                  <input value={conn.username} onChange={(e) => setConn({ ...conn, username: e.target.value })} placeholder="s4hadm" autoComplete="off" />
+                  <small>&lt;sid&gt;adm or a user in service/admin_users. Needed for protected methods and start/stop.</small></label>
+                <label className="field"><span>Password</span>
+                  <input type="password" value={conn.password} onChange={(e) => setConn({ ...conn, password: e.target.value })} autoComplete="new-password" /></label>
+              </>
+            )}
             <label className="field check"><input type="checkbox" checked={conn.use_tls} onChange={(e) => setConn({ ...conn, use_tls: e.target.checked })} />
-              <span>HTTPS (port 5&lt;NN&gt;14)</span></label>
+              <span>SAP Start Service over HTTPS (5&lt;NN&gt;14)</span></label>
             {conn.use_tls && <label className="field check"><input type="checkbox" checked={conn.verify_tls}
               onChange={(e) => setConn({ ...conn, verify_tls: e.target.checked })} /><span>Verify certificate</span></label>}
           </div>
-          <div className="actions" style={{ marginTop: 12 }}>
+          <div className="actions" style={{ marginTop: 16 }}>
             <button className="btn primary" type="submit" disabled={busy !== null}>{busy === "scan" ? "Detecting…" : "Detect system"}</button>
           </div>
         </form>
       </Card>
+
+      {scan?.method === "os" && scan.os && (
+        <Card title={`Detected layers of ${scan.sid}`}
+              description="Read from /usr/sap/sapservices, the SAP profiles (DEFAULT.PFL) and the operating system of each server."
+              actions={(scan.sids_on_host ?? []).filter((x) => x.kind === "application").length > 1 && (
+                <select aria-label="SAP system on this host" className="filter-select !w-auto" value={scan.sid} onChange={(e) => doScan(undefined, e.target.value)}>
+                  {(scan.sids_on_host ?? []).filter((x) => x.kind === "application").map((x) => <option key={x.sid} value={x.sid}>{x.sid}</option>)}
+                </select>
+              )}>
+          <LayerStack
+            application={
+              <div className="rounded-2xl bg-surface p-4">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="font-mono text-lg font-bold">{scan.sid}</span>
+                  <span className="rounded-full bg-accent px-2.5 py-0.5 text-xs font-semibold text-accent-foreground">
+                    {catalogue.data?.products.find((p) => p.key === scan.product)?.label ?? scan.product}{scan.product_version ? ` ${scan.product_version}` : ""}</span>
+                  <span className="text-xs text-muted-foreground">{scan.stack}, {scan.instances.length} instances</span>
+                </div>
+                <div className="mt-3 flex flex-wrap gap-1.5">
+                  {scan.instances.map((i) => <span key={key(i)} className="rounded-full bg-card px-2.5 py-1 font-mono text-xs"><strong>{i.role}</strong> {i.instance_name ?? i.instance_nr} · {i.hostname}</span>)}
+                </div>
+                {(scan.sids_on_host ?? []).length > 1 && (
+                  <p className="mt-3 text-xs text-muted-foreground">Also on this host: {(scan.sids_on_host ?? []).filter((x) => x.sid !== scan.sid)
+                    .map((x) => `${x.sid} (${x.kind === "agent" ? "diagnostics agent" : x.kind})`).join(", ")}</p>
+                )}
+              </div>
+            }
+            database={<DatabaseCard db={scan.database_layer} fallbackType={scan.database ?? undefined} />}
+            hosts={
+              <div className="grid gap-3 xl:grid-cols-2">
+                <HostCard host={scan.host} os={scan.os} hostKey={scan.host_key} role={scan.database_layer?.on_application_host ? "application + database" : "application"} />
+                {scan.database_layer && !scan.database_layer.on_application_host && (
+                  <HostCard host={scan.database_layer.host} os={scan.db_os} hostKey={scan.db_host_key} role="database" />
+                )}
+              </div>
+            }
+          />
+          <p className="text-xs text-muted-foreground">SSH host keys are pinned when you register. Sentinel refuses to connect later if a key changes.</p>
+        </Card>
+      )}
 
       {scan && (
         <>
@@ -184,6 +288,24 @@ export default function Discover() {
               ]}
             />
           </Card>
+          {scan.hana_instance && (
+            <Card title={`HANA database ${scan.hana_instance.sid} · HDB${scan.hana_instance.instance_nr} on ${scan.hana_instance.host}`}>
+              <p className="muted small">Found the HANA instance's own SAP Start Service (port {scan.hana_instance.port}). With its OS user,
+                Sentinel monitors database availability and includes HANA in the start/stop procedures (database first on start, last on stop).</p>
+              <div className="form-grid">
+                <label className="field check wide"><input type="checkbox" checked={dbCtl.enabled} onChange={(e) => setDbCtl({ ...dbCtl, enabled: e.target.checked })} />
+                  <span>Monitor and control the HANA instance</span></label>
+                {dbCtl.enabled && (
+                  <>
+                    <label className="field"><span>OS user (&lt;hanasid&gt;adm)</span>
+                      <input value={dbCtl.username} onChange={(e) => setDbCtl({ ...dbCtl, username: e.target.value })} autoComplete="off" /></label>
+                    <label className="field"><span>Password</span>
+                      <input type="password" value={dbCtl.password} onChange={(e) => setDbCtl({ ...dbCtl, password: e.target.value })} autoComplete="new-password" /></label>
+                  </>
+                )}
+              </div>
+            </Card>
+          )}
           <Card title="3 · Register and monitor">
             <div className="form-grid">
               {scan.existing_systems.length > 0 && (
@@ -192,6 +314,11 @@ export default function Discover() {
                     {scan.existing_systems.map((s) => <option key={s.id} value={s.id}>Update existing {s.sid} in {s.landscape} ({s.name})</option>)}
                     <option value="new">New system</option>
                   </select></label>
+              )}
+              {scan.method === "os" && !scan.sap_credentials && (
+                <label className="field wide"><span>{scan.sid.toLowerCase()}adm password (optional)</span>
+                  <input type="password" value={os.sap_password} onChange={(e) => setOs({ ...os, sap_password: e.target.value })} autoComplete="new-password" />
+                  <small>You logged in as {scan.os_user}. The SAP Start Service needs {scan.sid.toLowerCase()}adm for protected monitoring and start/stop.</small></label>
               )}
               <label className="field"><span>Name</span><input value={form.name ?? ""} onChange={(e) => set("name", e.target.value)} /></label>
               <label className="field"><span>Environment</span>

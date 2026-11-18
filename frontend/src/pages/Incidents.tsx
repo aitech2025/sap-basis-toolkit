@@ -1,7 +1,12 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { api } from "../api";
-import { DataTable, ErrorBanner, Pill, fmtDate, useAsync } from "../components/ui";
+import { BellRing, Flame, RefreshCw, Search, Siren, TriangleAlert, UserCheck } from "lucide-react";
+import { StackedBars } from "../components/charts";
+import { Card, DataTable, ErrorBanner, PageHeader, Pill, Tile, fmtDate, useAsync } from "../components/ui";
+import { Button } from "../components/ui/button";
+import { Input } from "../components/ui/input";
+import { cn } from "../lib/utils";
 import type { Incident } from "../types";
 
 export const ago = (iso: string | null | undefined) => {
@@ -17,12 +22,12 @@ export function IncidentTable({ rows, showSystem = true }: { rows: Incident[]; s
   const navigate = useNavigate();
   return (
     <DataTable<Incident> rows={rows} rowKey={(i) => i.id} onRowClick={(i) => navigate(`/incidents/${i.id}`)}
-      empty="No incidents match. 🎉"
+      empty="No incidents match these filters."
       columns={[
         { key: "severity", label: "Severity", render: (i) => <Pill value={i.severity} /> },
         { key: "status", label: "Status", render: (i) => <><Pill value={i.status === "acknowledged" ? "acknowledged" : i.status === "resolved" ? "resolved" : "open"} />{i.in_maintenance && <span className="tag" title="Opened during a maintenance window">maint.</span>}</> },
-        ...(showSystem ? [{ key: "sid", label: "System", render: (i: Incident) => i.system_id ? <Link to={`/systems/${i.system_id}`}>{i.sid}</Link> : "–" }] : []),
-        { key: "title", label: "Incident", render: (i) => <Link to={`/incidents/${i.id}`}>{i.title}</Link> },
+        ...(showSystem ? [{ key: "sid", label: "System", render: (i: Incident) => i.system_id ? <Link to={`/systems/${i.system_id}`} className="font-mono font-medium">{i.sid}</Link> : "–" }] : []),
+        { key: "title", label: "Incident", render: (i) => <Link to={`/incidents/${i.id}`} className="font-medium text-foreground">{i.title}</Link> },
         { key: "source", label: "Source", render: (i) => i.source === "rule" ? (i.metric ?? "rule") : "module alert" },
         { key: "opened_at", label: "Opened", render: (i) => <span title={fmtDate(i.opened_at)}>{ago(i.opened_at)}</span> },
         { key: "last_seen_at", label: "Last seen", render: (i) => <span title={fmtDate(i.last_seen_at)}>{ago(i.last_seen_at)}</span> },
@@ -39,6 +44,7 @@ export default function Incidents() {
   const { data, error, reload, loading } = useAsync(
     () => api.incidents(`?status=${status}${severity ? `&severity=${severity}` : ""}`), [status, severity]);
   const counts = useAsync(() => api.incidentCounts(), [data]);
+  const history = useAsync(() => api.incidents("?status=all"), []);
   const rows = (data ?? []).filter((incident) => {
     const needle = query.trim().toLowerCase();
     if (!needle) return true;
@@ -49,46 +55,48 @@ export default function Incidents() {
     return (rank[a.severity] ?? 3) - (rank[b.severity] ?? 3) || Date.parse(b.last_seen_at) - Date.parse(a.last_seen_at);
   });
 
+  const c = counts.data;
+  const trend = Array.from({ length: 14 }, (_, i) => {
+    const day = new Date(); day.setHours(0, 0, 0, 0);
+    const start = day.getTime() - (13 - i) * 86400000;
+    const inDay = (history.data ?? []).filter((x) => { const t = Date.parse(x.opened_at); return t >= start && t < start + 86400000; });
+    return { label: new Date(start).toLocaleDateString(undefined, { day: "2-digit", month: "short" }),
+             critical: inDay.filter((x) => x.severity === "critical").length, warning: inDay.filter((x) => x.severity !== "critical").length };
+  });
   return (
-    <div className="incident-workspace">
-      <div className="incident-heading">
-        <div>
-          <span className="eyebrow">OPERATIONS · EVENT RESPONSE</span>
-          <h1>Incident command</h1>
-          <p>Prioritize service-impacting events, coordinate response and track resolution across your SAP estate.</p>
-        </div>
-        <div className="incident-heading-actions">
-          <span className="incident-refresh-state"><i className="live-dot" /> Live incident queue</span>
-          <button className="btn" onClick={reload} disabled={loading}>↻ Refresh</button>
-        </div>
-      </div>
+    <>
+      <PageHeader title="Incidents" description="Service-impacting events across the SAP estate, critical first, then most recently seen."
+        actions={<Button variant="outline" onClick={reload} disabled={loading}><RefreshCw className={cn(loading && "animate-spin")} />Refresh</Button>} />
       <ErrorBanner error={error} />
-      {counts.data && (
-        <div className="incident-summary-grid">
-          <div className="incident-summary primary"><span>Active incidents</span><strong>{counts.data.total}</strong><small>Open + acknowledged</small></div>
-          <div className="incident-summary critical"><span>Critical</span><strong>{counts.data.critical}</strong><small>Immediate response</small></div>
-          <div className="incident-summary warning"><span>Warning</span><strong>{counts.data.warning}</strong><small>Investigate and monitor</small></div>
-          <div className="incident-summary"><span>Awaiting acknowledgement</span><strong>{counts.data.open}</strong><small>Unassigned response</small></div>
-          <div className="incident-summary"><span>Acknowledged</span><strong>{counts.data.acknowledged}</strong><small>Owned by operators</small></div>
+      {c && (
+        <div className="tiles !grid-cols-1 sm:!grid-cols-2 xl:!grid-cols-5">
+          <Tile label="Active" icon={Siren} value={c.total} tone={c.total ? "warn" : "good"} hint="Open and acknowledged" />
+          <Tile label="Critical" icon={Flame} value={c.critical} tone={c.critical ? "bad" : undefined} hint="Respond immediately" />
+          <Tile label="Warning" icon={TriangleAlert} value={c.warning} tone={c.warning ? "warn" : undefined} hint="Investigate" />
+          <Tile label="Not acknowledged" icon={BellRing} value={c.open} hint="Nobody owns these yet" />
+          <Tile label="Acknowledged" icon={UserCheck} value={c.acknowledged} hint="Being worked on" />
         </div>
       )}
-      <section className="incident-queue-panel">
-        <div className="incident-queue-heading">
-          <div><span className="eyebrow">RESPONSE QUEUE</span><h2>Prioritized incidents <span>{rows.length}</span></h2></div>
-          <div className="incident-queue-controls">
-            <label className="incident-search"><span>⌕</span><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search SID, incident, owner…" aria-label="Search incidents" /></label>
-            <select value={status} onChange={(e) => setStatus(e.target.value)} aria-label="Status">
-              <option value="active">Active incidents</option><option value="open">Open</option>
-              <option value="acknowledged">Acknowledged</option><option value="resolved">Resolved</option><option value="all">All incidents</option>
-            </select>
-            <select value={severity} onChange={(e) => setSeverity(e.target.value)} aria-label="Severity">
-              <option value="">All severities</option><option value="critical">Critical</option><option value="warning">Warning</option>
-            </select>
+      <Card title="Incidents opened, last 14 days" actions={<span className="text-xs text-muted-foreground">All statuses</span>}>
+        <StackedBars height={180} data={trend} keys={[{ key: "critical", label: "Critical", color: "hsl(var(--bad))" }, { key: "warning", label: "Warning", color: "hsl(var(--warn))" }]} />
+      </Card>
+      <Card title="Queue">
+        <div className="mb-4 flex flex-wrap items-center gap-2">
+          <div className="relative w-full sm:w-80">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Input className="pl-9" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search SID, incident or owner" aria-label="Search incidents" />
           </div>
+          <select className="filter-select !w-auto" value={status} onChange={(e) => setStatus(e.target.value)} aria-label="Status">
+            <option value="active">Active</option><option value="open">Not acknowledged</option>
+            <option value="acknowledged">Acknowledged</option><option value="resolved">Resolved</option><option value="all">All</option>
+          </select>
+          <select className="filter-select !w-auto" value={severity} onChange={(e) => setSeverity(e.target.value)} aria-label="Severity">
+            <option value="">All severities</option><option value="critical">Critical</option><option value="warning">Warning</option>
+          </select>
+          <span className="ml-auto text-xs text-muted-foreground">{rows.length} incident{rows.length === 1 ? "" : "s"}</span>
         </div>
-        <div className="incident-queue-note"><span><i className="priority-dot critical" /> Critical first</span><span>Sorted by severity, then most recently observed</span></div>
         <IncidentTable rows={rows} />
-      </section>
-    </div>
+      </Card>
+    </>
   );
 }

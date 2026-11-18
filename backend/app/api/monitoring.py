@@ -14,7 +14,7 @@ router = APIRouter(prefix="/api/v1", dependencies=[Depends(authorize)])
 
 MONITOR_METRICS = {
     "availability": ["availability.system_up", "availability.instances_down"],
-    "host": ["host.load1", "host.memory_used_pct", "host.disk_used_pct"],
+    "host": ["host.load1", "host.memory_used_pct", "host.disk_used_pct", "db.host_memory_used_pct", "db.host_disk_used_pct", "db.os_process_up"],
     "workprocesses": ["wp.dia_busy_pct", "wp.btc_busy_pct", "wp.long_running", "wp.stopped"],
     "dumps": ["dumps.last_hour", "dumps.last_24h"],
     "syslog": ["syslog.errors_last_hour"],
@@ -33,13 +33,14 @@ def _principal(request: Request) -> Principal:
 
 # ------------------------------------------------------------------------------- collectors
 class CollectorIn(BaseModel):
-    type: str = Field(pattern="^(sapcontrol|hana|node_exporter)$")
+    type: str = Field(pattern="^(sapcontrol|hana|hana_sapcontrol|node_exporter|os_ssh)$")
     host: str = Field(min_length=1, max_length=253)
     port: int = Field(ge=1, le=65535)
     use_tls: bool = True
     verify_tls: bool = True
     username: str | None = Field(default=None, max_length=120)
     password: str | None = Field(default=None, max_length=512)
+    private_key: str | None = Field(default=None, max_length=16384)
     database_name: str | None = Field(default=None, max_length=64)
     abap_schema: str | None = Field(default=None, max_length=64)
     interval_seconds: int = Field(default=300, ge=30, le=86400)
@@ -54,6 +55,8 @@ class CollectorPatch(BaseModel):
     username: str | None = Field(default=None, max_length=120)
     password: str | None = Field(default=None, max_length=512)
     clear_password: bool | None = None
+    private_key: str | None = Field(default=None, max_length=16384)
+    trust_new_host_key: bool | None = None
     database_name: str | None = Field(default=None, max_length=64)
     abap_schema: str | None = Field(default=None, max_length=64)
     interval_seconds: int | None = Field(default=None, ge=30, le=86400)

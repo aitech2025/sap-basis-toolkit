@@ -534,7 +534,7 @@ export interface MaintenanceWindow {
 export interface Collector {
   id: number;
   system_id: number;
-  type: "sapcontrol" | "hana" | "node_exporter";
+  type: "sapcontrol" | "hana" | "hana_sapcontrol" | "node_exporter" | "os_ssh";
   host: string;
   port: number;
   use_tls: boolean;
@@ -551,6 +551,8 @@ export interface Collector {
   last_duration_ms: number | null;
   diagnostics: { call: string; ok: boolean; error?: string; instance?: string; rows?: number; experimental?: boolean }[];
   simulated: boolean;
+  has_private_key?: boolean;
+  host_key?: string | null;
 }
 
 export interface MonitorSnapshot<T = Record<string, any>> {
@@ -598,7 +600,7 @@ export interface SapInstance extends DiscoveredInstance {
   last_seen_at: string | null;
 }
 
-export interface ScanResult {
+export interface ScanResult extends OsScanExtras {
   host: string;
   sid: string;
   instances: DiscoveredInstance[];
@@ -613,9 +615,54 @@ export interface ScanResult {
   suggested_environment: string;
   control_access: boolean | null;
   collector: { host: string; port: number; use_tls: boolean; verify_tls: boolean; username: string | null };
+  hana_instance: {
+    host: string; port: number; instance_nr: string; sid: string; suggested_user: string | null; instances: DiscoveredInstance[];
+  } | null;
   existing_systems: { id: number; sid: string; landscape: string; name: string }[];
   warnings: string[];
   scanned_at: string;
+}
+
+export interface OsInfo {
+  hostname: string | null; fqdn: string | null; ip_addresses: string[];
+  os_name: string | null; os_version: string | null; os_pretty: string | null; kernel: string | null; arch: string | null;
+  cpu_count: number | null; cpu_model: string | null; memory_gb: number | null; memory_used_pct: number | null; swap_gb: number | null;
+  load1: number | null; uptime_days: number | null; virtualization: string | null; timezone: string | null;
+  filesystems: { mount: string; size_gb: number; used_pct: number }[];
+  role?: string; ssh_host_key?: string | null; inventoried_at?: string;
+}
+
+export interface DatabaseLayer {
+  type: string | null; host: string; on_application_host: boolean; tenant: string | null; schema: string | null;
+  db_sid: string | null; instance_nr: string | null; version: string | null; status: string | null;
+}
+
+export interface OsScanExtras {
+  method?: "os" | "sapcontrol";
+  sids_on_host?: { sid: string; kind: "application" | "database" | "agent" | "webdispatcher"; instances: string[] }[];
+  host_key?: string;
+  os?: OsInfo;
+  os_user?: string;
+  database_layer?: DatabaseLayer;
+  db_os?: OsInfo | null;
+  db_host_key?: string | null;
+  sap_credentials?: boolean;
+}
+
+export interface TopologyAssetView {
+  id: number; kind: string; name: string; hostname: string | null; source: string; updated_at: string;
+  attributes: Record<string, unknown>;
+}
+
+export interface Infrastructure {
+  system: { id: number; sid: string; product_label: string | null; stack: string; database: string; host: string | null };
+  application: TopologyAssetView | null;
+  database: TopologyAssetView | null;
+  hosts: (TopologyAssetView & { attributes: OsInfo })[];
+  instances: SapInstance[];
+  links: { id: number; source_asset_id: number; target_asset_id: number; relationship: string; verified_at: string | null }[];
+  collectors: Collector[];
+  refresh?: { collector_id: number; status: string; error: string | null }[];
 }
 
 export interface RegisterResult {
@@ -627,30 +674,66 @@ export interface RegisterResult {
   warnings: string[];
 }
 
+export type StepStatus = "pending" | "running" | "ok" | "warning" | "failed" | "timeout" | "aborted" | "skipped"
+  | "overridden" | "confirmed" | "not_confirmed" | "todo";
+
+export interface ProcedureStep {
+  key: string;
+  kind: "check" | "manual" | "action";
+  title: string;
+  status: StepStatus;
+  detail: string | null;
+  blocking?: boolean;
+  verb?: "start" | "stop";
+  targets?: string[];
+  roles?: string[];
+  instances?: Record<string, string>;
+  started_at?: string;
+  finished_at?: string;
+}
+
+export type ControlScope = "system" | "app" | "db" | "instance";
+
 export interface Operation {
   id: number;
   system_id: number;
   action: "start" | "stop" | "restart";
-  scope: "system" | "instance";
-  options: string | null;
+  scope: ControlScope;
+  scope_label: string;
   hostname: string | null;
   instance_nr: string | null;
   soft_timeout: number | null;
   reason: string;
   requested_by: string;
-  status: "running" | "succeeded" | "failed" | "timeout" | "interrupted";
+  status: "running" | "succeeded" | "failed" | "timeout" | "interrupted" | "aborted";
   message: string | null;
-  progress: { at: string; instances?: Record<string, string>; error?: string }[];
+  steps: ProcedureStep[];
+  checklist: Record<string, boolean>;
+  force: boolean;
+  abort_requested: boolean;
   maintenance_window_id: number | null;
   started_at: string;
   finished_at: string | null;
 }
 
+export interface ControlPlan {
+  action: string;
+  scope: ControlScope;
+  scope_label: string;
+  steps: ProcedureStep[];
+  blocked: boolean;
+  blockers: string[];
+  manual: { key: string; title: string }[];
+}
+
 export interface ControlStatus {
   allowed: boolean;
   reason: string | null;
-  options: string[];
+  scopes: Record<ControlScope, boolean>;
+  notes: string[];
   running: Operation | null;
   timeout_seconds: number;
-  database_note: string;
+  hana_start_timeout_seconds: number;
+  start_sequence: string[];
+  stop_sequence: string[];
 }

@@ -106,3 +106,8 @@ DISCOVERY_MAX_PARALLEL = int(os.getenv("DISCOVERY_MAX_PARALLEL", "48"))
 CONTROL_ENABLED = os.getenv("CONTROL_ENABLED", "true").lower() == "true"
 CONTROL_TIMEOUT_SECONDS = int(os.getenv("CONTROL_TIMEOUT_SECONDS", "1200"))
 CONTROL_POLL_SECONDS = float(os.getenv("CONTROL_POLL_SECONDS", "5"))
+HANA_START_TIMEOUT_SECONDS = int(os.getenv("HANA_START_TIMEOUT_SECONDS", "3600"))
+HANA_SQL_WAIT_SECONDS = int(os.getenv("HANA_SQL_WAIT_SECONDS", "300"))
+# OS discovery and inventory over SSH (root or <sid>adm). Only fixed read-only commands are run.
+SSH_ALLOWED_PORTS = os.getenv("SSH_ALLOWED_PORTS", "22")
+SSH_TIMEOUT_SECONDS = float(os.getenv("SSH_TIMEOUT_SECONDS", "15"))

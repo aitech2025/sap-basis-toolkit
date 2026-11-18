@@ -2,7 +2,7 @@ import type { AnalyticsMetric, AnalyticsSeries, AnalyticsSummary } from "./types
 import type { AnomaliesResponse, AvailabilityResponse, CapacityForecastResponse, IncidentCorrelationResponse, RootCauseResponse } from "./types/intelligence";
 import type {
   AlertEvent, Catalogue, CertificateSummary, GrowthReport, Overview, PostcheckResult, PrecheckResult, Run,
-  AuditEntry, Collector, ControlStatus, ImportHistory, Operation, RegisterResult, SapInstance, ScanResult, Incident, IncidentCounts, JobReport, LockReport, MaintenanceWindow, Me, MonitorDetail, MonitorsResponse, RouteProposal, Rule, RuleMetric, User, SapSystem, SystemDetail, SystemInput, SystemOverviewData, SystemRoutes, DependencyTopology, TopologyAsset, TopologyLink, Topology, TransportRoute, UserReport,
+  AuditEntry, Collector, ControlPlan, ControlStatus, Infrastructure, ImportHistory, Operation, RegisterResult, SapInstance, ScanResult, Incident, IncidentCounts, JobReport, LockReport, MaintenanceWindow, Me, MonitorDetail, MonitorsResponse, RouteProposal, Rule, RuleMetric, User, SapSystem, SystemDetail, SystemInput, SystemOverviewData, SystemRoutes, DependencyTopology, TopologyAsset, TopologyLink, Topology, TransportRoute, UserReport,
 } from "./types";
 
 const KEY_STORAGE = "sapBasisToolkit.apiKey";
@@ -177,6 +177,8 @@ export const api = {
 
   discoveryScan: (body: Record<string, unknown>) => request<ScanResult>("/api/v1/discovery/scan", json("POST", body)),
   discoveryRegister: (body: Record<string, unknown>) => request<RegisterResult>("/api/v1/discovery/register", json("POST", body)),
+  infrastructure: (systemId: number) => request<Infrastructure>(`/api/v1/systems/${systemId}/infrastructure`),
+  refreshInfrastructure: (systemId: number) => request<Infrastructure>(`/api/v1/systems/${systemId}/infrastructure/refresh`, { method: "POST" }),
   instances: (systemId: number) => request<SapInstance[]>(`/api/v1/systems/${systemId}/instances`),
   refreshInstances: (systemId: number) => request<SapInstance[]>(`/api/v1/systems/${systemId}/instances/refresh`, { method: "POST" }),
   setInstanceRole: (systemId: number, instanceId: number, role: string) =>
@@ -186,6 +188,11 @@ export const api = {
   control: (systemId: number, body: Record<string, unknown>) => request<Operation>(`/api/v1/systems/${systemId}/control`, json("POST", body)),
   operations: (systemId: number) => request<Operation[]>(`/api/v1/systems/${systemId}/operations`),
   operation: (id: number) => request<Operation>(`/api/v1/operations/${id}`),
+  controlPlan: (systemId: number, q: { action: string; scope: string; hostname?: string; instance_nr?: string }) =>
+    request<ControlPlan>(`/api/v1/systems/${systemId}/control/plan?${new URLSearchParams(Object.entries(q).filter(([, v]) => v) as [string, string][])}`),
+  abortOperation: (id: number) => request<Operation>(`/api/v1/operations/${id}/abort`, { method: "POST" }),
+  confirmStep: (id: number, key: string, done = true) =>
+    request<Operation>(`/api/v1/operations/${id}/steps/${key}/confirm`, json("POST", { done })),
   health: () => fetch("/health").then((r) => r.ok),
   catalogue: () => request<Catalogue>("/api/v1/meta/catalogue"),
   overview: (landscape?: string) =>

@@ -11,7 +11,7 @@ from sqlalchemy import and_, delete, or_, select
 
 from ..db import get_db, sap_systems, topology_assets, topology_links
 
-ASSET_KINDS = {"host", "hana", "rfc_destination", "middleware", "web_dispatcher", "external_service"}
+ASSET_KINDS = {"host", "hana", "database", "application", "rfc_destination", "middleware", "web_dispatcher", "external_service"}
 RELATIONSHIPS = {"runs_on", "uses_database", "connects_to", "routes_to", "depends_on", "hosts"}
 SECRET_KEY = re.compile(r"(pass(word)?|secret|token|credential|private.?key|authorization|cookie)", re.I)
 
