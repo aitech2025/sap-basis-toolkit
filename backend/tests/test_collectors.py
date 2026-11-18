@@ -81,7 +81,8 @@ def test_hana_collect_with_fake_client_and_partial_failures():
             if name == "updates":
                 raise RuntimeError("invalid column name: VBRC")
             assert ('"SAPHANADB".' in sql) == (name in ("dumps", "updates", "trfc", "qrfc_out", "qrfc_in", "idoc_errors",
-                                                       "idoc_total", "jobs", "imports"))
+                                                       "idoc_total", "jobs", "imports", "number_ranges", "applog_errors",
+                                                       "batch_input", "clients", "spool_requests"))
             return super().query(name, sql, params)
     out = hana.collect(Fake("S4P:x:1"), "SAPHANADB", timezone.utc)
     failed = [d for d in out["diagnostics"] if not d["ok"]]
@@ -93,7 +94,7 @@ def test_hana_collect_with_fake_client_and_partial_failures():
     assert "hana.data_backup_age_h" in metrics and "hana.log_backup_age_h" in metrics
     # without an ABAP schema only database views are read
     out = hana.collect(simulator.SimulatedHana("x"), None, timezone.utc)
-    assert {d["call"] for d in out["diagnostics"]} == {"version", "memory", "cpu", "disk", "alerts", "backups", "replication", "services", "active_statements", "service_threads", "expensive_statements"}
+    assert {d["call"] for d in out["diagnostics"]} == {"version", "memory", "cpu", "disk", "alerts", "backups", "replication", "services", "active_statements", "service_threads", "expensive_statements", "log_disk", "blocked_transactions", "oom_events"}
     with pytest.raises(CollectorError):
         hana.collect(simulator.SimulatedHana("x"), "sap;drop", timezone.utc)
 

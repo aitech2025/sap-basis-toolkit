@@ -37,6 +37,7 @@ echo '@@ip'; hostname -I 2>/dev/null
 echo '@@cpu'; nproc 2>/dev/null; grep -m1 'model name' /proc/cpuinfo 2>/dev/null
 echo '@@mem'; grep -E '^(MemTotal|MemAvailable|SwapTotal|SwapFree):' /proc/meminfo 2>/dev/null
 echo '@@load'; cat /proc/loadavg 2>/dev/null
+echo '@@cpustat'; head -1 /proc/stat 2>/dev/null; sleep 1; head -1 /proc/stat 2>/dev/null
 echo '@@uptime'; cat /proc/uptime 2>/dev/null
 echo '@@virt'; (systemd-detect-virt 2>/dev/null || echo unknown)
 echo '@@tz'; date +%Z%z 2>/dev/null
@@ -206,6 +207,21 @@ def _kv(lines: list[str]) -> dict[str, str]:
     return out
 
 
+def cpu_busy_pct(lines: list[str]) -> float | None:
+    """CPU utilisation between two /proc/stat 'cpu' lines taken one second apart (as ST06/vmstat report it)."""
+    samples = []
+    for line in lines:
+        parts = line.split()
+        if len(parts) >= 5 and parts[0] == "cpu" and all(p.isdigit() for p in parts[1:]):
+            values = [int(p) for p in parts[1:]]
+            idle = values[3] + (values[4] if len(values) > 4 else 0)  # idle + iowait
+            samples.append((sum(values[:8]), idle))
+    if len(samples) < 2:
+        return None
+    total, idle = samples[-1][0] - samples[0][0], samples[-1][1] - samples[0][1]
+    return round(max(0.0, min(100.0, (total - idle) / total * 100)), 1) if total > 0 else None
+
+
 def parse_os(sec: dict[str, list[str]]) -> dict:
     rel = _kv(sec.get("os-release", []))
     uname = (sec.get("uname") or [""])[0].split()
@@ -231,6 +247,7 @@ def parse_os(sec: dict[str, list[str]]) -> dict:
             seen.add(d["mount"])
             unique.append(d)
     model = next((c.split(":", 1)[1].strip() for c in cpu if c.startswith("model name")), None)
+    swap_total, swap_free = mem.get("SwapTotal"), mem.get("SwapFree")
     return {
         "hostname": names[0] if names else None,
         "fqdn": names[1] if len(names) > 1 else (names[0] if names else None),
@@ -243,6 +260,8 @@ def parse_os(sec: dict[str, list[str]]) -> dict:
         "memory_gb": round(total / 1024 ** 3, 1) if total else None,
         "memory_used_pct": round((total - avail) / total * 100, 1) if total and avail is not None else None,
         "swap_gb": round(mem["SwapTotal"] / 1024 ** 3, 1) if mem.get("SwapTotal") else 0,
+        "swap_used_pct": round((swap_total - swap_free) / swap_total * 100, 1) if swap_total and swap_free is not None else None,
+        "cpu_pct": cpu_busy_pct(sec.get("cpustat", [])),
         "load1": float(load[0]) if load and _num(load[0]) else None,
         "uptime_days": round(float(uptime[0]) / 86400, 1) if uptime and _num(uptime[0]) else None,
         "virtualization": ((sec.get("virt") or ["unknown"])[0] or "unknown").strip(),

@@ -1,4 +1,5 @@
 from contextlib import contextmanager
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from sqlalchemy import (
@@ -288,6 +289,31 @@ monitor_snapshots = Table(
     Column("data", Text, nullable=False),
 )
 Index("ix_monitor_snapshots", monitor_snapshots.c.system_id, monitor_snapshots.c.monitor, monitor_snapshots.c.captured_at)
+
+# Latest value of every metric per system (upserted on each write): fleet views and daily checks read this instead of
+# scanning the time series.
+metric_latest = Table(
+    "metric_latest", metadata,
+    SYSTEM_FK(),
+    Column("metric", String(80), nullable=False),
+    Column("value", Float, nullable=False),
+    Column("ts", DateTime(timezone=True), nullable=False),
+)
+Index("uq_metric_latest", metric_latest.c.system_id, metric_latest.c.metric, unique=True)
+
+# Daily Basis check sign-off: who reviewed the fleet (or a landscape) when, with the check results at that moment.
+daily_check_reviews = Table(
+    "daily_check_reviews", metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("check_date", String(10), nullable=False),     # YYYY-MM-DD (reviewer's day)
+    Column("landscape", String(80)),                       # null = whole fleet
+    Column("reviewed_by", String(80), nullable=False),
+    Column("reviewed_at", DateTime(timezone=True), nullable=False),
+    Column("comment", Text),
+    Column("summary", Text, nullable=False),               # JSON: counts per status
+    Column("results", Text, nullable=False),               # JSON: the matrix as reviewed
+)
+Index("ix_daily_check_reviews", daily_check_reviews.c.check_date, daily_check_reviews.c.landscape)
 
 # ABAP push agent (report Z_SENTINEL_PUSH in the SAP system): one token per system; only its SHA-256 is stored.
 agent_tokens = Table(
@@ -606,6 +632,8 @@ def init_db() -> None:
         create_missing_tables(connection, missing_tables)
         if any(t.name == "monitor_latest" for t in missing_tables):
             backfill_monitor_latest(connection)
+        if any(t.name == "metric_latest" for t in missing_tables):
+            backfill_metric_latest(connection)
         add_missing_columns(connection)
         ensure_target_uniqueness(connection)
 
@@ -614,6 +642,17 @@ def backfill_monitor_latest(connection: Connection) -> None:
     connection.execute(text(
         "INSERT INTO monitor_latest (system_id, monitor, snapshot_id) "
         "SELECT system_id, monitor, MAX(id) FROM monitor_snapshots GROUP BY system_id, monitor"))
+
+
+def backfill_metric_latest(connection: Connection) -> None:
+    """Latest point per (system, metric) from the last 7 days; other metrics fill on their next collection."""
+    since = datetime.now(timezone.utc) - timedelta(days=7)
+    connection.execute(text(
+        "INSERT INTO metric_latest (system_id, metric, value, ts) "
+        "SELECT p.system_id, p.metric, MAX(p.value), p.ts FROM metric_points p "
+        "JOIN (SELECT system_id, metric, MAX(ts) AS ts FROM metric_points WHERE ts >= :since GROUP BY system_id, metric) m "
+        "ON m.system_id = p.system_id AND m.metric = p.metric AND m.ts = p.ts "
+        "GROUP BY p.system_id, p.metric, p.ts"), {"since": since})
 
 
 def add_missing_columns(connection: Connection) -> None:

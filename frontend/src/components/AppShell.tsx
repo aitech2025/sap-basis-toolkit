@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Link, NavLink, useLocation, useNavigate } from "react-router-dom";
 import {
-  BarChart3, Bell, BellRing, BrainCircuit, CalendarClock, ChevronRight, FileClock, KeyRound, PanelLeft, UserRound,
+  BarChart3, Bell, BellRing, BrainCircuit, CalendarClock, ChevronRight, ClipboardCheck, FileClock, KeyRound, PanelLeft, UserRound,
   LayoutDashboard, LogOut, Menu, Monitor, Moon, Network, Radar, Search, Server, ShieldCheck, SlidersHorizontal, Sun,
   TriangleAlert, UserCog, Users,
 } from "lucide-react";
@@ -26,6 +26,7 @@ const NAV: { title: string; items: NavEntry[] }[] = [
     items: [
       { to: "/", label: "Overview", icon: LayoutDashboard, end: true },
       { to: "/incidents", label: "Incidents", icon: TriangleAlert, badge: true },
+      { to: "/daily-checks", label: "Daily checks", icon: ClipboardCheck },
       { to: "/landscapes", label: "Landscapes", icon: Network },
       { to: "/systems", label: "SAP systems", icon: Server },
       { to: "/analytics", label: "Analytics", icon: BarChart3 },
@@ -52,7 +53,7 @@ const NAV: { title: string; items: NavEntry[] }[] = [
 ];
 
 const TITLES: Record<string, string> = {
-  "/": "Overview", "/analytics": "Analytics", "/intelligence": "Intelligence", "/incidents": "Incidents",
+  "/": "Overview", "/analytics": "Analytics", "/intelligence": "Intelligence", "/incidents": "Incidents", "/daily-checks": "Daily checks",
   "/landscapes": "Landscapes", "/systems": "SAP systems", "/discover": "Discover system", "/certificates": "Certificates",
   "/maintenance": "Maintenance", "/rules": "Alert rules", "/alerts": "Notifications", "/users": "Users & access",
   "/audit": "Audit log", "/account": "Account",

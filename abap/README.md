@@ -22,6 +22,13 @@ push loses nothing.
 | tRFC errors | ARFCSSTATE (SYSFAIL, CPICERR, ...), all clients | SM58 |
 | qRFC queues | TRFCQOUT / TRFCQIN by queue and state, all clients | SMQ1 / SMQ2 |
 | IDoc errors | EDIDC error statuses since yesterday, all clients | WE02 |
+| Number ranges | NRIV internal ranges at least 50% used, all clients | SNRO |
+| Application log errors | BALHDR logs with abort/error messages since yesterday, by object | SLG1 |
+| Batch input errors | APQI sessions in error, last 7 days | SM35 |
+| Client settings | T000 change options per client | SCC4 |
+| Standard users | USR02 lock state of SAP*, DDIC, TMSADM, EARLYWATCH, SAPCPIC; users locked by failed logons | SU01 |
+| Spool | number of spool requests (TSP01) | SP01 |
+| Transports | TPALOG imports since yesterday with return codes | STMS |
 
 Areas that cannot be read (for example, a missing authorisation) are listed in the job log and in the payload; the other areas
 are still sent.
@@ -44,7 +51,8 @@ are still sent.
 
 ## Authorisations for the job user
 
-- `S_TABU_NAM` (or `S_TABU_DIS`), display: SNAP, TBTCO, VBHDR, ARFCSSTATE, TRFCQOUT, TRFCQIN, EDIDC, TTZCU
+- `S_TABU_NAM` (or `S_TABU_DIS`), display: SNAP, TBTCO, VBHDR, ARFCSSTATE, TRFCQOUT, TRFCQIN, EDIDC, TTZCU, NRIV, BALHDR,
+  APQI, T000, USR02 (only the fields BNAME, UFLAG, LOCNT, TRDAT and USTYP are read), TSP01, TPALOG
 - `S_RFC`: function groups of `/SDF/GET_DUMP_LOG` (`/SDF/SMD_E2E`) and `ENQUEUE_READ`; `S_ENQUE` display
 - `S_ICF`: use of the SM59 destination, if destinations are protected
 
@@ -54,5 +62,7 @@ are still sent.
 - Standard tables are read with `INTO CORRESPONDING FIELDS`, so a field missing on an older release stays empty instead of
   breaking activation.
 - `/SDF/GET_DUMP_LOG` is called dynamically: the class activates without ST-PI and falls back to SNAP.
+- T000 and NRIV are read with dynamic SQL across clients, falling back to a plain read where a table is cross-client. The
+  BALHDR condition is dynamic too, so a release without its message counters reports an error instead of failing activation.
 - abaplint cannot see SAP's dictionary, so table-specific checks (for example, which tables are client-dependent) happen at
   activation in your system.

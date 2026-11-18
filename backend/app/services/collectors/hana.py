@@ -66,6 +66,22 @@ QUERIES: dict[str, tuple[str, bool, bool]] = {
     "jobs": ("SELECT JOBNAME, JOBCOUNT, SDLUNAME, STATUS, STRTDATE, STRTTIME, ENDDATE, ENDTIME FROM {schema}.TBTCO "
              "WHERE STRTDATE >= ? OR STATUS = 'R'", True, False),
     "imports": ("SELECT TRKORR, RETCODE, TRTIME FROM {schema}.TPALOG WHERE TRTIME >= ?", True, True),
+    # Basis daily checks. USR02 is deliberately not read over SQL (it holds password hashes): the ABAP push agent reports
+    # the standard users from inside SAP instead.
+    "number_ranges": ("SELECT CLIENT, OBJECT, SUBOBJECT, NRRANGENR, TOYEAR, FROMNUMBER, TONUMBER, NRLEVEL FROM {schema}.NRIV "
+                      "WHERE EXTERNIND = ' '", True, True),
+    "applog_errors": ("SELECT OBJECT, SUBOBJECT, COUNT(*) AS LOGS FROM {schema}.BALHDR WHERE ALDATE >= ? "
+                      "AND (MSG_CNT_A > 0 OR MSG_CNT_E > 0) GROUP BY OBJECT, SUBOBJECT", True, True),
+    "batch_input": ("SELECT MANDANT, GROUPID, QSTATE, CREDATE, CREATOR FROM {schema}.APQI WHERE QSTATE = 'E' AND CREDATE >= ?",
+                    True, True),
+    "clients": ("SELECT MANDT, MTEXT, CCCATEGORY, CCCORACTIV, CCNOCLIIND FROM {schema}.T000", True, True),
+    "spool_requests": ("SELECT COUNT(*) AS TOTAL FROM {schema}.TSP01", True, True),
+    # HANA itself: log volume, blocked transactions, out-of-memory events
+    "log_disk": ("SELECT SUM(USED_SIZE) AS USED, SUM(TOTAL_SIZE) AS TOTAL FROM M_DISKS WHERE USAGE_TYPE = 'LOG'", False, True),
+    "blocked_transactions": ("SELECT COUNT(*) AS BLOCKED, MAX(SECONDS_BETWEEN(BLOCKED_TIME, CURRENT_TIMESTAMP)) AS MAX_WAIT_S "
+                             "FROM M_BLOCKED_TRANSACTIONS", False, True),
+    "oom_events": ("SELECT COUNT(*) AS EVENTS FROM M_OUT_OF_MEMORY_EVENTS WHERE TIME >= ADD_SECONDS(CURRENT_TIMESTAMP, -86400)",
+                   False, True),
 }
 
 
@@ -153,7 +169,8 @@ def collect(client, abap_schema: str | None, zone) -> dict:
     since_day = (now - timedelta(days=1)).astimezone(zone).strftime("%Y%m%d")
     since_week = (now - timedelta(days=7)).astimezone(zone).strftime("%Y%m%d")
     params = {"table_sizes": (abap_schema,), "dumps": (since_day,), "idoc_errors": (since_day,),
-              "idoc_total": (since_day,), "jobs": (since_week,), "imports": (since_week + "000000",)}
+              "idoc_total": (since_day,), "jobs": (since_week,), "imports": (since_week + "000000",),
+              "applog_errors": (since_day,), "batch_input": (since_week,)}
     results, diagnostics = {}, []
     for name, (sql, needs_schema, experimental) in query_catalogue().items():
         if needs_schema and not abap_schema:
@@ -206,6 +223,15 @@ def collect(client, abap_schema: str | None, zone) -> dict:
         row = results["expensive_statements"][0]
         hana["expensive_statements_1h"] = {"count": int(row.get("STATEMENT_COUNT") or 0),
                                            "max_duration_s": round(float(row.get("MAX_DURATION_US") or 0) / 1_000_000, 2)}
+    if results.get("log_disk") and results["log_disk"][0].get("TOTAL"):
+        d = results["log_disk"][0]
+        hana["log_disk"] = {"used": float(d["USED"] or 0), "total": float(d["TOTAL"]),
+                            "pct": round(float(d["USED"] or 0) / float(d["TOTAL"]) * 100, 1)}
+    if results.get("blocked_transactions"):
+        row = results["blocked_transactions"][0]
+        hana["blocked_transactions"] = {"count": int(row.get("BLOCKED") or 0), "max_wait_s": int(row.get("MAX_WAIT_S") or 0)}
+    if results.get("oom_events"):
+        hana["oom_events_24h"] = int(results["oom_events"][0].get("EVENTS") or 0)
     out["hana"] = hana
 
     out.update(map_abap_results(results, zone))
@@ -245,6 +271,20 @@ def map_abap_results(results: dict, zone) -> dict:
                         "total": int(results["idoc_total"][0]["TOTAL"]) if results.get("idoc_total") else None}
     if "jobs" in results:
         out["jobs"] = results["jobs"]
+    if "number_ranges" in results:
+        out["number_ranges"] = results["number_ranges"]
+    if "applog_errors" in results:
+        out["applog"] = [{"object": str(r.get("OBJECT") or "").strip(), "subobject": str(r.get("SUBOBJECT") or "").strip(),
+                          "logs": int(r.get("LOGS") or 0)} for r in results["applog_errors"]]
+    if "batch_input" in results:
+        out["batch_input"] = [{"client": r.get("MANDANT"), "session": str(r.get("GROUPID") or "").strip(),
+                               "created": parse_sap_datetime(str(r.get("CREDATE") or ""), "", zone), "creator": r.get("CREATOR")}
+                              for r in results["batch_input"]]
+    if "clients" in results or "critical_users" in results:
+        out["security"] = {"clients": results.get("clients"), "critical_users": results.get("critical_users"),
+                           "failed_logon_locks": results.get("failed_logon_locks")}
+    if "spool_requests" in results:
+        out["spool"] = {"requests": int(results["spool_requests"][0].get("TOTAL") or 0) if results["spool_requests"] else None}
     if "imports" in results:
         out["imports"] = results["imports"]
     return out

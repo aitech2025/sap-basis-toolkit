@@ -118,9 +118,12 @@ def map_payload(payload: dict, zone) -> dict:
                         for r in _upper(p["dumps"])]
         raw["dumps"] = [d for d in raw["dumps"] if d["at"]]
     tables = {}
-    for key in ("updates", "trfc", "qrfc_out", "qrfc_in", "idoc_errors", "jobs"):
+    for key in ("updates", "trfc", "qrfc_out", "qrfc_in", "idoc_errors", "jobs", "number_ranges", "applog_errors",
+                "batch_input", "clients", "critical_users", "failed_logon_locks", "imports"):
         if key in p:
             tables[key] = _upper(p[key])
+    if "spool_requests" in p:
+        tables["spool_requests"] = [{"TOTAL": int(p.get("spool_requests") or 0)}]
     if "idoc_errors" in p:
         tables["idoc_total"] = [{"TOTAL": int(p.get("idoc_total") or 0)}]
     raw.update(hana.map_abap_results(tables, zone))
