@@ -12,7 +12,7 @@ import json
 import operator as op
 from datetime import datetime, timezone
 
-from sqlalchemy import and_, or_, select, update
+from sqlalchemy import and_, func, or_, select, update
 
 from ..db import alert_rules, get_db, incident_events, incidents, maintenance_windows, sap_systems
 from . import notifications
@@ -422,19 +422,46 @@ def act(incident_id: int, action: str, actor: str, message: str | None = None, a
     return get_incident(incident_id)
 
 
+def _empty_counts() -> dict:
+    return {"open": 0, "acknowledged": 0, "critical": 0, "warning": 0, "total": 0}
+
+
+def counts_by_system() -> dict[int | None, dict]:
+    """Active incident counts for every system in one aggregate query (dashboards over the whole fleet)."""
+    query = (select(incidents.c.system_id, incidents.c.status, incidents.c.severity, func.count().label("n"))
+             .where(incidents.c.status != "resolved")
+             .group_by(incidents.c.system_id, incidents.c.status, incidents.c.severity))
+    out: dict[int | None, dict] = {}
+    with get_db() as connection:
+        for system_id, status, severity, n in connection.execute(query):
+            c = out.setdefault(system_id, _empty_counts())
+            if status in ("open", "acknowledged"):
+                c[status] += n
+            if severity in ("critical", "warning"):
+                c[severity] += n
+            c["total"] += n
+    return out
+
+
 def counts(system_id: int | None = None) -> dict:
-    items = list_incidents("active", system_id, limit=10000)
-    return {
-        "open": sum(1 for i in items if i["status"] == "open"),
-        "acknowledged": sum(1 for i in items if i["status"] == "acknowledged"),
-        "critical": sum(1 for i in items if i["severity"] == "critical"),
-        "warning": sum(1 for i in items if i["severity"] == "warning"),
-        "total": len(items),
-    }
+    query = (select(incidents.c.status, incidents.c.severity, func.count().label("n"))
+             .where(incidents.c.status != "resolved").group_by(incidents.c.status, incidents.c.severity))
+    if system_id is not None:
+        query = query.where(incidents.c.system_id == system_id)
+    c = _empty_counts()
+    with get_db() as connection:
+        for status, severity, n in connection.execute(query):
+            if status in ("open", "acknowledged"):
+                c[status] += n
+            if severity in ("critical", "warning"):
+                c[severity] += n
+            c["total"] += n
+    return c
+
+
+def worst_severity(c: dict) -> str | None:
+    return "critical" if c.get("critical") else "warning" if c.get("warning") else None
 
 
 def worst_active_severity(system_id: int) -> str | None:
-    items = list_incidents("active", system_id, limit=10000)
-    if not items:
-        return None
-    return max(items, key=lambda i: SEVERITY_RANK[i["severity"]])["severity"]
+    return worst_severity(counts(system_id))

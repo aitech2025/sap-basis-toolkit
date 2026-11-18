@@ -12,6 +12,7 @@ without failing the whole collection.
 """
 import base64
 import http.client
+from concurrent.futures import ThreadPoolExecutor
 import socket
 import ssl
 import xml.etree.ElementTree as ET
@@ -166,41 +167,57 @@ def _syslog(item: dict, instance: str, zone) -> dict:
             "program": g("Program", "Tcode", "Report"), "instance": instance}
 
 
-def collect(client: SapControlClient, zone) -> dict:
-    """Return availability, work process and syslog inputs plus per-call diagnostics."""
+def _collect_instance(client: SapControlClient, inst: dict, zone) -> tuple[dict, dict | None, list[dict], list[dict]]:
+    """One instance: process list, and for running ABAP instances the work process table and system log."""
     diagnostics: list[dict] = []
+    wp_table, syslog_rows = None, []
+    name = f"{inst.get('hostname')}_{str(inst.get('instanceNr', '')).zfill(2)}"
+    entry = {"name": name, "hostname": inst.get("hostname"), "instance_nr": str(inst.get("instanceNr", "")).zfill(2),
+             "features": inst.get("features", ""), "status": inst.get("dispstatus", ""), "processes": [], "error": None}
+    endpoint = client.instance_endpoint(inst)
+    try:
+        validate_port("sapcontrol", endpoint.port)
+        entry["processes"] = [{"name": p.get("name"), "description": p.get("description"), "status": p.get("dispstatus"),
+                               "textstatus": p.get("textstatus"), "elapsed": p.get("elapsedtime"), "pid": p.get("pid")}
+                              for p in client.call("GetProcessList", endpoint=endpoint)]
+        diagnostics.append({"instance": name, "call": "GetProcessList", "ok": True})
+    except CollectorError as exc:
+        entry["error"] = str(exc)
+        diagnostics.append({"instance": name, "call": "GetProcessList", "ok": False, "error": str(exc)})
+    if "ABAP" in entry["features"].upper() and entry["status"].upper().endswith(("GREEN", "YELLOW")):
+        try:
+            wps = [_wp(i) for i in client.call("ABAPGetWPTable", endpoint=endpoint)]
+            wp_table = {"instance": name, "workprocesses": wps}
+            diagnostics.append({"instance": name, "call": "ABAPGetWPTable", "ok": True, "rows": len(wps)})
+        except CollectorError as exc:
+            diagnostics.append({"instance": name, "call": "ABAPGetWPTable", "ok": False, "error": str(exc)})
+        try:
+            rows = [_syslog(i, name, zone) for i in client.call("ABAPReadSyslog", endpoint=endpoint)]
+            syslog_rows = [r for r in rows if r["at"]]
+            diagnostics.append({"instance": name, "call": "ABAPReadSyslog", "ok": True, "rows": len(rows)})
+        except CollectorError as exc:
+            diagnostics.append({"instance": name, "call": "ABAPReadSyslog", "ok": False, "error": str(exc)})
+    return entry, wp_table, syslog_rows, diagnostics
+
+
+def collect(client: SapControlClient, zone) -> dict:
+    """Return availability, work process and syslog inputs plus per-call diagnostics.
+
+    Instances are queried in parallel (SAPCONTROL_INSTANCE_PARALLEL), so a system with many application servers, or one
+    unreachable instance, costs about one call's latency instead of the sum of all of them. Output order is stable."""
     raw_instances = client.call("GetSystemInstanceList")
     if not raw_instances:
         raise CollectorError("GetSystemInstanceList returned no instances")
-    instances, wp_tables, syslog_rows = [], [], []
-    for inst in raw_instances:
-        name = f"{inst.get('hostname')}_{str(inst.get('instanceNr', '')).zfill(2)}"
-        entry = {"name": name, "hostname": inst.get("hostname"), "instance_nr": str(inst.get("instanceNr", "")).zfill(2),
-                 "features": inst.get("features", ""), "status": inst.get("dispstatus", ""), "processes": [], "error": None}
-        endpoint = client.instance_endpoint(inst)
-        try:
-            validate_port("sapcontrol", endpoint.port)
-            entry["processes"] = [{"name": p.get("name"), "description": p.get("description"), "status": p.get("dispstatus"),
-                                   "textstatus": p.get("textstatus"), "elapsed": p.get("elapsedtime"), "pid": p.get("pid")}
-                                  for p in client.call("GetProcessList", endpoint=endpoint)]
-            diagnostics.append({"instance": name, "call": "GetProcessList", "ok": True})
-        except CollectorError as exc:
-            entry["error"] = str(exc)
-            diagnostics.append({"instance": name, "call": "GetProcessList", "ok": False, "error": str(exc)})
-        if "ABAP" in entry["features"].upper() and entry["status"].upper().endswith(("GREEN", "YELLOW")):
-            try:
-                wps = [_wp(i) for i in client.call("ABAPGetWPTable", endpoint=endpoint)]
-                wp_tables.append({"instance": name, "workprocesses": wps})
-                diagnostics.append({"instance": name, "call": "ABAPGetWPTable", "ok": True, "rows": len(wps)})
-            except CollectorError as exc:
-                diagnostics.append({"instance": name, "call": "ABAPGetWPTable", "ok": False, "error": str(exc)})
-            try:
-                rows = [_syslog(i, name, zone) for i in client.call("ABAPReadSyslog", endpoint=endpoint)]
-                syslog_rows.extend(r for r in rows if r["at"])
-                diagnostics.append({"instance": name, "call": "ABAPReadSyslog", "ok": True, "rows": len(rows)})
-            except CollectorError as exc:
-                diagnostics.append({"instance": name, "call": "ABAPReadSyslog", "ok": False, "error": str(exc)})
-        instances.append(entry)
+    workers = max(1, min(len(raw_instances), config.SAPCONTROL_INSTANCE_PARALLEL))
+    if workers == 1:
+        results = [_collect_instance(client, inst, zone) for inst in raw_instances]
+    else:
+        with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="sapcontrol") as pool:
+            results = list(pool.map(lambda inst: _collect_instance(client, inst, zone), raw_instances))
+    instances = [r[0] for r in results]
+    wp_tables = [r[1] for r in results if r[1] is not None]
+    syslog_rows = [row for r in results for row in r[2]]
+    diagnostics = [d for r in results for d in r[3]]
     return {"instances": instances, "workprocesses": wp_tables, "syslog": syslog_rows,
             "syslog_supported": any(d["call"] == "ABAPReadSyslog" and d["ok"] for d in diagnostics),
             "diagnostics": diagnostics, "collected_at": datetime.now(timezone.utc)}

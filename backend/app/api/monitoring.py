@@ -392,3 +392,9 @@ def end_maintenance(window_id: int):
     except LookupError as exc:
         raise HTTPException(404, str(exc))
     return {"ended": window_id}
+
+
+@router.get("/scheduler/health")
+def scheduler_health():
+    """Whether collection keeps up with its schedule (late = missed more than a whole interval)."""
+    return runner.scheduling_health()
