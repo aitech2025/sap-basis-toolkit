@@ -8,6 +8,7 @@ import { Card, Empty, FileField, Pill, fmtDate, useAsync } from "./ui";
 
 export const SOURCE_LABEL: Record<string, string> = {
   sapcontrol: "SAP Start Service", hana: "HANA SQL", upload: "uploaded export", simulator: "demo simulator",
+  rfc: "RFC", abap_agent: "ABAP push agent",
 };
 
 export function useMonitor(system: SystemDetail, monitor: string, hours = 24) {

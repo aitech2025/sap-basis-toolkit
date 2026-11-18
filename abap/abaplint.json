@@ -1,0 +1,30 @@
+{
+  "global": {
+    "files": "/src/**/*.*",
+    "exclude": [],
+    "noIssues": []
+  },
+  "dependencies": [],
+  "syntax": {
+    "version": "v740sp08",
+    "errorNamespace": "^(Z|Y|LCL_|TY_|LIF_)",
+    "globalConstants": [],
+    "globalMacros": []
+  },
+  "rules": {
+    "parser_error": true,
+    "check_syntax": true,
+    "unknown_types": true,
+    "check_ddic": true,
+    "unused_variables": true,
+    "unused_types": true,
+    "obsolete_statement": false,
+    "line_length": { "length": 140 },
+    "keyword_case": true,
+    "exporting": true,
+    "prefer_inline": false,
+    "check_no_handler_pragma": true,
+    "empty_statement": true,
+    "sql_escape_host_variables": true
+  }
+}

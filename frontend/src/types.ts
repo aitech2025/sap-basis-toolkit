@@ -534,7 +534,7 @@ export interface MaintenanceWindow {
 export interface Collector {
   id: number;
   system_id: number;
-  type: "sapcontrol" | "hana" | "hana_sapcontrol" | "node_exporter" | "os_ssh";
+  type: "sapcontrol" | "hana" | "hana_sapcontrol" | "node_exporter" | "os_ssh" | "rfc";
   host: string;
   port: number;
   use_tls: boolean;
@@ -553,6 +553,29 @@ export interface Collector {
   simulated: boolean;
   has_private_key?: boolean;
   host_key?: string | null;
+  sap_client?: string | null;
+}
+
+export interface AgentToken {
+  id: number;
+  system_id: number;
+  hint: string;
+  created_at: string;
+  created_by: string | null;
+  revoked_at: string | null;
+  last_seen_at: string | null;
+  last_ip: string | null;
+  last_agent_version: string | null;
+  last_payload_bytes: number | null;
+  token?: string;
+}
+
+export interface AgentStatus {
+  active: AgentToken | null;
+  tokens: AgentToken[];
+  endpoint: string;
+  abap_objects: string[];
+  schema: number;
 }
 
 export interface MonitorSnapshot<T = Record<string, any>> {

@@ -14,10 +14,10 @@ from ...db import collectors, get_db, sap_systems
 from .. import growth, incidents, monitors, ops, transports, vault
 from ..systems import system_zone
 from ..tabular import parse_sap_datetime
-from . import CollectorError, ssh, hana, node_exporter, sapcontrol, simulator, validate_port
+from . import CollectorError, ssh, hana, node_exporter, rfc, sapcontrol, simulator, validate_port
 
 logger = logging.getLogger(__name__)
-TYPES = ("sapcontrol", "hana", "hana_sapcontrol", "node_exporter", "os_ssh")
+TYPES = ("sapcontrol", "hana", "hana_sapcontrol", "node_exporter", "os_ssh", "rfc")
 # os_ssh: read-only SSH inventory of an application or database host (OS layer).
 # hana_sapcontrol: the HANA instance's own sapstartsrv (5<NN>13/14, <hanasid>adm) for DB availability and start/stop.
 
@@ -40,6 +40,7 @@ def view(row) -> dict:
     item["has_password"] = bool(row["password_enc"])
     item["has_private_key"] = bool(row.get("private_key_enc"))
     item["host_key"] = row.get("host_key")
+    item["sap_client"] = row.get("sap_client")
     item["last_run_at"] = _iso(row["last_run_at"])
     item["created_at"] = _iso(row["created_at"])
     item["diagnostics"] = json.loads(row["last_details"]) if row["last_details"] else []
@@ -61,6 +62,8 @@ def validate(data: dict) -> None:
         validate_port("sapcontrol" if data["type"] == "hana_sapcontrol" else data["type"], int(data["port"]))
     if data["type"] == "os_ssh" and not data.get("username"):
         raise CollectorError("OS inventory needs an OS user (root or <sid>adm)")
+    if data["type"] == "rfc" and not simulator.is_sim(data["host"]) and not (data.get("username") and data.get("sap_client")):
+        raise CollectorError("RFC collectors need a technical user and the SAP client")
     if data["type"] == "hana" and not simulator.is_sim(data["host"]) and not data.get("username"):
         raise CollectorError("HANA collectors need a database user")
     if data["type"] == "node_exporter" and simulator.is_sim(data["host"]):
@@ -239,6 +242,67 @@ def _run_hana_sapcontrol(row: dict, system: dict, persist: bool) -> tuple[dict, 
     return {"metrics": metrics, "summary": {"hana_instances": len(instances), "hana_down": down}}, {"diagnostics": diagnostics}
 
 
+def emit_abap(system: dict, raw: dict, source: str, at: datetime, zone, persist: bool, metrics: dict, summary: dict) -> None:
+    """ABAP runtime monitors from any source (HANA SQL, RFC, ABAP push agent): dumps, updates, tRFC, qRFC, IDocs, jobs,
+    imports. ``raw`` holds whichever of these the source delivered; the rest are left untouched."""
+    def emit(monitor, built):
+        data, m, h = built
+        metrics.update(m)
+        summary[monitor] = data.get("summary")
+        if persist:
+            monitors.store(system["id"], monitor, source, data, h, at)
+
+    if "dumps" in raw:
+        emit("dumps", monitors.build_dumps(raw["dumps"]))
+    if "updates" in raw:
+        emit("updates", monitors.build_updates(raw["updates"]))
+    if "trfc" in raw:
+        emit("trfc", monitors.build_trfc(raw["trfc"]))
+    if "qrfc" in raw:
+        emit("qrfc", monitors.build_qrfc(raw["qrfc"]))
+    if "idocs" in raw:
+        emit("idocs", monitors.build_idocs(raw["idocs"]["errors"], raw["idocs"]["total"]))
+    if persist and raw.get("jobs") is not None:
+        try:
+            jobs = ops.parse_job_rows(raw["jobs"], zone, at) if raw["jobs"] else []
+        except ops.InputFormatError:
+            jobs = []
+        summary["jobs_synced"] = ops.store_job_list(system, jobs, at) if jobs else {"jobs": 0}
+    if persist and raw.get("imports") is not None:
+        grouped: dict[tuple, dict] = {}
+        for r in raw["imports"]:
+            when = parse_sap_datetime(str(r.get("TRTIME") or ""), "", zone)
+            rc_raw = str(r.get("RETCODE") or "0").strip()
+            if not when or not rc_raw.isdigit():
+                continue
+            key = (str(r["TRKORR"]).upper(), when)
+            entry = grouped.setdefault(key, {"trkorr": key[0], "rc": 0, "imported_at": when, "time_known": True,
+                                             "owner": None, "description": None})
+            entry["rc"] = max(entry["rc"], int(rc_raw))
+        entries = [{**e, "result": transports.classify_rc(e["rc"])} for e in grouped.values()]
+        summary["imports_synced"] = transports.store_import_history(system["id"], entries)
+
+
+def _run_rfc(row: dict, system: dict, persist: bool) -> tuple[dict, dict]:
+    """ABAP stack over RFC: ST22 dumps (/SDF/GET_DUMP_LOG), SM37 jobs (XBP), application servers (TH_SERVER_LIST)."""
+    zone = system_zone(system)
+    client = rfc.make_client(row, vault.decrypt(row["password_enc"]), _seed(system))
+    source = "simulator" if simulator.is_sim(row["host"]) else "rfc"
+    try:
+        raw = rfc.collect(client, zone)
+    finally:
+        client.close()
+    if raw["system"].get("sid") and raw["system"]["sid"] != system["sid"] and not simulator.is_sim(row["host"]):
+        raise CollectorError(f"RFC reached system {raw['system']['sid']}, but this collector belongs to {system['sid']}")
+    metrics: dict[str, float] = {}
+    summary: dict = {"system": raw["system"]}
+    if raw.get("servers") is not None:
+        metrics["rfc.app_servers"] = float(len(raw["servers"]))
+        summary["servers"] = raw["servers"]
+    emit_abap(system, raw, source, raw["collected_at"], zone, persist, metrics, summary)
+    return {"metrics": metrics, "summary": summary}, {"diagnostics": raw["diagnostics"]}
+
+
 def _run_hana(row: dict, system: dict, persist: bool) -> tuple[dict, dict]:
     zone = system_zone(system)
     client = hana_client(row, system)
@@ -263,32 +327,7 @@ def _run_hana(row: dict, system: dict, persist: bool) -> tuple[dict, dict]:
 
     if raw["hana"]:
         emit("hana", monitors.build_hana(raw["hana"]))
-    if "dumps" in raw:
-        emit("dumps", monitors.build_dumps(raw["dumps"]))
-    if "updates" in raw:
-        emit("updates", monitors.build_updates(raw["updates"]))
-    if "trfc" in raw:
-        emit("trfc", monitors.build_trfc(raw["trfc"]))
-    if "qrfc" in raw:
-        emit("qrfc", monitors.build_qrfc(raw["qrfc"]))
-    if "idocs" in raw:
-        emit("idocs", monitors.build_idocs(raw["idocs"]["errors"], raw["idocs"]["total"]))
-    if persist and raw.get("jobs") is not None:
-        jobs = ops.parse_job_rows(raw["jobs"], zone, at)
-        summary["jobs_synced"] = ops.store_job_list(system, jobs, at)
-    if persist and raw.get("imports") is not None:
-        grouped: dict[tuple, dict] = {}
-        for r in raw["imports"]:
-            when = parse_sap_datetime(str(r.get("TRTIME") or ""), "", zone)
-            rc_raw = str(r.get("RETCODE") or "0").strip()
-            if not when or not rc_raw.isdigit():
-                continue
-            key = (str(r["TRKORR"]).upper(), when)
-            entry = grouped.setdefault(key, {"trkorr": key[0], "rc": 0, "imported_at": when, "time_known": True,
-                                             "owner": None, "description": None})
-            entry["rc"] = max(entry["rc"], int(rc_raw))
-        entries = [{**e, "result": transports.classify_rc(e["rc"])} for e in grouped.values()]
-        summary["imports_synced"] = transports.store_import_history(system["id"], entries)
+    emit_abap(system, raw, source, at, zone, persist, metrics, summary)
     if persist and raw.get("table_sizes"):
         last = growth.last_snapshot_at(system["id"])
         if last is None or last < at - timedelta(hours=config.HANA_GROWTH_SNAPSHOT_HOURS):
@@ -365,7 +404,7 @@ def _run_os_ssh(row: dict, system: dict, persist: bool) -> tuple[dict, dict]:
 
 
 RUNNERS = {"sapcontrol": _run_sapcontrol, "hana": _run_hana, "hana_sapcontrol": _run_hana_sapcontrol,
-           "node_exporter": _run_node_exporter, "os_ssh": _run_os_ssh}
+           "node_exporter": _run_node_exporter, "os_ssh": _run_os_ssh, "rfc": _run_rfc}
 
 
 def run(collector_id: int, persist: bool = True) -> dict:

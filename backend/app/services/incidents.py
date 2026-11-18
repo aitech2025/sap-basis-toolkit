@@ -32,6 +32,7 @@ BUILTIN_RULES = [
     ("abap.enq_table_used_pct", "Enqueue lock table filling up", ">=", 70, 90, "Lock table usage (EnqGetStatistic); an overflow stops all locking"),
     ("abap.dialog_response_ms", "Dialog response time", ">=", 1500, 3000, "Average dialog response time (CCMS, instance shared memory)"),
     ("ccms.red_now", "CCMS reports a red value", ">=", 1, None, "An instance CCMS monitoring attribute is currently red"),
+    ("agent.up", "ABAP push agent silent", "<", 1, None, "The ABAP push agent (job Z_SENTINEL_PUSH) has not sent data within AGENT_SILENT_SECONDS"),
     ("collector.failed", "Collector cannot reach the system", ">=", 1, None,
      "A live collector failed; data is stale until it recovers"),
     ("wp.dia_busy_pct", "Dialog work processes busy", ">=", 80, 95, "Share of DIA work processes running"),

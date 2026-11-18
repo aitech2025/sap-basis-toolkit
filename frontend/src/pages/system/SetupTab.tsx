@@ -1,3 +1,4 @@
+import { AbapAgentCard } from "../../components/AbapAgentCard";
 import { CollectorsCard } from "../../components/Collectors";
 import DependencyTopologyCard from "./DependencyTopologyCard";
 import { Card, Pill } from "../../components/ui";
@@ -14,6 +15,7 @@ export default function SetupTab({ system }: { system: SystemDetail }) {
   return (
     <>
       <CollectorsCard system={system} />
+      <AbapAgentCard system={system} />
       <DependencyTopologyCard system={system} />
       <div className="cols">
         <Card title="System">
