@@ -15,7 +15,7 @@ from .. import config
 from ..db import get_db, metric_points, monitor_latest, monitor_snapshots
 from .tabular import InputFormatError, parse_number, parse_sap_datetime, pick, read_rows, require_columns
 
-MONITORS = ("availability", "workprocesses", "dumps", "syslog", "updates", "trfc", "qrfc", "idocs", "hana", "host")
+MONITORS = ("availability", "workprocesses", "dumps", "syslog", "updates", "trfc", "qrfc", "idocs", "hana", "host", "abap_live")
 STATUS_COLOR = {"GREEN": "green", "YELLOW": "yellow", "RED": "red", "GRAY": "gray", "GREY": "gray"}
 WP_BUSY = {"run", "running", "hold", "on hold"}
 WP_BROKEN = {"stop", "stopped", "ended", "end", "complete"}
@@ -380,6 +380,81 @@ def build_hana(parts: dict, now: datetime | None = None) -> tuple[dict, dict, st
             "alerts": sorted(alerts, key=lambda a: -int(a.get("rating") or 0))[:50], "backups": backups,
             "replication": replication, "services": services, "active_statements": active,
             "service_threads": threads, "expensive_statements_1h": expensive}
+    return data, metrics, _health(levels)
+
+
+# MTE names (CCMS, instance context) whose value becomes a metric. Values are averaged over the instances that report them.
+CCMS_METRICS = {"responsetime": ("abap.dialog_response_ms", "avg"), "usersloggedin": ("abap.users_logged_on", "sum"),
+                "frontendresponsetime": ("abap.frontend_response_ms", "avg")}
+
+
+def build_abap_live(live: list[dict], now: datetime | None = None) -> tuple[dict, dict, str]:
+    """Near-real-time ABAP signals from sapstartsrv: dispatcher queues, CCMS (instance shared memory), enqueue server.
+
+    CCMS colours come from the monitoring tree's current values. Open alerts (GetAlerts) are shown for context only: they
+    stay open until someone completes them in RZ20, so counting them would report problems long fixed."""
+    now = now or _now()
+    metrics: dict[str, float] = {}
+    levels: list[str] = []
+    queues: dict[str, dict] = {}
+    for inst in live:
+        for q in inst.get("queues") or []:
+            kind = q["type"].upper().split("/")[-1]
+            agg = queues.setdefault(kind, {"type": q["type"], "now": 0, "high": 0, "max": q["max"], "instances": 0})
+            agg["now"] += q["now"]
+            agg["high"] = max(agg["high"], q["high"])
+            agg["instances"] += 1
+    for kind, metric in (("DIA", "abap.queue_dia"), ("UPD", "abap.queue_upd"), ("BTC", "abap.queue_btc")):
+        if kind in queues:
+            metrics[metric] = float(queues[kind]["now"])
+    if queues.get("DIA", {}).get("now", 0) >= 20:
+        levels.append("warning")
+
+    values: dict[str, list[float]] = {}
+    red, yellow, nodes = [], [], []
+    for inst in live:
+        for n in inst.get("ccms_tree") or []:
+            if not n["leaf"]:
+                continue
+            nodes.append({**n, "instance": inst["instance"]})
+            key = n["name"].replace(" ", "").replace("_", "").lower()
+            if key in CCMS_METRICS and n["value"] is not None:
+                values.setdefault(key, []).append(n["value"])
+            if n["color"] == "RED":
+                red.append({**n, "instance": inst["instance"]})
+            elif n["color"] == "YELLOW":
+                yellow.append({**n, "instance": inst["instance"]})
+    for key, vals in values.items():
+        metric, how = CCMS_METRICS[key]
+        metrics[metric] = round(sum(vals) / len(vals), 2) if how == "avg" else float(sum(vals))
+    if any(inst.get("ccms_tree") is not None for inst in live):
+        metrics["ccms.red_now"] = float(len(red))
+        metrics["ccms.yellow_now"] = float(len(yellow))
+        levels.append("critical" if red else "warning" if yellow else "healthy")
+    open_alerts = [{**a, "instance": inst["instance"]} for inst in live for a in inst.get("ccms_alerts") or []]
+
+    enqueue = next((inst["enqueue"] for inst in live if inst.get("enqueue")), None)
+    locks = next((inst["locks"] for inst in live if inst.get("locks") is not None), None)
+    if enqueue and enqueue.get("table_used_pct") is not None:
+        metrics["abap.enq_table_used_pct"] = enqueue["table_used_pct"]
+        levels.append("critical" if enqueue["table_used_pct"] >= 90 else "warning" if enqueue["table_used_pct"] >= 70 else "healthy")
+    if locks is not None:
+        ages = [lock["age_minutes"] for lock in locks if lock["age_minutes"] is not None]
+        metrics["abap.locks"] = float(len(locks))
+        metrics["abap.locks_oldest_min"] = float(max(ages)) if ages else 0.0
+        metrics["abap.locks_long"] = float(sum(1 for a in ages if a >= config.LOCK_WARNING_MINUTES))
+    data = {
+        "summary": {"queues": queues, "ccms_red": len(red), "ccms_yellow": len(yellow), "open_alerts": len(open_alerts),
+                    "locks": len(locks) if locks is not None else None, "enqueue": enqueue,
+                    "dialog_response_ms": metrics.get("abap.dialog_response_ms"),
+                    "users_logged_on": metrics.get("abap.users_logged_on")},
+        "ccms_red": red[:100], "ccms_yellow": yellow[:100],
+        "open_alerts": sorted(open_alerts, key=lambda a: a.get("time") or "", reverse=True)[:100],
+        "ccms_values": [n for n in nodes if n["value"] is not None][:400],
+        "locks_longest": sorted((lk for lk in (locks or []) if lk["age_minutes"] is not None),
+                                key=lambda lk: -lk["age_minutes"])[:50],
+        "instances": [inst["instance"] for inst in live],
+    }
     return data, metrics, _health(levels)
 
 

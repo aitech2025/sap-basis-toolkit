@@ -31,7 +31,7 @@ export default function LocksTab({ system }: { system: SystemDetail }) {
     <>
       <ErrorBanner error={error} />
       {message && <div className={`banner ${message.ok ? "ok" : "error"}`}>{message.text}</div>}
-      {data?.stale && data.latest && <div className="banner info">Latest SM12 snapshot is from {fmtDate(data.latest)} — upload a fresh one for current locks.</div>}
+      {data?.stale && data.latest && <div className="banner info">Latest SM12 snapshot is from {fmtDate(data.latest)}. With a sapcontrol collector, locks are read live from the enqueue server; otherwise upload a fresh SM12 export.</div>}
       <div className="tiles">
         <Tile label="Current locks" value={s?.locks ?? "–"} hint={data?.latest ? `snapshot ${fmtDate(data.latest)}` : "no snapshot yet"} />
         <Tile label="Long-running" value={s?.long_running ?? "–"} hint={t ? `held ≥ ${t.warning_minutes} min` : undefined} />
@@ -41,7 +41,7 @@ export default function LocksTab({ system }: { system: SystemDetail }) {
       </div>
       <Card title="Long-running locks">
         <DataTable<LockView> rows={data?.long_running ?? []} rowKey={(l, i) => `${l.user}-${l.table}-${i}`}
-          empty={data?.latest ? "No lock is held longer than the warning threshold." : "No snapshot yet — upload an SM12 export below."}
+          empty={data?.latest ? "No lock is held longer than the warning threshold." : "No snapshot yet. A sapcontrol collector reads locks live from the enqueue server, or upload an SM12 export below."}
           columns={lockColumns} />
         <p className="muted small">Before deleting a lock in SM12, check the owner's session (SM04/SM50) and any open update (SM13); deleting an active lock can corrupt data.</p>
       </Card>
@@ -66,7 +66,8 @@ export default function LocksTab({ system }: { system: SystemDetail }) {
           <DataTable<LockView> rows={data.persistent} rowKey={(l, i) => `${l.user}-${l.table}-p${i}`} columns={lockColumns} />
         </Card>
       )}
-      <Card title="Upload SM12 snapshot">
+      <p className="muted small">Live snapshots come from the enqueue server through sapcontrol (EnqGetLockTable) every 5 minutes and list locks held 5 minutes or longer; the lock count covers all locks.</p>
+      <Card title="Upload SM12 snapshot (systems without a sapcontrol collector)">
         <form className="row" onSubmit={async (e) => {
           e.preventDefault();
           if (!csv && !window.confirm(`No file chosen. Record an empty lock list for ${system.sid} (no locks right now)?`)) return;

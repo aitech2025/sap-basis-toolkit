@@ -64,7 +64,7 @@ class RegisterIn(ScanIn):
     timezone: str | None = Field(default=None, max_length=64)
     description: str | None = Field(default=None, max_length=2000)
     control_enabled: bool | None = None
-    interval_seconds: int = Field(default=300, ge=30, le=86400)
+    interval_seconds: int | None = Field(default=None, ge=30, le=86400)  # None: per collector type (sapcontrol 60 s)
     role_overrides: dict[str, str] = Field(default_factory=dict)
     hana: HanaIn | None = None
     db_control: DbControlIn | None = None

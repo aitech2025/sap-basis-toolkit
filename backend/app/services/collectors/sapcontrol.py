@@ -11,13 +11,14 @@ are unavailable on a release (or protected without credentials) are reported per
 without failing the whole collection.
 """
 import base64
+import re
 import http.client
 from concurrent.futures import ThreadPoolExecutor
 import socket
 import ssl
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from ... import config
 from ..target_policy import TargetPolicyError, resolve_approved_addresses
@@ -47,6 +48,27 @@ def parse_items(xml_text: str) -> list[dict]:
         if _local(el.tag) == "item" and len(el):
             items.append({_local(child.tag): (child.text or "").strip() for child in el})
     return items
+
+
+def parse_fields(xml_text: str) -> dict[str, str]:
+    """Leaf elements of a SOAP response body as {local_name: text} (methods that return one structure, e.g. EnqGetStatistic)."""
+    parse_items(xml_text)  # raises on faults
+    root = ET.fromstring(xml_text)
+    return {_local(el.tag): (el.text or "").strip() for el in root.iter() if not len(el) and _local(el.tag) not in ("Envelope", "Body")}
+
+
+def _key(name: str) -> str:
+    return name.replace("-", "").replace("_", "").lower()
+
+
+def _get(item: dict, *names: str, default: str = "") -> str:
+    """Field lookup that ignores case, '-' and '_' (sapstartsrv uses 'lock-arg', some releases 'LockArg')."""
+    keys = {_key(k): v for k, v in item.items()}
+    for n in names:
+        v = keys.get(_key(n))
+        if v not in (None, ""):
+            return v
+    return default
 
 
 def parse_value(xml_text: str) -> str | None:
@@ -167,7 +189,131 @@ def _syslog(item: dict, instance: str, zone) -> dict:
             "program": g("Program", "Tcode", "Report"), "instance": instance}
 
 
-def _collect_instance(client: SapControlClient, inst: dict, zone) -> tuple[dict, dict | None, list[dict], list[dict]]:
+OWNER_TS = re.compile(r"^(\d{14})")
+NUM = re.compile(r"-?\d+(?:[.,]\d+)?")
+
+
+def _owner_time(owner: str, zone) -> datetime | None:
+    """Enqueue owner IDs start with the lock's creation time (YYYYMMDDhhmmss, server local time), as SM12 shows it."""
+    m = OWNER_TS.match(owner or "")
+    if not m:
+        return None
+    try:
+        return datetime.strptime(m.group(1), "%Y%m%d%H%M%S").replace(tzinfo=zone).astimezone(timezone.utc)
+    except ValueError:
+        return None
+
+
+def parse_locks(items: list[dict], zone, now: datetime) -> list[dict]:
+    """EnqGetLockTable items -> SM12 rows (age from the owner ID; None when the ID carries no time)."""
+    out = []
+    for it in items:
+        locked_at = _owner_time(_get(it, "owner"), zone)
+        if locked_at and locked_at > now + timedelta(minutes=5):
+            locked_at = None  # clock skew or an unknown owner format: do not invent an age
+        out.append({"client": _get(it, "client")[:3] or None, "user_name": _get(it, "user", "uname")[:40] or "?",
+                    "lock_mode": _get(it, "lock-mode", "mode")[:2] or None,
+                    "table_name": _get(it, "lock-name", "name", "table").upper()[:64] or "?",
+                    "argument": _get(it, "lock-arg", "argument") or None, "transaction": _get(it, "transaction") or None,
+                    "backup": _get(it, "backup").upper() in ("TRUE", "X", "1"), "locked_at": locked_at,
+                    "age_minutes": max(0, int((now - locked_at).total_seconds() // 60)) if locked_at else None})
+    return out
+
+
+def parse_enqueue_statistic(fields: dict) -> dict:
+    def num(*names):
+        v = _get(fields, *names)
+        return int(v) if v.lstrip("-").isdigit() else None
+    stat = {"locks_now": num("locks-now", "entries-now"), "locks_high": num("locks-high", "entries-high"),
+            "locks_max": num("locks-max", "entries-max"), "owners_now": num("owner-now"), "owners_max": num("owner-max"),
+            "arguments_now": num("arguments-now"), "arguments_max": num("arguments-max"),
+            "enqueue_requests": num("enqueue-requests"), "enqueue_rejects": num("enqueue-rejects"),
+            "enqueue_errors": num("enqueue-errors")}
+    usage = [stat[a] / stat[b] * 100 for a, b in (("locks_now", "locks_max"), ("owners_now", "owners_max"),
+                                                  ("arguments_now", "arguments_max")) if stat[a] is not None and stat[b]]
+    stat["table_used_pct"] = round(max(usage), 2) if usage else None
+    return stat
+
+
+def parse_queues(items: list[dict]) -> list[dict]:
+    """GetQueueStatistic: dispatcher/ICM request queues (Typ e.g. ABAP/DIA, ABAP/UPD, ABAP/BTC, ICM/Intern)."""
+    out = []
+    for it in items:
+        def n(name):
+            v = _get(it, name)
+            return int(v) if v.lstrip("-").isdigit() else 0
+        out.append({"type": _get(it, "Typ", "type"), "now": n("Now"), "high": n("High"), "max": n("Max")})
+    return out
+
+
+def parse_alert_tree(items: list[dict]) -> list[dict]:
+    """GetAlertTree: the instance's CCMS monitoring tree (shared memory), flattened to paths with current colour and value."""
+    nodes = []
+    for it in items:
+        parent = _get(it, "parent")
+        nodes.append({"name": _get(it, "name"), "parent": int(parent) if parent.lstrip("-").isdigit() else -1,
+                      "color": _get(it, "ActualValue").replace("SAPControl-", "").upper() or "GRAY",
+                      "description": _get(it, "description"), "time": _get(it, "Time")})
+    out = []
+    for i, n in enumerate(nodes):
+        path, j, guard = [n["name"]], n["parent"], 0
+        while 0 <= j < len(nodes) and guard < 20:
+            path.insert(0, nodes[j]["name"])
+            j, guard = nodes[j]["parent"], guard + 1
+        m = NUM.search(n["description"] or "")
+        out.append({"path": "\\".join(path), "name": n["name"], "color": n["color"], "description": n["description"],
+                    "value": float(m.group(0).replace(",", ".")) if m else None, "time": n["time"],
+                    "leaf": not any(x["parent"] == i for x in nodes)})
+    return out
+
+
+def parse_alerts(items: list[dict]) -> list[dict]:
+    """GetAlerts: open CCMS alerts of the instance (they stay open until completed in RZ20, so they can be old)."""
+    return [{"object": _get(it, "Object"), "attribute": _get(it, "Attribute"),
+             "color": _get(it, "Value").replace("SAPControl-", "").upper(), "description": _get(it, "Description"),
+             "time": _get(it, "Time")} for it in items]
+
+
+def _call_optional(client, method, endpoint, name, diagnostics, parse=None):
+    try:
+        raw = client.call(method, endpoint=endpoint) if parse is None else parse(method, endpoint)
+        diagnostics.append({"instance": name, "call": method, "ok": True, "rows": len(raw) if hasattr(raw, "__len__") else None})
+        return raw
+    except CollectorError as exc:
+        diagnostics.append({"instance": name, "call": method, "ok": False, "error": str(exc)})
+        return None
+
+
+def _collect_live(client: SapControlClient, entry: dict, endpoint: Endpoint, zone, diagnostics: list[dict]) -> dict:
+    """Near-real-time ABAP signals read from the instance's shared memory through sapstartsrv (no RFC, any database)."""
+    live: dict = {"instance": entry["name"]}
+    feats = {f.strip() for f in entry["features"].upper().split("|")}
+    running = entry["status"].upper().endswith(("GREEN", "YELLOW"))
+    if not running:
+        return live
+    if "ABAP" in feats:
+        queues = _call_optional(client, "GetQueueStatistic", endpoint, entry["name"], diagnostics)
+        if queues is not None:
+            live["queues"] = parse_queues(queues)
+        tree = _call_optional(client, "GetAlertTree", endpoint, entry["name"], diagnostics)
+        if tree is not None:
+            live["ccms_tree"] = parse_alert_tree(tree)
+        alerts = _call_optional(client, "GetAlerts", endpoint, entry["name"], diagnostics)
+        if alerts is not None:
+            live["ccms_alerts"] = parse_alerts(alerts)
+    if feats & {"ENQUE", "ENQUEUE"}:  # the instance that holds the lock table (ASCS, or a central instance)
+        now = datetime.now(timezone.utc)
+        locks = _call_optional(client, "EnqGetLockTable", endpoint, entry["name"], diagnostics)
+        if locks is not None:
+            live["locks"] = parse_locks(locks, zone, now)
+        stat = _call_optional(client, "EnqGetStatistic", endpoint, entry["name"], diagnostics,
+                              parse=lambda m, ep: parse_fields(client.transport(ep, m, ENVELOPE.format(body=f"<ns1:{m}></ns1:{m}>"))))
+        if stat is not None:
+            live["enqueue"] = parse_enqueue_statistic(stat)
+    return live
+
+
+def _collect_instance(client: SapControlClient, inst: dict, zone) -> tuple[dict, dict | None, list[dict], list[dict], dict]:
     """One instance: process list, and for running ABAP instances the work process table and system log."""
     diagnostics: list[dict] = []
     wp_table, syslog_rows = None, []
@@ -197,7 +343,8 @@ def _collect_instance(client: SapControlClient, inst: dict, zone) -> tuple[dict,
             diagnostics.append({"instance": name, "call": "ABAPReadSyslog", "ok": True, "rows": len(rows)})
         except CollectorError as exc:
             diagnostics.append({"instance": name, "call": "ABAPReadSyslog", "ok": False, "error": str(exc)})
-    return entry, wp_table, syslog_rows, diagnostics
+    live = _collect_live(client, entry, endpoint, zone, diagnostics) if not entry["error"] else {"instance": name}
+    return entry, wp_table, syslog_rows, diagnostics, live
 
 
 def collect(client: SapControlClient, zone) -> dict:
@@ -218,6 +365,7 @@ def collect(client: SapControlClient, zone) -> dict:
     wp_tables = [r[1] for r in results if r[1] is not None]
     syslog_rows = [row for r in results for row in r[2]]
     diagnostics = [d for r in results for d in r[3]]
-    return {"instances": instances, "workprocesses": wp_tables, "syslog": syslog_rows,
+    live = [r[4] for r in results if len(r[4]) > 1]
+    return {"instances": instances, "workprocesses": wp_tables, "syslog": syslog_rows, "live": live,
             "syslog_supported": any(d["call"] == "ABAPReadSyslog" and d["ok"] for d in diagnostics),
             "diagnostics": diagnostics, "collected_at": datetime.now(timezone.utc)}

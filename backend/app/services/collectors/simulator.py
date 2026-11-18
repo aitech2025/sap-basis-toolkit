@@ -276,6 +276,61 @@ def sapcontrol_transport(seed: str, java: bool = False):
                 rows.append({"Time": at.strftime("%Y-%m-%d %H:%M:%S"), "Severity": sev, "MNo": mno, "Text": text,
                              "User": r.choice(["SAPSYS", "JSMITH", "BATCH_FI"]), "Client": "100", "Program": "SAPMSSY1"})
             return _envelope(method, _items("log", rows))
+        if method == "GetQueueStatistic":
+            if "ABAP" not in row["features"] or not green:
+                return _fault("DpAttachStartService failed")
+            dia = r.randint(0, 3) + (r.randint(8, 30) if p["fragile"] and r.random() < 0.3 else 0)
+            return _envelope(method, _items("queue", [
+                {"Typ": t, "Now": now_, "High": max(now_, r.randint(5, 40)), "Max": 14000, "Writes": r.randint(10**5, 10**6),
+                 "Reads": r.randint(10**5, 10**6)}
+                for t, now_ in (("ABAP/NOWP", 0), ("ABAP/DIA", dia), ("ABAP/UPD", r.randint(0, 2)), ("ABAP/ENQ", 0),
+                                ("ABAP/BTC", r.randint(0, 4)), ("ABAP/SPO", 0), ("ABAP/UP2", 0), ("ICM/Intern", 0))]))
+        if method in ("GetAlertTree", "GetAlerts"):
+            if "ABAP" not in row["features"] or not green:
+                return _fault("GetAlertTree, OpenCCMSMemory failed")
+            ctx = f"{row['hostname']}_{sid}_{instance_nr}"
+            resp = int(350 + p["busy"] * 900 + (r.randint(800, 2500) if p["fragile"] and r.random() < 0.25 else r.randint(0, 200)))
+            dumps_red = p["fragile"] and r.random() < 0.4
+            t = now.strftime("%Y %m %d %H:%M:%S")
+            tree = [(ctx, -1, "GREEN", ""), ("R3Services", 0, "GREEN", ""), ("Dialog", 1, "YELLOW" if resp >= 1500 else "GREEN", ""),
+                    ("ResponseTime", 2, "RED" if resp >= 3000 else "YELLOW" if resp >= 1500 else "GREEN", f"{resp} msec"),
+                    ("FrontEndResponseTime", 2, "GREEN", f"{int(resp * 1.3)} msec"),
+                    ("UsersLoggedIn", 2, "GREEN", f"{r.randint(20, 400)} "), ("Background", 1, "GREEN", ""),
+                    ("AbortedJobs", 6, "RED" if p["fragile"] and r.random() < 0.3 else "GREEN", "Job canceled" if p["fragile"] else ""),
+                    ("R3Abap", 0, "RED" if dumps_red else "GREEN", ""),
+                    ("Shortdumps", 8, "RED" if dumps_red else "GREEN", "TIME_OUT" if dumps_red else ""),
+                    ("Update", 1, "GREEN", ""), ("UpdateStatus", 10, "GREEN", "Updates active")]
+            if method == "GetAlertTree":
+                return _envelope(method, _items("tree", [
+                    {"name": n, "parent": par, "ActualValue": f"SAPControl-{c}", "description": d, "Time": t,
+                     "AnalyseToolString": "", "VisibleLevel": 1, "HighAlertValue": f"SAPControl-{c}", "AlValue": f"SAPControl-{c}",
+                     "Tid": f"{sid}\\{ctx}\\{n}"} for n, par, c, d in tree]))
+            alerts = [{"Object": n, "Attribute": n, "Value": f"SAPControl-{c}", "Description": d or n,
+                       "Time": (now - timedelta(hours=r.randint(0, 72))).strftime("%Y %m %d %H:%M:%S"), "Tid": n, "AId": str(i)}
+                      for i, (n, par, c, d) in enumerate(tree) if c in ("RED", "YELLOW")]
+            return _envelope(method, _items("alert", alerts))
+        if method in ("EnqGetLockTable", "EnqGetStatistic"):
+            if "ENQUE" not in row["features"] or not green:
+                return _fault("EnqGetLockTable: no enqueue server in this instance")
+            locks = []
+            for i in range(r.randint(5, 40)):
+                age = r.randint(0, 20) if not (p["fragile"] and i < 2) else r.randint(70, 400)
+                at = now - timedelta(minutes=age)  # system timezone defaults to UTC
+                locks.append({"lock-name": r.choice(["VBAK", "EKKO", "MARA", "BKPF", "ES_PROG"]), "lock-arg": f"100{r.randint(10**7, 10**8)}",
+                              "lock-mode": r.choice(["E", "E", "S", "X"]),
+                              "owner": at.strftime("%Y%m%d%H%M%S") + f"{r.randint(0, 999999):06d}000sap{sid.lower()}app1",
+                              "owner-vb": "", "use-count-owner": 1, "use-count-owner-vb": 0, "client": "100",
+                              "user": r.choice(["JSMITH", "BATCH_FI", "MMUELLER", "RFC_PI"]), "transaction": r.choice(["VA02", "ME22N", "SE38", ""]),
+                              "object": "", "backup": "FALSE"})
+            if method == "EnqGetLockTable":
+                return _envelope(method, _items("lock", locks))
+            n = len(locks)
+            fields = {"owner-now": n, "owner-high": n + 30, "owner-max": 80000, "owner-state": "SAPControl-GREEN",
+                      "arguments-now": n, "arguments-high": n + 40, "arguments-max": 80000, "arguments-state": "SAPControl-GREEN",
+                      "locks-now": n, "locks-high": n + 60, "locks-max": 80000, "locks-state": "SAPControl-GREEN",
+                      "enqueue-requests": r.randint(10**6, 10**7), "enqueue-rejects": r.randint(0, 5000), "enqueue-errors": 0,
+                      "dequeue-requests": r.randint(10**6, 10**7), "dequeue-errors": 0, "lock-time": "12.5", "lock-wait-time": "0.6"}
+            return _envelope(method, "<statistic>" + "".join(f"<{k}>{v}</{k}>" for k, v in fields.items()) + "</statistic>")
         return _envelope(method, "")
     return transport
 

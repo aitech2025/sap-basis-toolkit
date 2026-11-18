@@ -176,6 +176,17 @@ def _run_sapcontrol(row: dict, system: dict, persist: bool) -> tuple[dict, dict]
         summary["workprocesses"] = data["summary"]
         if persist:
             monitors.store(system["id"], "workprocesses", source, data, h, raw["collected_at"])
+    if raw.get("live") and system["stack"] != "JAVA":
+        data, m, h = monitors.build_abap_live(raw["live"])
+        metrics.update(m)
+        summary["abap_live"] = data["summary"]
+        if persist:
+            monitors.store(system["id"], "abap_live", source, data, h, raw["collected_at"])
+            locks = next((inst["locks"] for inst in raw["live"] if inst.get("locks") is not None), None)
+            last = ops.last_lock_snapshot_at(system["id"])
+            if locks is not None and (last is None or raw["collected_at"] - last >= timedelta(seconds=config.LOCK_SNAPSHOT_SECONDS)):
+                kept = [lk for lk in locks if lk["age_minutes"] is None or lk["age_minutes"] >= config.LOCK_STORE_MIN_AGE_MINUTES]
+                summary["locks_snapshot"] = ops.store_lock_list(system, kept, raw["collected_at"], total=len(locks))
     if raw["syslog_supported"]:
         data, m, h = monitors.build_syslog(raw["syslog"])
         metrics.update(m)

@@ -72,6 +72,9 @@ FRONTEND_DIST = os.getenv("FRONTEND_DIST", os.path.join(os.path.dirname(__file__
 # --- Operations monitoring (jobs, locks, transport history) ---------------------
 JOB_LONG_RUNNING_MINUTES = int(os.getenv("JOB_LONG_RUNNING_MINUTES", "120"))
 LOCK_WARNING_MINUTES = int(os.getenv("LOCK_WARNING_MINUTES", "60"))
+# Live SM12 (sapcontrol EnqGetLockTable): persist a lock snapshot at most this often, keeping locks held at least N minutes.
+LOCK_SNAPSHOT_SECONDS = int(os.getenv("LOCK_SNAPSHOT_SECONDS", "300"))
+LOCK_STORE_MIN_AGE_MINUTES = int(os.getenv("LOCK_STORE_MIN_AGE_MINUTES", "5"))
 LOCK_CRITICAL_MINUTES = int(os.getenv("LOCK_CRITICAL_MINUTES", "240"))
 OPS_DATA_STALE_HOURS = int(os.getenv("OPS_DATA_STALE_HOURS", "24"))
 OPS_RETENTION_DAYS = int(os.getenv("OPS_RETENTION_DAYS", "90"))
@@ -92,6 +95,7 @@ COLLECTOR_TICK_SECONDS = int(os.getenv("COLLECTOR_TICK_SECONDS", "15"))
 COLLECTOR_TIMEOUT_SECONDS = float(os.getenv("COLLECTOR_TIMEOUT_SECONDS", "15"))
 COLLECTOR_MAX_PARALLEL = int(os.getenv("COLLECTOR_MAX_PARALLEL", "16"))
 # Per-instance sapcontrol calls inside one collector run (systems with many application servers).
+SAPCONTROL_INTERVAL_SECONDS = int(os.getenv("SAPCONTROL_INTERVAL_SECONDS", "60"))
 SAPCONTROL_INSTANCE_PARALLEL = int(os.getenv("SAPCONTROL_INSTANCE_PARALLEL", "4"))
 CERT_CHECK_PARALLEL = int(os.getenv("CERT_CHECK_PARALLEL", "8"))
 # SQLAlchemy pool per process. The worker needs at least COLLECTOR_MAX_PARALLEL connections.
