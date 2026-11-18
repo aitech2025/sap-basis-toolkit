@@ -71,9 +71,9 @@ def test_dump_columns_are_mapped_from_the_description_structure():
 
 def test_client_logs_on_with_policy_resolved_address_and_collects(monkeypatch, fake_pyrfc):
     monkeypatch.setattr(config, "ALLOWED_TARGET_HOSTS", ("localhost",))
-    monkeypatch.setattr(config, "ALLOWED_TARGET_CIDRS", ("127.0.0.0/8",))
+    monkeypatch.setattr(config, "ALLOWED_TARGET_CIDRS", ("127.0.0.0/8", "::1/128"))  # CI resolves localhost to both
     client = rfc.RfcClient("localhost", 3300, "100", "SENTINEL_RFC", "Rfc-pass-1")
-    assert fake_pyrfc.logons[0]["ashost"] == "127.0.0.1" and fake_pyrfc.logons[0]["sysnr"] == "00"
+    assert fake_pyrfc.logons[0]["ashost"] in ("127.0.0.1", "::1") and fake_pyrfc.logons[0]["sysnr"] == "00"
     out = rfc.collect(client, ZoneInfo("Europe/Berlin"))
     assert out["system"]["sid"] == "S4P" and out["servers"][0]["host"] == "sapapp1"
     dump = out["dumps"][0]
