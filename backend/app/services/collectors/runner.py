@@ -306,31 +306,50 @@ def ssh_target(row: dict) -> "ssh.SshTarget":
                          vault.decrypt(row.get("private_key_enc")), row.get("host_key"))
 
 
+DB_MOUNTS = ("/hana", "/oracle", "/db2", "/sybase", "/sapdb")
+APP_MOUNTS = ("/", "/usr/sap", "/sapmnt")
+
+
 def _run_os_ssh(row: dict, system: dict, persist: bool) -> tuple[dict, dict]:
-    """Refresh the OS layer of one host: facts and current utilisation (read-only SSH)."""
+    """Refresh the OS layer of one host: facts, current utilisation and (on the database host) database processes."""
     raw = ssh.utilisation(ssh_target(row))
     os_info = raw["os"]
     disks = os_info.get("filesystems") or []
-    worst_disk = max((d["used_pct"] for d in disks), default=None)
-    metrics = {}
-    # host.* metrics have no host dimension yet: only the primary (application) host feeds them, and only
-    # when no node_exporter collector exists, so two sources never write the same series.
-    if persist and row["host"] == (system.get("host") or "").lower():
+    role = raw.get("role") or "application"
+    if persist:
+        from .. import discovery
+        role = discovery.update_host_asset(system, row["host"], os_info, raw["host_key"], role) or role
+        if not row.get("host_key") and raw["host_key"]:
+            with get_db() as connection:  # first successful contact pins the key (TOFU)
+                connection.execute(update(collectors).where(collectors.c.id == row["id"]).values(host_key=raw["host_key"]))
+    metrics: dict[str, float] = {}
+    diagnostics = [{"call": "ssh inventory", "ok": True, "host_key": raw["host_key"], "role": role}]
+    is_app = "application" in role
+    is_db = "database" in role
+    # host.* has no host dimension yet: only the application host feeds it, and only without node_exporter.
+    if is_app:
         with get_db() as connection:
             has_node = connection.execute(select(collectors.c.id).where(collectors.c.system_id == system["id"],
                                                                       collectors.c.type == "node_exporter")).first()
         if not has_node:
-            metrics = {k: v for k, v in {"host.memory_used_pct": os_info.get("memory_used_pct"), "host.load1": os_info.get("load1"),
-                                         "host.disk_used_pct": worst_disk}.items() if v is not None}
-    if persist:
-        from .. import discovery
-        discovery.update_host_asset(system, row["host"], os_info, raw["host_key"])
-        if not row.get("host_key") and raw["host_key"]:
-            with get_db() as connection:  # first successful contact pins the key (TOFU)
-                connection.execute(update(collectors).where(collectors.c.id == row["id"]).values(host_key=raw["host_key"]))
-    summary = {"host": row["host"], "os": os_info.get("os_pretty"), "kernel": os_info.get("kernel"),
-               "memory_used_pct": os_info.get("memory_used_pct"), "load1": os_info.get("load1"), "disk_used_pct": worst_disk}
-    return {"metrics": metrics, "summary": summary}, {"diagnostics": [{"call": "ssh inventory", "ok": True, "host_key": raw["host_key"]}]}
+            app_disk = max((d["used_pct"] for d in disks if d["mount"] in APP_MOUNTS), default=None)
+            metrics.update({k: v for k, v in {"host.memory_used_pct": os_info.get("memory_used_pct"), "host.load1": os_info.get("load1"),
+                                               "host.disk_used_pct": app_disk}.items() if v is not None})
+    if is_db:
+        db_disk = max((d["used_pct"] for d in disks if d["mount"].startswith(DB_MOUNTS)), default=None)
+        metrics.update({k: v for k, v in {"db.host_memory_used_pct": os_info.get("memory_used_pct"), "db.host_load1": os_info.get("load1"),
+                                           "db.host_disk_used_pct": db_disk}.items() if v is not None})
+        running = ssh.database_running(os_info, system.get("database"))
+        if running is not None:
+            metrics["db.os_process_up"] = 1.0 if running else 0.0
+            diagnostics.append({"call": "database process", "ok": True, "running": running})
+        else:
+            diagnostics.append({"call": "database process", "ok": True, "running": None,
+                                "note": f"No process check for {system.get('database')}"})
+    summary = {"host": row["host"], "role": role, "os": os_info.get("os_pretty"), "kernel": os_info.get("kernel"),
+               "memory_used_pct": os_info.get("memory_used_pct"), "load1": os_info.get("load1"),
+               "disk_used_pct": max((d["used_pct"] for d in disks), default=None), "processes": os_info.get("processes")}
+    return {"metrics": metrics, "summary": summary}, {"diagnostics": diagnostics}
 
 
 RUNNERS = {"sapcontrol": _run_sapcontrol, "hana": _run_hana, "hana_sapcontrol": _run_hana_sapcontrol,

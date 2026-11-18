@@ -132,3 +132,71 @@ def test_operator_cannot_run_os_discovery(client):
     r = client.post("/api/v1/discovery/scan", headers={"Authorization": f"Bearer {token}"},
                     json={"method": "os", "host": "simulator-s4d", "os_user": "root", "os_password": "pw"})
     assert r.status_code == 403
+
+
+# ---- collector coverage matrix: every layer gets live data -------------------------------------------------------
+
+APP_METRICS = {"availability.system_up", "availability.instances_down", "wp.dia_busy_pct"}
+DB_METRICS = {"hana.memory_used_pct", "hana.disk_used_pct", "hana.services_inactive", "db.os_process_up"}
+OS_METRICS = {"host.memory_used_pct", "host.load1", "host.disk_used_pct",
+              "db.host_memory_used_pct", "db.host_load1", "db.host_disk_used_pct"}
+
+
+def test_collector_matrix_covers_all_three_layers(client):
+    found = scan(client, host="simulator-s4q", os_user="s4qadm").json()
+    body = client.post("/api/v1/discovery/register", headers=KEY, json={
+        "method": "os", "host": "simulator-s4q", "os_user": "s4qadm", "os_password": "pw", "landscape": "S4",
+        "expected_sid": "S4Q", "expected_host_key": found["host_key"], "expected_db_host_key": found["db_host_key"],
+        "hana": {"host": "simulator-s4q-db", "port": 30015, "username": "MONITOR", "password": "pw"}}).json()
+    system = body["system"]
+    seen: dict[str, set] = {}
+    for col in body["collectors"]:
+        out = client.post(f"/api/v1/collectors/{col['id']}/run", headers=KEY).json()
+        assert out["status"] in ("ok", "partial"), (col["type"], out)
+        seen.setdefault(col["type"], set()).update(out["metrics"])
+    every = set().union(*seen.values())
+    assert APP_METRICS <= every, APP_METRICS - every
+    assert DB_METRICS <= every, DB_METRICS - every
+    assert OS_METRICS <= every, OS_METRICS - every
+    # who feeds what: sapcontrol = application, hana SQL + os_ssh(DB host) = database, os_ssh = OS of both hosts
+    assert APP_METRICS <= seen["sapcontrol"] and {"hana.memory_used_pct", "hana.services_inactive"} <= seen["hana"]
+    assert {"db.os_process_up", "host.memory_used_pct", "db.host_memory_used_pct"} <= seen["os_ssh"]
+    # every emitted metric is in the analytics catalogue (so it can be charted and alerted on)
+    catalogue = {m["key"] for m in (lambda j: j["metrics"] if isinstance(j, dict) else j)(client.get("/api/v1/analytics/metrics", headers=KEY).json())}
+    missing = {m for m in every if m != "collector.failed"} - catalogue
+    assert not missing, sorted(missing)
+
+    # HANA availability from the database's own sapstartsrv (optional collector, needs hdbadm credentials)
+    hs = client.post(f"/api/v1/systems/{system['id']}/collectors", headers=KEY, json={
+        "type": "hana_sapcontrol", "host": "simulator-s4q-db", "port": 50013, "username": "s4hadm", "password": "pw",
+        "interval_seconds": 300}).json()
+    out = client.post(f"/api/v1/collectors/{hs['id']}/run", headers=KEY).json()
+    assert out["metrics"]["hana.system_up"] == 1.0
+
+    # node_exporter takes over host.* for the application host; os_ssh then only reports the DB host
+    simulator_ne = client.post(f"/api/v1/systems/{system['id']}/collectors", headers=KEY, json={
+        "type": "node_exporter", "host": "simulator-s4q", "port": 9100, "interval_seconds": 300})
+    if simulator_ne.status_code in (200, 201):
+        app_os = next(c for c in body["collectors"] if c["type"] == "os_ssh" and c["host"] == "simulator-s4q")
+        out = client.post(f"/api/v1/collectors/{app_os['id']}/run", headers=KEY).json()
+        assert "host.memory_used_pct" not in out["metrics"]
+
+
+def test_host_role_from_host_evidence():
+    assert ssh.host_role({"processes": ["disp+work", "hdbindexserver"]}, []) == "application + database"
+    assert ssh.host_role({"processes": []}, [{"instance_name": "HDB00"}]) == "database"  # stopped DB is still the DB host
+    assert ssh.host_role({"processes": ["sapstartsrv"]}, [{"instance_name": "D00"}]) == "application"
+    assert ssh.database_running({"processes": ["ora_pmon_ECP"]}, "ORACLE") is True
+    assert ssh.database_running({"processes": ["sapstartsrv"]}, "HANA") is False
+    assert ssh.database_running({"processes": []}, "MAXDB") is None
+
+
+def test_manual_os_collector_on_db_host_checks_database(client):
+    """An os_ssh collector added by hand (no discovery) still recognises the database host from what runs on it."""
+    from test_collectors import make_system
+    system = make_system(client, sid="S4Q")
+    col = client.post(f"/api/v1/systems/{system['id']}/collectors", headers=KEY, json={
+        "type": "os_ssh", "host": "simulator-s4q-db", "port": 22, "username": "root", "password": "pw", "interval_seconds": 300}).json()
+    out = client.post(f"/api/v1/collectors/{col['id']}/run", headers=KEY).json()
+    assert out["status"] == "ok", out
+    assert out["metrics"]["db.os_process_up"] == 1.0 and "host.memory_used_pct" not in out["metrics"]

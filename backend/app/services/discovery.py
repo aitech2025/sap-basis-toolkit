@@ -736,7 +736,7 @@ def _link(connection, source: int, target: int, relationship: str) -> None:
 
 def _host_attributes(os_info: dict, host_key: str | None, role: str) -> dict:
     keep = ("fqdn", "ip_addresses", "os_name", "os_version", "os_pretty", "kernel", "arch", "cpu_count", "cpu_model",
-            "memory_gb", "memory_used_pct", "swap_gb", "load1", "uptime_days", "virtualization", "timezone", "filesystems")
+            "memory_gb", "memory_used_pct", "swap_gb", "load1", "uptime_days", "virtualization", "timezone", "filesystems", "processes")
     attrs = {k: os_info.get(k) for k in keep}
     attrs.update(role=role, ssh_host_key=host_key, inventoried_at=datetime.now(timezone.utc).isoformat())
     return attrs
@@ -769,16 +769,22 @@ def persist_layers(system: dict, found: dict) -> None:
                 _link(connection, database, db_host, "runs_on")
 
 
-def update_host_asset(system: dict, hostname: str, os_info: dict, host_key: str | None) -> None:
-    """Refresh a discovered host's OS facts (called by the os_ssh collector)."""
+def update_host_asset(system: dict, hostname: str, os_info: dict, host_key: str | None, observed_role: str = "application") -> str:
+    """Refresh a host's OS facts (called by the os_ssh collector) and return its role.
+
+    The role recorded by discovery wins; a role observed on the host is added to it (never removed, so a database that
+    stops does not turn its host into an application-only host and silence the process check)."""
     import json as _json
 
     with get_db() as connection:
         row = connection.execute(select(topology_assets).where(topology_assets.c.system_id == system["id"],
                                                                topology_assets.c.kind == "host",
                                                                topology_assets.c.hostname == hostname)).mappings().first()
-        role = _json.loads(row["attributes_json"] or "{}").get("role", "application") if row else "application"
+        known = _json.loads(row["attributes_json"] or "{}").get("role") if row else None
+        parts = {p.strip() for r in (known, observed_role) if r for p in r.split("+")}
+        role = " + ".join(p for p in ("application", "database") if p in parts) or "application"
         _upsert_asset(connection, system, "host", os_info.get("fqdn") or hostname, hostname, _host_attributes(os_info, host_key, role))
+    return role
 
 
 def infrastructure(system_id: int) -> dict:

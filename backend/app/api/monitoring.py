@@ -14,7 +14,7 @@ router = APIRouter(prefix="/api/v1", dependencies=[Depends(authorize)])
 
 MONITOR_METRICS = {
     "availability": ["availability.system_up", "availability.instances_down"],
-    "host": ["host.load1", "host.memory_used_pct", "host.disk_used_pct"],
+    "host": ["host.load1", "host.memory_used_pct", "host.disk_used_pct", "db.host_memory_used_pct", "db.host_disk_used_pct", "db.os_process_up"],
     "workprocesses": ["wp.dia_busy_pct", "wp.btc_busy_pct", "wp.long_running", "wp.stopped"],
     "dumps": ["dumps.last_hour", "dumps.last_24h"],
     "syslog": ["syslog.errors_last_hour"],

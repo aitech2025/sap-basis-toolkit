@@ -44,6 +44,7 @@ echo '@@df'; df -P / /usr/sap /sapmnt /hana/data /hana/log /hana/shared /oracle 
 echo '@@whoami'; id -un 2>/dev/null
 echo '@@sapservices'; cat /usr/sap/sapservices 2>/dev/null
 echo '@@usrsap'; ls -1d /usr/sap/[A-Z][A-Z0-9][A-Z0-9] 2>/dev/null
+echo '@@procs'; ps -eo stat=,comm= 2>/dev/null | awk '$1 !~ /^Z/ {print $2}' | sort -u | grep -E '^(hdbindexserver|hdbnameserver|hdbdaemon|ora_pmon_|ora_smon_|db2sysc|dataserver|sqlservr|sapstartsrv|disp\+work|msg_server|enq_server|enserver|enq_replicator|enrepserver|jstart|icman|gwrd|saphostexec|sapdbctrl)'
 echo '@@dbdirs'; ls -1d /oracle/[A-Z][A-Z0-9][A-Z0-9]/[0-9]* /db2/db2[a-z][a-z0-9][a-z0-9] /sybase/[A-Z][A-Z0-9][A-Z0-9]/ASE-* /sapdb/[A-Z][A-Z0-9][A-Z0-9] 2>/dev/null
 echo '@@end'
 """
@@ -135,11 +136,15 @@ class Session:
                                  f"got {self.host_key}). Verify the server before trusting the new key.")
 
     def run(self, command: str) -> str:
+        """Run a fixed script with /bin/sh. The script is sent on stdin, so it works whatever the login shell is
+        (<sid>adm usually has csh/tcsh, which cannot parse VAR=value prefixes or multi-line quotes)."""
         if self.sim:
             return simulator.ssh_command(self.target.host, self.target.username, command)
         channel = self.transport.open_session(timeout=config.SSH_TIMEOUT_SECONDS)
         channel.settimeout(config.SSH_TIMEOUT_SECONDS)
-        channel.exec_command(f"LC_ALL=C sh -c {_quote(command)}")
+        channel.exec_command("env LC_ALL=C /bin/sh -s")
+        channel.sendall(command.encode() + b"\n")
+        channel.shutdown_write()
         chunks, size = [], 0
         try:
             while True:
@@ -166,10 +171,6 @@ class Session:
 
     def __exit__(self, *exc):
         self.close()
-
-
-def _quote(command: str) -> str:
-    return "'" + command.replace("'", "'\"'\"'") + "'"
 
 
 # ------------------------------------------------------------------------------------------- parsing
@@ -248,6 +249,7 @@ def parse_os(sec: dict[str, list[str]]) -> dict:
         "timezone": (sec.get("tz") or [None])[0],
         "filesystems": unique[:12],
         "login_user": (sec.get("whoami") or [None])[0],
+        "processes": sorted({p.strip() for p in sec.get("procs", []) if p.strip()})[:40],
     }
 
 
@@ -334,7 +336,38 @@ def inventory(target: SshTarget) -> dict:
                 "hostctrl_databases": hostctrl}
 
 
+DB_PROCESS = {"HANA": ("hdbindexserver",), "ORACLE": ("ora_pmon_",), "DB2": ("db2sysc",), "DB6Z": ("db2sysc",),
+              "ASE": ("dataserver",), "MSSQL": ("sqlservr",)}
+
+
+def database_running(os_info: dict, db_type: str | None) -> bool | None:
+    """Whether the database's main process runs on this host (None when the type has no known process)."""
+    prefixes = DB_PROCESS.get((db_type or "").upper())
+    if not prefixes:
+        return None
+    return any(p.startswith(prefixes) for p in os_info.get("processes") or [])
+
+
+APP_PROCESSES = ("disp+work", "msg_server", "enq_server", "enserver", "enq_replicator", "enrepserver", "jstart", "icman", "gwrd")
+DB_PROCESSES = tuple(p for names in DB_PROCESS.values() for p in names)
+
+
+def host_role(os_info: dict, instances: list[dict]) -> str:
+    """Role of a host from its own evidence: SAP instances registered in sapservices and running processes.
+
+    Registered instances count even when stopped, so a stopped database is still recognised as this host's database."""
+    procs = os_info.get("processes") or []
+    names = [i.get("instance_name") or "" for i in instances]
+    db = any(n.startswith("HDB") for n in names) or any(p.startswith(DB_PROCESSES) for p in procs)
+    app = any(n and not n.startswith("HDB") for n in names) or any(p in APP_PROCESSES for p in procs)
+    if app and db:
+        return "application + database"
+    return "database" if db else "application"
+
+
 def utilisation(target: SshTarget) -> dict:
-    """Light refresh used by the os_ssh collector: OS facts and current utilisation only."""
+    """Light refresh used by the os_ssh collector: OS facts, current utilisation and the host's own role evidence."""
     with Session(target) as session:
-        return {"host_key": session.host_key, "os": parse_os(sections(session.run(INVENTORY_SCRIPT)))}
+        sec = sections(session.run(INVENTORY_SCRIPT))
+        os_info, instances = parse_os(sec), parse_sapservices(sec.get("sapservices", []))
+        return {"host_key": session.host_key, "os": os_info, "instances": instances, "role": host_role(os_info, instances)}

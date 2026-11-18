@@ -465,6 +465,16 @@ def ssh_command(host: str, user: str, command: str) -> str:
                 lines.append(f"LD_LIBRARY_PATH=/usr/sap/{sid}/{row['name']}/exe; export LD_LIBRARY_PATH; "
                              f"/usr/sap/{sid}/{row['name']}/exe/sapstartsrv pf=/usr/sap/{sid}/SYS/profile/{sid}_{row['name']}_{row['hostname']} -D -u {sid.lower()}adm")
             lines.append("/usr/sap/DAA/SMDA98/exe/sapstartsrv pf=/usr/sap/DAA/SYS/profile/DAA_SMDA98_" + short + " -D -u daaadm")
+        lines.append("@@procs")
+        if db and kind != "ecc":
+            if db_running(host[: -len("-db")]) is not False and all(v == "GREEN" for v in _state(host, False)["status"].values()):
+                lines += ["hdbdaemon", "hdbindexserver", "hdbnameserver", "sapstartsrv"]
+            else:
+                lines += ["sapstartsrv"]
+        elif db:
+            lines += ["ora_pmon_" + sid, "ora_smon_" + sid, "saphostexec"]
+        else:
+            lines += ["disp+work", "enq_server", "gwrd", "icman", "msg_server", "sapstartsrv", "saphostexec"]
         lines.append("@@usrsap")
         lines.append("@@dbdirs")
         if db and kind == "ecc":
