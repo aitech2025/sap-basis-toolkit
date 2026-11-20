@@ -123,7 +123,7 @@ SIMULATOR_ENABLED = os.getenv("SIMULATOR_ENABLED", "false").lower() == "true"
 DISCOVERY_PROBE_TIMEOUT_SECONDS = float(os.getenv("DISCOVERY_PROBE_TIMEOUT_SECONDS", "0.8"))
 DISCOVERY_MAX_PARALLEL = int(os.getenv("DISCOVERY_MAX_PARALLEL", "48"))
 # Global switch for start/stop/restart from Sentinel (per-system switch also required).
-CONTROL_ENABLED = os.getenv("CONTROL_ENABLED", "false").lower() == "true"
+CONTROL_ENABLED = os.getenv("CONTROL_ENABLED", "true").lower() == "true"
 CONTROL_TIMEOUT_SECONDS = int(os.getenv("CONTROL_TIMEOUT_SECONDS", "1200"))
 CONTROL_POLL_SECONDS = float(os.getenv("CONTROL_POLL_SECONDS", "5"))
 HANA_START_TIMEOUT_SECONDS = int(os.getenv("HANA_START_TIMEOUT_SECONDS", "3600"))
