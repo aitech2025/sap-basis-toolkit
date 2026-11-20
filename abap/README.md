@@ -31,7 +31,9 @@ push loses nothing.
 | Transports | TPALOG imports since yesterday with return codes | STMS |
 
 Areas that cannot be read (for example, a missing authorisation) are listed in the job log and in the payload; the other areas
-are still sent.
+are still sent. The collector explicitly runs `AUTHORITY-CHECK` for `S_TABU_NAM` before each direct Open SQL table read and
+for `S_RFC` before calling RFC-enabled function modules. Open SQL does **not** enforce `S_TABU_NAM` automatically. Granting
+table access in a role alone is not enough unless the role grants the exact activity and table values checked here.
 
 ## Installation
 
@@ -51,10 +53,21 @@ are still sent.
 
 ## Authorisations for the job user
 
-- `S_TABU_NAM` (or `S_TABU_DIS`), display: SNAP, TBTCO, VBHDR, ARFCSSTATE, TRFCQOUT, TRFCQIN, EDIDC, TTZCU, NRIV, BALHDR,
-  APQI, T000, USR02 (only the fields BNAME, UFLAG, LOCNT, TRDAT and USTYP are read), TSP01, TPALOG
-- `S_RFC`: function groups of `/SDF/GET_DUMP_LOG` (`/SDF/SMD_E2E`) and `ENQUEUE_READ`; `S_ENQUE` display
+- `S_TABU_NAM`, activity `03` (display), for each table actually collected: `TTZCU`, `SNAP` (fallback only), `TBTCO`, `VBHDR`,
+  `ARFCSSTATE`, `TRFCQOUT`, `TRFCQIN`, `EDIDC`, `NRIV`, `BALHDR`, `APQI`, `T000`, `USR02`, `TSP01`, and `TPALOG`.
+- `S_RFC`, type `F`, activity `16` (execute), for `ENQUEUE_READ` and `/SDF/GET_DUMP_LOG` (function group `/SDF/SMD_E2E`).
+- `S_ENQUE` display where required by the target release for lock-list access.
 - `S_ICF`: use of the SM59 destination, if destinations are protected
+
+## Security notes
+
+- Do not use `S_TABU_DIS` as a substitute for the explicit `S_TABU_NAM` checks in this release of the agent. If your security
+  model only grants table authorization groups, implement and validate a separate `S_TABU_DIS` check against the correct
+  authorization group for each table before enabling collection.
+- Use a dedicated background user and restrict report variants/job administration. The destination token is stored in the
+  report variant and can be read by users who can display that variant.
+- Configure SM59 with HTTPS certificate validation. Never disable TLS verification to make the push work.
+- Validate every table and function authorization in SU53/ST01 on the target SAP_BASIS release before scheduling the job.
 
 ## Compatibility
 
