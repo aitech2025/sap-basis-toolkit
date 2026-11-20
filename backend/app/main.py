@@ -23,6 +23,7 @@ from .db import get_db, init_db
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    config.validate_runtime_config()
     init_db()
     auth.bootstrap_admin()
     from .services import incidents
