@@ -10,6 +10,7 @@ from .api.auth_routes import router as auth_router
 from .api.agent import ingest_router as agent_ingest_router
 from .api.agent import router as agent_router
 from .api.analytics import router as analytics_router
+from .api.daily_checks import router as daily_checks_router
 from .api.intelligence import router as intelligence_router
 from .api.lifecycle import router as lifecycle_router
 from .api.monitoring import router as monitoring_router
@@ -49,6 +50,7 @@ app.include_router(intelligence_router)
 app.include_router(lifecycle_router)
 app.include_router(agent_router)
 app.include_router(agent_ingest_router)
+app.include_router(daily_checks_router)
 
 
 @app.middleware("http")

@@ -760,3 +760,26 @@ export interface ControlStatus {
   start_sequence: string[];
   stop_sequence: string[];
 }
+
+export type CheckStatus = "critical" | "warning" | "stale" | "ok" | "no_data";
+export interface DailyCheckCell {
+  status: CheckStatus;
+  value: number;
+  at: string;
+  threshold: { operator: string; warning: number | null; critical: number | null; source: "rule" | "default" };
+}
+export interface DailyCheckSystem {
+  id: number; sid: string; name: string; landscape: string; environment: string;
+  overall: CheckStatus; counts: Record<CheckStatus, number>; cells: Record<string, DailyCheckCell>;
+}
+export interface DailyChecks {
+  generated_at: string;
+  checks: { key: string; area: string; label: string; tcode: string; fresh_minutes: number; format: "flag" | "pct" | "ms" | "hours" | "minutes" | "days" | "count" }[];
+  systems: DailyCheckSystem[];
+  totals: Record<CheckStatus, number>;
+  summary: { systems: number } & Record<CheckStatus, number>;
+}
+export interface DailyCheckReview {
+  id: number; check_date: string; landscape: string | null; reviewed_by: string; reviewed_at: string;
+  comment: string | null; summary: { systems: number } & Record<CheckStatus, number>;
+}

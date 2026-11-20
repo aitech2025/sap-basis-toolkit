@@ -14,7 +14,7 @@ router = APIRouter(prefix="/api/v1", dependencies=[Depends(authorize)])
 
 MONITOR_METRICS = {
     "availability": ["availability.system_up", "availability.instances_down"],
-    "host": ["host.load1", "host.memory_used_pct", "host.disk_used_pct", "db.host_memory_used_pct", "db.host_disk_used_pct", "db.os_process_up"],
+    "host": ["host.load1", "host.cpu_pct", "host.swap_used_pct", "host.memory_used_pct", "host.disk_used_pct", "db.host_cpu_pct", "db.host_memory_used_pct", "db.host_disk_used_pct", "db.os_process_up"],
     "workprocesses": ["wp.dia_busy_pct", "wp.btc_busy_pct", "wp.long_running", "wp.stopped"],
     "dumps": ["dumps.last_hour", "dumps.last_24h"],
     "syslog": ["syslog.errors_last_hour"],
@@ -24,7 +24,13 @@ MONITOR_METRICS = {
     "idocs": ["idoc.errors_24h"],
     "abap_live": ["abap.queue_dia", "abap.queue_upd", "abap.dialog_response_ms", "abap.users_logged_on", "abap.enq_table_used_pct",
                   "abap.locks", "abap.locks_oldest_min", "ccms.red_now"],
-    "hana": ["hana.memory_used_pct", "hana.cpu_pct", "hana.disk_used_pct", "hana.data_backup_age_h", "hana.log_backup_age_h"],
+    "hana": ["hana.memory_used_pct", "hana.cpu_pct", "hana.disk_used_pct", "hana.data_backup_age_h", "hana.log_backup_age_h",
+             "hana.log_disk_used_pct", "hana.blocked_transactions"],
+    "number_ranges": ["numrange.max_used_pct"],
+    "applog": ["applog.error_logs_24h"],
+    "batch_input": ["batchinput.error_sessions_7d"],
+    "security": ["security.prod_clients_open", "security.sapstar_risk", "security.users_locked_failed_logon"],
+    "spool": ["spool.requests"],
 }
 UPLOADABLE = ("dumps", "syslog", "updates", "trfc", "qrfc", "idocs")
 

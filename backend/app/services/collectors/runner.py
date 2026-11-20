@@ -262,11 +262,24 @@ def emit_abap(system: dict, raw: dict, source: str, at: datetime, zone, persist:
         emit("qrfc", monitors.build_qrfc(raw["qrfc"]))
     if "idocs" in raw:
         emit("idocs", monitors.build_idocs(raw["idocs"]["errors"], raw["idocs"]["total"]))
+    if raw.get("number_ranges") is not None:
+        emit("number_ranges", monitors.build_number_ranges(raw["number_ranges"]))
+    if raw.get("applog") is not None:
+        emit("applog", monitors.build_applog(raw["applog"]))
+    if raw.get("batch_input") is not None:
+        emit("batch_input", monitors.build_batch_input(raw["batch_input"]))
+    if raw.get("security") is not None:
+        emit("security", monitors.build_security(raw["security"], system.get("environment")))
+    if raw.get("spool") is not None:
+        emit("spool", monitors.build_spool(raw["spool"]))
     if persist and raw.get("jobs") is not None:
         try:
             jobs = ops.parse_job_rows(raw["jobs"], zone, at) if raw["jobs"] else []
         except ops.InputFormatError:
             jobs = []
+        day_ago = at - timedelta(hours=24)
+        metrics["jobs.cancelled_24h"] = float(sum(1 for j in jobs if j["status"] == "cancelled"
+                                                  and (j.get("end_at") or j.get("start_at") or at) >= day_ago))
         summary["jobs_synced"] = ops.store_job_list(system, jobs, at) if jobs else {"jobs": 0}
     if persist and raw.get("imports") is not None:
         grouped: dict[tuple, dict] = {}
@@ -385,11 +398,13 @@ def _run_os_ssh(row: dict, system: dict, persist: bool) -> tuple[dict, dict]:
         if not has_node:
             app_disk = max((d["used_pct"] for d in disks if d["mount"] in APP_MOUNTS), default=None)
             metrics.update({k: v for k, v in {"host.memory_used_pct": os_info.get("memory_used_pct"), "host.load1": os_info.get("load1"),
-                                               "host.disk_used_pct": app_disk}.items() if v is not None})
+                                               "host.disk_used_pct": app_disk, "host.cpu_pct": os_info.get("cpu_pct"),
+                                               "host.swap_used_pct": os_info.get("swap_used_pct")}.items() if v is not None})
     if is_db:
         db_disk = max((d["used_pct"] for d in disks if d["mount"].startswith(DB_MOUNTS)), default=None)
         metrics.update({k: v for k, v in {"db.host_memory_used_pct": os_info.get("memory_used_pct"), "db.host_load1": os_info.get("load1"),
-                                           "db.host_disk_used_pct": db_disk}.items() if v is not None})
+                                           "db.host_disk_used_pct": db_disk, "db.host_cpu_pct": os_info.get("cpu_pct"),
+                                           "db.host_swap_used_pct": os_info.get("swap_used_pct")}.items() if v is not None})
         running = ssh.database_running(os_info, system.get("database"))
         if running is not None:
             metrics["db.os_process_up"] = 1.0 if running else 0.0
@@ -399,6 +414,7 @@ def _run_os_ssh(row: dict, system: dict, persist: bool) -> tuple[dict, dict]:
                                 "note": f"No process check for {system.get('database')}"})
     summary = {"host": row["host"], "role": role, "os": os_info.get("os_pretty"), "kernel": os_info.get("kernel"),
                "memory_used_pct": os_info.get("memory_used_pct"), "load1": os_info.get("load1"),
+               "cpu_pct": os_info.get("cpu_pct"), "swap_used_pct": os_info.get("swap_used_pct"),
                "disk_used_pct": max((d["used_pct"] for d in disks), default=None), "processes": os_info.get("processes")}
     return {"metrics": metrics, "summary": summary}, {"diagnostics": diagnostics}
 

@@ -299,7 +299,12 @@ def sapcontrol_transport(seed: str, java: bool = False):
                     ("AbortedJobs", 6, "RED" if p["fragile"] and r.random() < 0.3 else "GREEN", "Job canceled" if p["fragile"] else ""),
                     ("R3Abap", 0, "RED" if dumps_red else "GREEN", ""),
                     ("Shortdumps", 8, "RED" if dumps_red else "GREEN", "TIME_OUT" if dumps_red else ""),
-                    ("Update", 1, "GREEN", ""), ("UpdateStatus", 10, "GREEN", "Updates active")]
+                    ("Update", 1, "GREEN", ""), ("UpdateStatus", 10, "GREEN", "Updates active"),
+                    ("Buffers", 0, "GREEN", ""),
+                    ("Program", 12, "GREEN", ""), ("HitRatio", 13, "GREEN", f"{r.uniform(97.5, 99.9):.1f} %"),
+                    ("Swap", 13, "YELLOW" if p["fragile"] else "GREEN", f"{r.randint(1500, 6000) if p['fragile'] else r.randint(0, 300)} /day"),
+                    ("GenericKey", 12, "GREEN", ""), ("HitRatio", 16, "GREEN", f"{r.uniform(98, 100):.1f} %"),
+                    ("Swap", 16, "GREEN", f"{r.randint(0, 50)} /day")]
             if method == "GetAlertTree":
                 return _envelope(method, _items("tree", [
                     {"name": n, "parent": par, "ActualValue": f"SAPControl-{c}", "description": d, "Time": t,
@@ -509,6 +514,32 @@ class SimulatedHana:
                                  "STRTDATE": start.strftime("%Y%m%d"), "STRTTIME": start.strftime("%H%M%S"),
                                  "ENDDATE": start.strftime("%Y%m%d"), "ENDTIME": (start + timedelta(minutes=5)).strftime("%H%M%S")})
             return rows
+        if name == "number_ranges":
+            rows = []
+            for obj, used in (("RF_BELEG", 0.42), ("RV_BELEG", 0.86 if p["fragile"] else 0.55), ("MATERIALNR", 0.12),
+                              ("SPO_NUM", 0.71), ("BU_PARTNER", 0.33), ("EINKBELEG", 0.93 if p["fragile"] and r.random() < 0.5 else 0.6)):
+                lo, hi = 1000000000, 1999999999
+                rows.append({"CLIENT": "100", "OBJECT": obj, "SUBOBJECT": "", "NRRANGENR": "01", "TOYEAR": "0000",
+                             "FROMNUMBER": f"{lo:020d}", "TONUMBER": f"{hi:020d}", "NRLEVEL": f"{int(lo + (hi - lo) * used):020d}"})
+            return rows
+        if name == "applog_errors":
+            return [{"OBJECT": o, "SUBOBJECT": so, "LOGS": r.randint(1, 40) * (4 if p["fragile"] else 1)}
+                    for o, so in (("BAL_TEST", ""), ("/SAPAPO/PPM", "ERROR"), ("MDG_BS", "MASS"), ("EDI", "INBOUND"))]
+        if name == "batch_input":
+            return [] if not p["fragile"] else [{"MANDANT": "100", "GROUPID": "MIGR_VENDORS", "QSTATE": "E",
+                                                  "CREDATE": (now - timedelta(days=1)).strftime("%Y%m%d"), "CREATOR": "MIGRATION"}]
+        if name == "clients":
+            return [{"MANDT": "000", "MTEXT": "SAP AG", "CCCATEGORY": "S", "CCCORACTIV": "2", "CCNOCLIIND": "3"},
+                    {"MANDT": "100", "MTEXT": "Production", "CCCATEGORY": "P",
+                     "CCCORACTIV": "1" if p["fragile"] else "2", "CCNOCLIIND": "3"}]
+        if name == "spool_requests":
+            return [{"TOTAL": r.randint(2000, 26000)}]
+        if name == "log_disk":
+            return [{"USED": 40 * 2**30 + r.randint(0, 20) * 2**30, "TOTAL": 100 * 2**30}]
+        if name == "blocked_transactions":
+            return [{"BLOCKED": r.randint(0, 3) + (r.randint(4, 12) if p["fragile"] else 0), "MAX_WAIT_S": r.randint(0, 90)}]
+        if name == "oom_events":
+            return [{"EVENTS": 1 if p["fragile"] and r.random() < 0.3 else 0}]
         if name == "imports":
             return [{"TRKORR": f"S4DK90{1200 + d:04d}", "RETCODE": "0008" if p["fragile"] and d == 0 else "0000",
                      "TRTIME": (now - timedelta(days=d, hours=3)).strftime("%Y%m%d%H%M%S")} for d in range(4)]
@@ -557,6 +588,8 @@ def ssh_command(host: str, user: str, command: str) -> str:
                  "@@mem", f"MemTotal:       {o['mem_kb']} kB", f"MemAvailable:   {int(o['mem_kb'] * o['avail_ratio'])} kB",
                  f"SwapTotal:      {8 * 1024 * 1024} kB", "SwapFree:       8000000 kB",
                  "@@load", f"{_rng(host + 'l').uniform(0.5, 6):.2f} 1.10 0.95 2/1450 31337",
+                 "@@cpustat", "cpu  1000000 2000 300000 8000000 50000 0 10000 0 0 0",
+                 f"cpu  {1000000 + (busy := _rng(host + str(int(time.time()) // 60)).randint(15, 85))} 2000 300000 {8000000 + (100 - busy)} 50000 0 10000 0 0 0",
                  "@@uptime", f"{_rng(host + 'u').randint(5, 140) * 86400 + 4711}.33 1000.00",
                  "@@virt", o["virt"], "@@tz", "UTC+0000",
                  "@@df", "Filesystem 1024-blocks Used Available Capacity Mounted on",

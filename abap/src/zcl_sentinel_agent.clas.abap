@@ -8,7 +8,7 @@ CLASS zcl_sentinel_agent DEFINITION
   CREATE PUBLIC.
 
   PUBLIC SECTION.
-    CONSTANTS c_version TYPE string VALUE '1.0.0'.
+    CONSTANTS c_version TYPE string VALUE '1.1.0'.
     CONSTANTS c_schema TYPE i VALUE 1.
 
     TYPES:
@@ -78,6 +78,61 @@ CLASS zcl_sentinel_agent DEFINITION
         rcvprn TYPE c LENGTH 10,
       END OF ty_idoc,
       ty_idocs TYPE STANDARD TABLE OF ty_idoc WITH EMPTY KEY,
+      BEGIN OF ty_number_range,
+        client     TYPE c LENGTH 3,
+        object     TYPE c LENGTH 10,
+        subobject  TYPE c LENGTH 6,
+        nrrangenr  TYPE c LENGTH 2,
+        toyear     TYPE c LENGTH 4,
+        fromnumber TYPE c LENGTH 20,
+        tonumber   TYPE c LENGTH 20,
+        nrlevel    TYPE c LENGTH 20,
+        externind  TYPE c LENGTH 1,
+      END OF ty_number_range,
+      ty_number_ranges TYPE STANDARD TABLE OF ty_number_range WITH EMPTY KEY,
+      BEGIN OF ty_applog,
+        object    TYPE c LENGTH 20,
+        subobject TYPE c LENGTH 20,
+        logs      TYPE i,
+      END OF ty_applog,
+      ty_applogs TYPE STANDARD TABLE OF ty_applog WITH EMPTY KEY,
+      BEGIN OF ty_batch_input,
+        mandant TYPE c LENGTH 3,
+        groupid TYPE c LENGTH 12,
+        qstate  TYPE c LENGTH 1,
+        credate TYPE c LENGTH 8,
+        creator TYPE c LENGTH 12,
+      END OF ty_batch_input,
+      ty_batch_inputs TYPE STANDARD TABLE OF ty_batch_input WITH EMPTY KEY,
+      BEGIN OF ty_client,
+        mandt      TYPE c LENGTH 3,
+        mtext      TYPE c LENGTH 25,
+        cccategory TYPE c LENGTH 1,
+        cccoractiv TYPE c LENGTH 1,
+        ccnocliind TYPE c LENGTH 1,
+        cccopylock TYPE c LENGTH 1,
+      END OF ty_client,
+      ty_clients TYPE STANDARD TABLE OF ty_client WITH EMPTY KEY,
+      BEGIN OF ty_user,
+        mandt TYPE c LENGTH 3,
+        bname TYPE c LENGTH 12,
+        uflag TYPE i,
+        locnt TYPE i,
+        trdat TYPE c LENGTH 8,
+        ustyp TYPE c LENGTH 1,
+      END OF ty_user,
+      ty_users TYPE STANDARD TABLE OF ty_user WITH EMPTY KEY,
+      BEGIN OF ty_locked_count,
+        mandt  TYPE c LENGTH 3,
+        locked TYPE i,
+      END OF ty_locked_count,
+      ty_locked_counts TYPE STANDARD TABLE OF ty_locked_count WITH EMPTY KEY,
+      BEGIN OF ty_import,
+        trkorr  TYPE c LENGTH 20,
+        retcode TYPE c LENGTH 4,
+        trtime  TYPE c LENGTH 14,
+      END OF ty_import,
+      ty_imports TYPE STANDARD TABLE OF ty_import WITH EMPTY KEY,
       ty_strings TYPE STANDARD TABLE OF string WITH EMPTY KEY,
       BEGIN OF ty_payload,
         schema        TYPE i,
@@ -101,6 +156,14 @@ CLASS zcl_sentinel_agent DEFINITION
         qrfc_in       TYPE ty_queues,
         idoc_errors   TYPE ty_idocs,
         idoc_total    TYPE i,
+        number_ranges TYPE ty_number_ranges,
+        applog_errors TYPE ty_applogs,
+        batch_input   TYPE ty_batch_inputs,
+        clients       TYPE ty_clients,
+        critical_users TYPE ty_users,
+        failed_logon_locks TYPE ty_locked_counts,
+        spool_requests TYPE i,
+        imports       TYPE ty_imports,
         errors        TYPE ty_strings,
       END OF ty_payload.
 
@@ -129,6 +192,17 @@ CLASS zcl_sentinel_agent DEFINITION
     METHODS collect_locks CHANGING cs_payload TYPE ty_payload.
     METHODS collect_rfc CHANGING cs_payload TYPE ty_payload.
     METHODS collect_idocs CHANGING cs_payload TYPE ty_payload.
+    METHODS collect_number_ranges CHANGING cs_payload TYPE ty_payload.
+    METHODS collect_applog CHANGING cs_payload TYPE ty_payload.
+    METHODS collect_batch_input CHANGING cs_payload TYPE ty_payload.
+    METHODS collect_security CHANGING cs_payload TYPE ty_payload.
+    METHODS collect_spool_and_imports CHANGING cs_payload TYPE ty_payload.
+    "! SELECT * over all clients where the table is client-specific, else a plain SELECT (cross-client tables)
+    METHODS select_any_client
+      IMPORTING iv_table TYPE string
+                iv_where TYPE string OPTIONAL
+      EXPORTING et_rows  TYPE STANDARD TABLE
+      RAISING   cx_sy_dynamic_osql_error cx_sy_open_sql_db.
     METHODS add_error
       IMPORTING iv_area  TYPE string
                 iv_text  TYPE string
@@ -169,6 +243,11 @@ CLASS zcl_sentinel_agent IMPLEMENTATION.
     collect_locks( CHANGING cs_payload = rs_payload ).
     collect_rfc( CHANGING cs_payload = rs_payload ).
     collect_idocs( CHANGING cs_payload = rs_payload ).
+    collect_number_ranges( CHANGING cs_payload = rs_payload ).
+    collect_applog( CHANGING cs_payload = rs_payload ).
+    collect_batch_input( CHANGING cs_payload = rs_payload ).
+    collect_security( CHANGING cs_payload = rs_payload ).
+    collect_spool_and_imports( CHANGING cs_payload = rs_payload ).
   ENDMETHOD.
 
 
@@ -324,6 +403,130 @@ CLASS zcl_sentinel_agent IMPLEMENTATION.
         SELECT COUNT(*) FROM edidc CLIENT SPECIFIED WHERE credat >= @mv_since_date INTO @cs_payload-idoc_total.
       CATCH cx_sy_open_sql_db INTO DATA(lx_sql).
         add_error( EXPORTING iv_area = `idocs` iv_text = lx_sql->get_text( ) CHANGING cs_payload = cs_payload ).
+    ENDTRY.
+  ENDMETHOD.
+
+
+  METHOD select_any_client.
+    CLEAR et_rows.
+    TRY.
+        IF iv_where IS INITIAL.
+          SELECT * FROM (iv_table) CLIENT SPECIFIED INTO CORRESPONDING FIELDS OF TABLE @et_rows UP TO @mv_max_rows ROWS.
+        ELSE.
+          SELECT * FROM (iv_table) CLIENT SPECIFIED WHERE (iv_where)
+            INTO CORRESPONDING FIELDS OF TABLE @et_rows UP TO @mv_max_rows ROWS.
+        ENDIF.
+      CATCH cx_sy_dynamic_osql_semantics.
+        " cross-client table: CLIENT SPECIFIED is not allowed, a plain SELECT already returns every row
+        IF iv_where IS INITIAL.
+          SELECT * FROM (iv_table) INTO CORRESPONDING FIELDS OF TABLE @et_rows UP TO @mv_max_rows ROWS.
+        ELSE.
+          SELECT * FROM (iv_table) WHERE (iv_where) INTO CORRESPONDING FIELDS OF TABLE @et_rows UP TO @mv_max_rows ROWS.
+        ENDIF.
+    ENDTRY.
+  ENDMETHOD.
+
+
+  METHOD collect_number_ranges.
+    " SNRO: internal number ranges that are at least half used (external ranges are numbered by the application).
+    DATA lt_nriv TYPE ty_number_ranges.
+    DATA lv_from TYPE decfloat34.
+    DATA lv_to TYPE decfloat34.
+    DATA lv_level TYPE decfloat34.
+    TRY.
+        select_any_client( EXPORTING iv_table = `NRIV` iv_where = `EXTERNIND = ' '` IMPORTING et_rows = lt_nriv ).
+      CATCH cx_sy_dynamic_osql_error cx_sy_open_sql_db INTO DATA(lx_sql).
+        add_error( EXPORTING iv_area = `number_ranges` iv_text = lx_sql->get_text( ) CHANGING cs_payload = cs_payload ).
+        RETURN.
+    ENDTRY.
+    LOOP AT lt_nriv INTO DATA(ls_nriv).
+      IF ls_nriv-fromnumber CN ' 0123456789' OR ls_nriv-tonumber CN ' 0123456789' OR ls_nriv-nrlevel CN ' 0123456789'.
+        CONTINUE.  " alphanumeric range
+      ENDIF.
+      lv_from = condense( ls_nriv-fromnumber ).
+      lv_to = condense( ls_nriv-tonumber ).
+      lv_level = condense( ls_nriv-nrlevel ).
+      IF lv_to > lv_from AND ( lv_level - lv_from ) * 2 >= lv_to - lv_from.
+        APPEND ls_nriv TO cs_payload-number_ranges.
+      ENDIF.
+    ENDLOOP.
+  ENDMETHOD.
+
+
+  METHOD collect_applog.
+    " SLG1: application logs of the last 24 hours that contain abort (A) or error (E) messages, by object.
+    " The condition is dynamic so that a release without these BALHDR fields reports an error instead of failing activation.
+    DATA lv_where TYPE string.
+    lv_where = |ALDATE >= '{ mv_since_date }' AND ( MSG_CNT_A > 0 OR MSG_CNT_E > 0 )|.
+    TRY.
+        SELECT object, subobject, COUNT(*) AS logs
+          FROM balhdr CLIENT SPECIFIED
+          WHERE (lv_where)
+          GROUP BY object, subobject
+          INTO CORRESPONDING FIELDS OF TABLE @cs_payload-applog_errors
+          UP TO @mv_max_rows ROWS.
+      CATCH cx_sy_dynamic_osql_error cx_sy_open_sql_db INTO DATA(lx_sql).
+        add_error( EXPORTING iv_area = `applog` iv_text = lx_sql->get_text( ) CHANGING cs_payload = cs_payload ).
+    ENDTRY.
+  ENDMETHOD.
+
+
+  METHOD collect_batch_input.
+    " SM35: sessions in error created in the last 7 days.
+    DATA lv_week TYPE d.
+    lv_week = sy-datum - 7.
+    TRY.
+        SELECT mandant, groupid, qstate, credate, creator
+          FROM apqi CLIENT SPECIFIED
+          WHERE qstate = 'E'
+            AND credate >= @lv_week
+          INTO CORRESPONDING FIELDS OF TABLE @cs_payload-batch_input
+          UP TO @mv_max_rows ROWS.
+      CATCH cx_sy_open_sql_db INTO DATA(lx_sql).
+        add_error( EXPORTING iv_area = `batch_input` iv_text = lx_sql->get_text( ) CHANGING cs_payload = cs_payload ).
+    ENDTRY.
+  ENDMETHOD.
+
+
+  METHOD collect_security.
+    " SCC4 client settings and the state of the standard users (SU01), across clients.
+    TRY.
+        select_any_client( EXPORTING iv_table = `T000` IMPORTING et_rows = cs_payload-clients ).
+      CATCH cx_sy_dynamic_osql_error cx_sy_open_sql_db INTO DATA(lx_t000).
+        add_error( EXPORTING iv_area = `clients` iv_text = lx_t000->get_text( ) CHANGING cs_payload = cs_payload ).
+    ENDTRY.
+    TRY.
+        SELECT mandt, bname, uflag, locnt, trdat, ustyp
+          FROM usr02 CLIENT SPECIFIED
+          WHERE bname IN ('SAP*', 'DDIC', 'TMSADM', 'EARLYWATCH', 'SAPCPIC')
+          INTO CORRESPONDING FIELDS OF TABLE @cs_payload-critical_users.
+        SELECT mandt, COUNT(*) AS locked
+          FROM usr02 CLIENT SPECIFIED
+          WHERE uflag >= 128
+          GROUP BY mandt
+          INTO CORRESPONDING FIELDS OF TABLE @cs_payload-failed_logon_locks.
+      CATCH cx_sy_open_sql_db INTO DATA(lx_usr).
+        add_error( EXPORTING iv_area = `users` iv_text = lx_usr->get_text( ) CHANGING cs_payload = cs_payload ).
+    ENDTRY.
+  ENDMETHOD.
+
+
+  METHOD collect_spool_and_imports.
+    DATA lv_since TYPE c LENGTH 14.
+    TRY.
+        SELECT COUNT(*) FROM tsp01 INTO @cs_payload-spool_requests.
+      CATCH cx_sy_open_sql_db INTO DATA(lx_spool).
+        add_error( EXPORTING iv_area = `spool` iv_text = lx_spool->get_text( ) CHANGING cs_payload = cs_payload ).
+    ENDTRY.
+    lv_since = |{ mv_since_date }000000|.
+    TRY.
+        SELECT trkorr, retcode, trtime
+          FROM tpalog
+          WHERE trtime >= @lv_since
+          INTO CORRESPONDING FIELDS OF TABLE @cs_payload-imports
+          UP TO @mv_max_rows ROWS.
+      CATCH cx_sy_open_sql_db INTO DATA(lx_tp).
+        add_error( EXPORTING iv_area = `imports` iv_text = lx_tp->get_text( ) CHANGING cs_payload = cs_payload ).
     ENDTRY.
   ENDMETHOD.
 
