@@ -22,6 +22,8 @@ METRICS = [
     {"key": "db.host_memory_used_pct", "label": "Database host memory used", "category": "Database host", "unit": "%", "description": "Memory in use on the database server (os_ssh)", "format": "percent"},
     {"key": "db.host_disk_used_pct", "label": "Database file system used", "category": "Database host", "unit": "%", "description": "Fullest database file system on the database server (os_ssh)", "format": "percent"},
     {"key": "db.host_load1", "label": "Database host load (1m)", "category": "Database host", "unit": "load", "description": "One-minute load average on the database server (os_ssh)", "format": "number"},
+    {"key": "rfc.app_servers", "label": "Application servers (message server)", "category": "ABAP", "unit": "servers", "description": "Application servers registered at the message server (RFC TH_SERVER_LIST)", "format": "number"},
+    {"key": "agent.up", "label": "ABAP agent reporting", "category": "ABAP", "unit": "status", "description": "1 = the ABAP push agent sent data within its expected interval", "format": "number"},
     {"key": "abap.queue_dia", "label": "Dialog queue", "category": "ABAP", "unit": "requests", "description": "Dialog requests waiting in the dispatcher queue (sapcontrol GetQueueStatistic)", "format": "number"},
     {"key": "abap.queue_upd", "label": "Update queue", "category": "ABAP", "unit": "requests", "description": "Update requests waiting in the dispatcher queue", "format": "number"},
     {"key": "abap.queue_btc", "label": "Background queue", "category": "ABAP", "unit": "requests", "description": "Background requests waiting in the dispatcher queue", "format": "number"},

@@ -3,6 +3,7 @@ import type { AnomaliesResponse, AvailabilityResponse, CapacityForecastResponse,
 import type {
   AlertEvent, Catalogue, CertificateSummary, GrowthReport, Overview, PostcheckResult, PrecheckResult, Run,
   AuditEntry, Collector, ControlPlan, ControlStatus, Infrastructure, ImportHistory, Operation, RegisterResult, SapInstance, ScanResult, Incident, IncidentCounts, JobReport, LockReport, MaintenanceWindow, Me, MonitorDetail, MonitorsResponse, RouteProposal, Rule, RuleMetric, User, SapSystem, SystemDetail, SystemInput, SystemOverviewData, SystemRoutes, DependencyTopology, TopologyAsset, TopologyLink, Topology, TransportRoute, UserReport,
+  AgentStatus, AgentToken,
 } from "./types";
 
 const KEY_STORAGE = "sapBasisToolkit.apiKey";
@@ -161,6 +162,24 @@ export const api = {
   endMaintenance: (id: number) => request(`/api/v1/maintenance/${id}/end`, { method: "POST" }),
 
   collectors: (systemId: number) => request<Collector[]>(`/api/v1/systems/${systemId}/collectors`),
+  agentStatus: (systemId: number) => request<AgentStatus>(`/api/v1/systems/${systemId}/agent`),
+  issueAgentToken: (systemId: number) => request<AgentToken>(`/api/v1/systems/${systemId}/agent/token`, { method: "POST" }),
+  revokeAgentToken: (systemId: number, tokenId: number) =>
+    request<void>(`/api/v1/systems/${systemId}/agent/token/${tokenId}`, { method: "DELETE" }),
+  downloadAbapSources: async () => {
+    const headers = new Headers();
+    const token = getToken();
+    if (token) headers.set("Authorization", `Bearer ${token}`);
+    else if (getApiKey()) headers.set("X-API-Key", getApiKey());
+    const response = await fetch("/api/v1/agent/abap-sources.zip", { headers });
+    if (!response.ok) throw new ApiError(response.status, `Download failed (HTTP ${response.status})`);
+    const url = URL.createObjectURL(await response.blob());
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "sentinel-abap-agent.zip";
+    a.click();
+    URL.revokeObjectURL(url);
+  },
   createCollector: (systemId: number, body: Record<string, unknown>) =>
     request<Collector>(`/api/v1/systems/${systemId}/collectors`, json("POST", body)),
   testCollector: (systemId: number, body: Record<string, unknown>) =>

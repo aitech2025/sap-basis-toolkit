@@ -17,8 +17,8 @@ schema in HANA. That works, but it is the weakest of the available patterns:
 | Pattern | Latency | What it covers | Needs | Verdict |
 |---|---|---|---|---|
 | **sapstartsrv web methods** (sapcontrol, SOAP over HTTP 5NN13/14) | Live (shared memory) | Work processes (SM50), system log (SM21), SM12 lock table, enqueue statistics, dispatcher queues, instance CCMS tree: response time, users, dumps, update, background | `<sid>adm` (already used for availability). Some methods are protected; allow them in `service/protectedwebmethods` or use `<sid>adm` | **Now the primary live source** |
-| **RFC with standard function modules** (SAP NW RFC SDK) | Seconds | Details the shared memory does not hold: ST22 dump list (`/SDF/GET_DUMP_LOG`, ST-PI), SM37 via XBP (`BAPI_XMI_LOGON` + `BAPI_XBP_JOB_SELECT`), ST03 workload (`SWNC_GET_WORKLOAD_SNAPSHOT`), servers and users (`TH_SERVER_LIST`, `TH_USER_LIST`) | RFC user with S_RFC for those modules, the NW RFC SDK (SAP download, not redistributable) and a binding. SAP's own Python binding, PyRFC, is archived and no longer maintained | The pattern commercial tools use (Dynatrace: RFC; Avantra: agent). **Recommended next step, see below** |
-| **ABAP-side push** (an ABAP job or daemon that posts events to Sentinel) | Real time | Anything, as events | A transport into every SAP system | Most real-time, most invasive. Not planned |
+| **RFC with standard function modules** (SAP NW RFC SDK) | Seconds | Details the shared memory does not hold: ST22 dump list (`/SDF/GET_DUMP_LOG`, ST-PI), SM37 via XBP (`BAPI_XMI_LOGON` + `BAPI_XBP_JOB_SELECT`), ST03 workload (`SWNC_GET_WORKLOAD_SNAPSHOT`), servers and users (`TH_SERVER_LIST`, `TH_USER_LIST`) | RFC user with S_RFC for those modules, the NW RFC SDK (SAP download, not redistributable) and a binding. SAP's own Python binding, PyRFC, is archived and no longer maintained | The pattern commercial tools use. **Implemented: collector type `rfc`, see below** |
+| **ABAP-side push** (an ABAP job or daemon that posts events to Sentinel) | Real time | Anything, as events | A transport into every SAP system | Most real-time. **Implemented: report `Z_SENTINEL_PUSH`, see below** |
 | **ADT REST feeds** (`/sap/bc/adt/...` runtime errors feed) | Near real time | Short dumps | ADT authorisations, ICF service | Developer-oriented; no jobs or updates |
 | **HANA SQL on ABAP tables** (current) | Polling | Dumps, updates, jobs, RFC, IDocs, transports, table growth | HANA, SELECT on the ABAP schema | **Kept as a fallback** for history and HANA-only details |
 
@@ -55,17 +55,55 @@ sapstartsrv protects some web methods. If a call fails with "Permission denied",
 (recommended) or remove the method from `service/protectedwebmethods` in the instance profile and restart sapstartsrv. Failed
 calls appear in the collector's diagnostics; the rest of the run continues.
 
-## Recommended next step: an RFC collector
+## RFC collector
 
-For ST22 details (program, include, user, transaction for each dump) and SM37 through the supported XBP interface, add an
-optional RFC collector:
+Collector type `rfc` calls released or ST-PI function modules. It never uses `RFC_READ_TABLE`.
 
-- **Function modules:** `/SDF/GET_DUMP_LOG`, `BAPI_XMI_LOGON` and `BAPI_XBP_JOB_SELECT`, `SWNC_GET_WORKLOAD_SNAPSHOT`,
-  `TH_SERVER_LIST`.
-- **Deployment:** as optional as the HANA client, built into the image only when the customer provides the SAP NW RFC SDK.
-- **Binding:** this is the decision to make.
-  - PyRFC 3.3.1 works, but SAP no longer maintains it.
-  - A community replacement implements the RFC protocol without the SDK, but it is young.
-  - A small Java JCo sidecar uses SAP's supported connector, at the cost of another runtime.
+| Function module | Data |
+|---|---|
+| `RFC_SYSTEM_INFO` | SID, release, database (also guards against pointing the collector at the wrong system) |
+| `TH_SERVER_LIST` | Application servers registered at the message server (`rfc.app_servers`) |
+| `/SDF/GET_DUMP_LOG` (ST-PI) | ST22 dumps for the last 24 hours, with runtime error, user, server, client and program. The result table is generic; its columns are mapped from the description structure that the function returns |
+| `BAPI_XMI_LOGON`, `BAPI_XBP_JOB_SELECT`, `BAPI_XMI_LOGOFF` | SM37 jobs of the last 7 days and running jobs, through the supported external job interface (XBP) |
 
-When it is in place, the HANA SQL reads of SNAP and TBTCO can be retired for systems that have RFC.
+**Setup**
+- **Connection:** host of an application server, gateway port 33NN, the SAP client, and a system user.
+- **User authorisations:** S_RFC for the modules above, plus S_XMI_PROD for XBP.
+
+**Library**
+- **Code:** written against the PyRFC client API.
+- **Image build:** build with `RFC_CLIENT=true` after placing the SAP NW RFC SDK (downloaded from SAP; it may not be
+  redistributed) in `backend/vendor/nwrfcsdk/`. `RFC_PACKAGE` selects the binding: SAP's archived `pyrfc` by default, or a
+  drop-in replacement that provides the same `pyrfc` module.
+- **Missing library:** without a library, the collector reports that clearly and the other collectors keep working.
+
+## ABAP push agent
+
+Report `Z_SENTINEL_PUSH` with class `ZCL_SENTINEL_AGENT` (folder `abap/`, abapGit format) runs as a periodic job in the SAP
+system. It reads ST22, SM37, SM13, SM12, SM58, SMQ1/SMQ2 and IDoc errors with ABAP authorisations and POSTs them to
+`/api/v1/agent/ingest` through an SM59 destination. This is the most real-time pattern, it works on every database, and it
+needs no inbound connection into the SAP system.
+
+- **Tokens:** one per system, issued and rotated by an admin on the Setup tab. Only a SHA-256 hash is stored, and the token
+  is shown once.
+- **What the endpoint checks:**
+  - the token
+  - that the payload's SID matches the system
+  - the schema version
+  - the size (`AGENT_MAX_BYTES`)
+  - the push rate (`AGENT_MIN_INTERVAL_SECONDS`)
+- **Audit log:** pushes are not written to it; the token records the last contact time, IP address and agent version.
+- **Silence:** if an agent stops pushing for `AGENT_SILENT_SECONDS` (15 minutes), `agent.up` goes to 0 and an incident opens.
+- **Same monitors from every source:** pushed data feeds the same dumps, updates, tRFC, qRFC, IDoc, job and lock monitors as
+  HANA SQL and RFC. Each snapshot records its source.
+
+Installation and authorisations: [`abap/README.md`](../abap/README.md).
+
+## Which source to use
+
+| You have | Use |
+|---|---|
+| `<sid>adm` for sapstartsrv | sapcontrol collector: availability, work processes, syslog, locks, queues, CCMS (always) |
+| A transport path into the system | ABAP push agent: dumps, jobs, updates, RFC, IDocs and locks, near real time, any database |
+| An RFC user but no transports | RFC collector: dumps and jobs through function modules |
+| HANA and a SQL monitoring user | HANA SQL collector: HANA health, plus ABAP tables as a fallback and for table growth |

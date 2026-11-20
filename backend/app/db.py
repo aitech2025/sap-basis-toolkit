@@ -265,6 +265,7 @@ collectors = Table(
     Column("abap_schema", String(64)),                  # e.g. SAPHANADB / SAPABAP1: enables ABAP table monitors
     Column("private_key_enc", Text),                     # os_ssh: encrypted private key (alternative to password)
     Column("host_key", String(120)),                     # os_ssh: pinned SSH host key fingerprint (TOFU)
+    Column("sap_client", String(3)),                     # rfc: logon client
     Column("interval_seconds", Integer, nullable=False, default=300),
     Column("enabled", Boolean, nullable=False, default=True),
     Column("last_run_at", DateTime(timezone=True)),
@@ -287,6 +288,24 @@ monitor_snapshots = Table(
     Column("data", Text, nullable=False),
 )
 Index("ix_monitor_snapshots", monitor_snapshots.c.system_id, monitor_snapshots.c.monitor, monitor_snapshots.c.captured_at)
+
+# ABAP push agent (report Z_SENTINEL_PUSH in the SAP system): one token per system; only its SHA-256 is stored.
+agent_tokens = Table(
+    "agent_tokens", metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    SYSTEM_FK(),
+    Column("token_hash", String(64), nullable=False),
+    Column("hint", String(12), nullable=False),          # first characters, to recognise the token in the SAP variant
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    Column("created_by", String(80)),
+    Column("revoked_at", DateTime(timezone=True)),
+    Column("last_seen_at", DateTime(timezone=True)),
+    Column("last_ip", String(64)),
+    Column("last_agent_version", String(20)),
+    Column("last_payload_bytes", Integer),
+)
+Index("uq_agent_tokens_hash", agent_tokens.c.token_hash, unique=True)
+Index("ix_agent_tokens_system", agent_tokens.c.system_id)
 
 # Pointer to the newest snapshot of each (system, monitor): dashboards read the current state of 50+ systems without
 # scanning snapshot history.
@@ -485,7 +504,7 @@ Index("ix_topology_links_target", topology_links.c.target_asset_id)
 ADDED_COLUMNS = {
     "targets": [("system_id", "INTEGER REFERENCES sap_systems(id) ON DELETE SET NULL")],
     "sap_systems": [("timezone", "VARCHAR(64)"), ("control_enabled", "BOOLEAN")],
-    "collectors": [("private_key_enc", "TEXT"), ("host_key", "VARCHAR(120)")],
+    "collectors": [("private_key_enc", "TEXT"), ("host_key", "VARCHAR(120)"), ("sap_client", "VARCHAR(3)")],
     "system_operations": [("steps", "TEXT"), ("checklist", "TEXT"), ("force", "BOOLEAN"), ("abort_requested", "BOOLEAN")],
 }
 

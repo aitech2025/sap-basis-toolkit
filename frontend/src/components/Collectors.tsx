@@ -10,16 +10,17 @@ const DEFAULTS = {
   node_exporter: { port: 9100, interval_seconds: 60, username: "", abap_schema: "", use_tls: false, verify_tls: false },
   hana_sapcontrol: { port: 50013, interval_seconds: 120, username: "", abap_schema: "", use_tls: false, verify_tls: false },
   os_ssh: { port: 22, interval_seconds: 900, username: "root", abap_schema: "", use_tls: false, verify_tls: false },
+  rfc: { port: 3300, interval_seconds: 300, username: "SENTINEL_RFC", abap_schema: "", use_tls: false, verify_tls: false },
 };
 type CollectorType = keyof typeof DEFAULTS;
-const TYPE_LABEL: Record<string, string> = { sapcontrol: "SAP Start Service", hana: "HANA SQL", hana_sapcontrol: "HANA instance (sapcontrol)", node_exporter: "node_exporter", os_ssh: "OS inventory (SSH)" };
+const TYPE_LABEL: Record<string, string> = { sapcontrol: "SAP Start Service", hana: "HANA SQL", hana_sapcontrol: "HANA instance (sapcontrol)", node_exporter: "node_exporter", os_ssh: "OS inventory (SSH)", rfc: "RFC (function modules)" };
 
 export function CollectorsCard({ system }: { system: SystemDetail }) {
   const { can } = useSession();
   const { data, error, reload } = useAsync(() => api.collectors(system.id), [system.id]);
   const [type, setType] = useState<CollectorType>("sapcontrol");
   const [form, setForm] = useState({ host: system.host ?? "", port: 50014, use_tls: true, verify_tls: true, username: "",
-                                     password: "", abap_schema: "", interval_seconds: 120 });
+                                     password: "", abap_schema: "", interval_seconds: 120, sap_client: system.default_client ?? "" });
   const [message, setMessage] = useState<{ ok: boolean; text: string; details?: string[] } | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
 
@@ -28,7 +29,8 @@ export function CollectorsCard({ system }: { system: SystemDetail }) {
     setForm({ ...form, ...DEFAULTS[t] });
   };
   const body = () => ({ type, ...form, port: Number(form.port), interval_seconds: Number(form.interval_seconds),
-                        username: form.username || null, password: form.password || null, abap_schema: form.abap_schema || null });
+                        username: form.username || null, password: form.password || null, abap_schema: form.abap_schema || null,
+                        sap_client: type === "rfc" ? form.sap_client || null : null });
   const run = async (key: string, fn: () => Promise<{ text: string; ok?: boolean; details?: string[] }>) => {
     setBusy(key);
     setMessage(null);
@@ -110,18 +112,22 @@ export function CollectorsCard({ system }: { system: SystemDetail }) {
                 <option value="hana_sapcontrol" disabled={system.database !== "HANA"}>HANA instance — sapcontrol of HDB&lt;NN&gt; (DB availability + start/stop)</option>
                 <option value="node_exporter">Host metrics (Prometheus node_exporter)</option>
                 <option value="os_ssh">OS inventory over SSH (root or &lt;sid&gt;adm, read-only)</option>
+                <option value="rfc" disabled={system.stack === "JAVA"}>RFC: ST22 dumps, SM37 jobs (XBP), servers{system.stack === "JAVA" ? " (ABAP only)" : ""}</option>
               </select></label>
             <label className="field"><span>Host</span><input required value={form.host} onChange={(e) => setForm({ ...form, host: e.target.value })} placeholder={type === "hana" ? "hdb.corp.example.com" : "sapascs.corp.example.com"} />
               <small>Use "simulator" for demo data when enabled on the server.</small></label>
             <label className="field"><span>Port</span><input type="number" required value={form.port} onChange={(e) => setForm({ ...form, port: Number(e.target.value) })} />
-              <small>{type === "hana" ? "3<NN>15 tenant / 3<NN>13 SYSTEMDB" : type === "node_exporter" ? "9100 (node_exporter)" : type === "os_ssh" ? "22 (SSH); the host key is pinned on first contact" : "5<NN>13 HTTP / 5<NN>14 HTTPS" + (type === "hana_sapcontrol" ? " of the HDB instance" : "")}</small></label>
-            {type !== "node_exporter" && <><label className="field"><span>{type === "hana" ? "Database user" : type === "hana_sapcontrol" ? "OS user (<hanasid>adm)" : type === "os_ssh" ? "OS user (root or <sid>adm)" : "OS user (<sid>adm)"}</span><input value={form.username} autoComplete="off" onChange={(e) => setForm({ ...form, username: e.target.value })} placeholder={type === "hana" ? "MONITORING_RO" : "s4padm"} /></label>
+              <small>{type === "hana" ? "3<NN>15 tenant / 3<NN>13 SYSTEMDB" : type === "node_exporter" ? "9100 (node_exporter)" : type === "os_ssh" ? "22 (SSH); the host key is pinned on first contact" : type === "rfc" ? "Gateway 33<NN> of the application server" : "5<NN>13 HTTP / 5<NN>14 HTTPS" + (type === "hana_sapcontrol" ? " of the HDB instance" : "")}</small></label>
+            {type !== "node_exporter" && <><label className="field"><span>{type === "rfc" ? "RFC user (system user)" : type === "hana" ? "Database user" : type === "hana_sapcontrol" ? "OS user (<hanasid>adm)" : type === "os_ssh" ? "OS user (root or <sid>adm)" : "OS user (<sid>adm)"}</span><input value={form.username} autoComplete="off" onChange={(e) => setForm({ ...form, username: e.target.value })} placeholder={type === "hana" ? "MONITORING_RO" : "s4padm"} /></label>
             <label className="field"><span>Password</span><input type="password" autoComplete="new-password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} /><small>Stored encrypted; never shown again.</small></label></>}
             {type === "node_exporter" && <p className="muted small">No credentials are sent. Restrict port 9100 to Sentinel or expose it through a trusted TLS reverse proxy.</p>}
+            {type === "rfc" && <label className="field"><span>Client</span><input required pattern="\d{3}" value={form.sap_client} onChange={(e) => setForm({ ...form, sap_client: e.target.value })} placeholder="100" />
+              <small>The user needs S_RFC for RFC_SYSTEM_INFO, TH_SERVER_LIST, /SDF/GET_DUMP_LOG, BAPI_XMI_*, BAPI_XBP_JOB_SELECT and S_XMI_PROD.</small></label>}
             {type === "hana" && <label className="field"><span>ABAP schema (optional)</span><input value={form.abap_schema} onChange={(e) => setForm({ ...form, abap_schema: e.target.value.toUpperCase() })} placeholder="SAPHANADB" /><small>Enables dumps, RFC, IDoc, job and import monitors.</small></label>}
             <label className="field"><span>Interval (seconds)</span><input type="number" min={30} max={86400} value={form.interval_seconds} onChange={(e) => setForm({ ...form, interval_seconds: Number(e.target.value) })} /></label>
+            {type !== "rfc" && type !== "os_ssh" && <>
             <label className="field check"><input type="checkbox" checked={form.use_tls} onChange={(e) => setForm({ ...form, use_tls: e.target.checked })} /> <span>Use TLS</span></label>
-            <label className="field check"><input type="checkbox" checked={form.verify_tls} disabled={!form.use_tls} onChange={(e) => setForm({ ...form, verify_tls: e.target.checked })} /> <span>Verify certificate</span></label>
+            <label className="field check"><input type="checkbox" checked={form.verify_tls} disabled={!form.use_tls} onChange={(e) => setForm({ ...form, verify_tls: e.target.checked })} /> <span>Verify certificate</span></label></>}
           </div>
           <div className="actions" style={{ marginTop: 12 }}>
             <button type="button" className="btn" disabled={busy === "test" || !form.host} onClick={() => run("test", async () => {

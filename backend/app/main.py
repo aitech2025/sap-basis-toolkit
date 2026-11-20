@@ -7,6 +7,8 @@ from fastapi.responses import FileResponse, JSONResponse
 from . import auth, config
 from .api.auth_routes import public as auth_public_router
 from .api.auth_routes import router as auth_router
+from .api.agent import ingest_router as agent_ingest_router
+from .api.agent import router as agent_router
 from .api.analytics import router as analytics_router
 from .api.intelligence import router as intelligence_router
 from .api.lifecycle import router as lifecycle_router
@@ -45,6 +47,8 @@ app.include_router(monitoring_router)
 app.include_router(analytics_router)
 app.include_router(intelligence_router)
 app.include_router(lifecycle_router)
+app.include_router(agent_router)
+app.include_router(agent_ingest_router)
 
 
 @app.middleware("http")
@@ -53,7 +57,7 @@ async def audit_mutations(request: Request, call_next):
     response = await call_next(request)
     path = request.url.path
     if (request.method in ("POST", "PUT", "PATCH", "DELETE") and path.startswith("/api/")
-            and not path.startswith("/api/v1/auth/")):
+            and not path.startswith(("/api/v1/auth/", "/api/v1/agent/ingest"))):  # agent pushes: see agent_tokens
         principal = getattr(request.state, "principal", None)
         try:
             auth.audit(principal.username if principal else "anonymous", f"{request.method} {path}"[:80],

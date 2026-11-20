@@ -208,6 +208,18 @@ def collect(client, abap_schema: str | None, zone) -> dict:
                                            "max_duration_s": round(float(row.get("MAX_DURATION_US") or 0) / 1_000_000, 2)}
     out["hana"] = hana
 
+    out.update(map_abap_results(results, zone))
+    if "table_sizes" in results:
+        out["table_sizes"] = results["table_sizes"]
+    return out
+
+
+def map_abap_results(results: dict, zone) -> dict:
+    """ABAP table rows (keyed by SAP field names, as read through HANA SQL or sent by the ABAP push agent) to the
+    monitor inputs: dumps, updates, trfc, qrfc, idocs, jobs, imports."""
+    from ..tabular import parse_sap_datetime
+
+    out: dict = {}
     if "dumps" in results:
         out["dumps"] = [{"at": parse_sap_datetime(str(r["DATUM"]), str(r["UZEIT"]), zone), "error": _dump_error(r.get("FLIST")),
                          "user": r.get("UNAME"), "host": r.get("AHOST"), "client": r.get("MANDT")} for r in results["dumps"]]
@@ -235,6 +247,4 @@ def collect(client, abap_schema: str | None, zone) -> dict:
         out["jobs"] = results["jobs"]
     if "imports" in results:
         out["imports"] = results["imports"]
-    if "table_sizes" in results:
-        out["table_sizes"] = results["table_sizes"]
     return out

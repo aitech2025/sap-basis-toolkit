@@ -340,6 +340,65 @@ def _fault(text: str) -> str:
             f'<faultcode>SOAP-ENV:Server</faultcode><faultstring>{escape(text)}</faultstring></SOAP-ENV:Fault></SOAP-ENV:Body></SOAP-ENV:Envelope>')
 
 
+class SimulatedRfc:
+    """Answers the RFC collector's function modules (same shapes as pyrfc results)."""
+
+    RUNTIME_ERRORS = ["TIME_OUT", "DBSQL_DUPLICATE_KEY_ERROR", "MESSAGE_TYPE_X", "TSV_TNEW_PAGE_ALLOC_FAILED",
+                      "CONVT_NO_NUMBER", "OBJECTS_OBJREF_NOT_ASSIGNED"]
+
+    def __init__(self, seed: str):
+        self.seed = seed
+        self.p = profile(seed)
+        self.r = _rng(f"{seed}:rfc")
+        self.sid = sim_sid(seed) if seed.startswith(SIM_HOST + "-") else "SIM"
+        self.xbp = False
+
+    def call(self, name: str, **params):
+        now = datetime.now(timezone.utc)
+        if name == "RFC_SYSTEM_INFO":
+            return {"RFCSI_EXPORT": {"RFCSYSID": self.sid, "RFCSAPRL": "758", "RFCDBSYS": "HDB", "RFCHOST": f"sap{self.sid.lower()}app1",
+                                     "RFCKERNRL": "793"}}
+        if name == "TH_SERVER_LIST":
+            return {"LIST": [{"NAME": f"sap{self.sid.lower()}app{i}_{self.sid}_0{i - 1}", "HOST": f"sap{self.sid.lower()}app{i}",
+                              "SERV": f"sapdp0{i - 1}", "MSGTYPES": 255} for i in (1, 2)]}
+        if name == "/SDF/GET_DUMP_LOG":
+            count = self.r.randint(0, 4) + (self.r.randint(5, 25) if self.p["fragile"] else 0)
+            rows = []
+            for _ in range(count):
+                at = now - timedelta(minutes=self.r.randint(0, 23 * 60))
+                rows.append({"FIELD1": at.strftime("%Y%m%d"), "FIELD2": at.strftime("%H%M%S"),
+                             "FIELD3": self.r.choice(self.RUNTIME_ERRORS), "FIELD4": self.r.choice(["JSMITH", "BATCH_FI", "RFC_PI"]),
+                             "FIELD5": f"sap{self.sid.lower()}app1_{self.sid}_00", "FIELD6": "100",
+                             "FIELD7": self.r.choice(["SAPMV45A", "ZFI_POSTING", "SAPLBAPT"])})
+            return {"ET_E2E_LOG": rows,
+                    "ES_E2E_LOG_STRUCT_DESC": {"FIELD1": "Date", "FIELD2": "Time", "FIELD3": "Runtime Error", "FIELD4": "User",
+                                               "FIELD5": "Application Server", "FIELD6": "Client", "FIELD7": "Program"}}
+        if name == "BAPI_XMI_LOGON":
+            self.xbp = True
+            return {"SESSIONID": "SIMXMI0001", "RETURN": {"TYPE": "S", "MESSAGE": ""}}
+        if name == "BAPI_XMI_LOGOFF":
+            self.xbp = False
+            return {"RETURN": {"TYPE": "S", "MESSAGE": ""}}
+        if name == "BAPI_XBP_JOB_SELECT":
+            if not self.xbp:
+                return {"SELECTED_JOBS": [], "RETURN": {"TYPE": "E", "MESSAGE": "Not logged on in interface XBP"}}
+            jobs = []
+            for i in range(self.r.randint(15, 40)):
+                start = now - timedelta(minutes=self.r.randint(5, 6 * 24 * 60))
+                status = "A" if self.p["fragile"] and self.r.random() < 0.15 else self.r.choice(["F", "F", "F", "F", "R"])
+                end = start + timedelta(minutes=self.r.randint(1, 50)) if status in ("F", "A") else None
+                jobs.append({"JOBNAME": self.r.choice(["SAP_COLLECTOR_PERFMON", "Z_FI_NIGHTLY", "SAP_REORG_SPOOL", "BTCTRNS1_CHECK",
+                                                       "Z_SD_BILLING"]), "JOBCOUNT": f"{10000000 + i:08d}", "STATUS": status,
+                             "SDLUNAME": "BATCH_FI", "STRTDATE": start.strftime("%Y%m%d"), "STRTTIME": start.strftime("%H%M%S"),
+                             "ENDDATE": end.strftime("%Y%m%d") if end else "", "ENDTIME": end.strftime("%H%M%S") if end else ""})
+            return {"SELECTED_JOBS": jobs, "RETURN": {"TYPE": "S", "MESSAGE": ""}}
+        from . import CollectorError
+        raise CollectorError(f"{name}: function module not found or not remote-enabled")
+
+    def close(self) -> None:
+        pass
+
+
 class SimulatedHana:
     """Answers the HANA collector's named queries with plausible data."""
 

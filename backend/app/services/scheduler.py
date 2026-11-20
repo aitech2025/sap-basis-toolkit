@@ -105,6 +105,14 @@ def check_leadership() -> None:
         os._exit(3)
 
 
+def run_agent_watchdog() -> None:
+    from . import agent
+    try:
+        agent.watchdog()
+    except Exception:
+        logger.exception("Agent watchdog failed")
+
+
 def run_housekeeping() -> None:
     from .. import auth
     from . import monitors
@@ -145,6 +153,8 @@ def run_scheduler_forever() -> None:
         run_collectors_tick, "interval", seconds=max(5, COLLECTOR_TICK_SECONDS), id="collectors",
         replace_existing=True, max_instances=1, coalesce=True, next_run_time=datetime.now(timezone.utc),
     )
+    scheduler.add_job(run_agent_watchdog, "interval", seconds=60, id="agent-watchdog", replace_existing=True,
+                      max_instances=1, coalesce=True)
     scheduler.add_job(run_housekeeping, "interval", hours=6, id="housekeeping", replace_existing=True,
                       max_instances=1, coalesce=True)
     logger.info("Starting certificate scheduler; interval=%s minutes", CHECK_INTERVAL_MINUTES)

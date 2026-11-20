@@ -35,7 +35,7 @@ def _principal(request: Request) -> Principal:
 
 # ------------------------------------------------------------------------------- collectors
 class CollectorIn(BaseModel):
-    type: str = Field(pattern="^(sapcontrol|hana|hana_sapcontrol|node_exporter|os_ssh)$")
+    type: str = Field(pattern="^(sapcontrol|hana|hana_sapcontrol|node_exporter|os_ssh|rfc)$")
     host: str = Field(min_length=1, max_length=253)
     port: int = Field(ge=1, le=65535)
     use_tls: bool = True
@@ -45,6 +45,7 @@ class CollectorIn(BaseModel):
     private_key: str | None = Field(default=None, max_length=16384)
     database_name: str | None = Field(default=None, max_length=64)
     abap_schema: str | None = Field(default=None, max_length=64)
+    sap_client: str | None = Field(default=None, pattern=r"^\d{3}$")
     interval_seconds: int = Field(default=300, ge=30, le=86400)
     enabled: bool = True
 
@@ -61,6 +62,7 @@ class CollectorPatch(BaseModel):
     trust_new_host_key: bool | None = None
     database_name: str | None = Field(default=None, max_length=64)
     abap_schema: str | None = Field(default=None, max_length=64)
+    sap_client: str | None = Field(default=None, pattern=r"^\d{3}$")
     interval_seconds: int | None = Field(default=None, ge=30, le=86400)
     enabled: bool | None = None
 

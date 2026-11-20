@@ -90,6 +90,11 @@ LOGIN_MAX_FAILURES = int(os.getenv("LOGIN_MAX_FAILURES", "5"))
 AUDIT_RETENTION_DAYS = int(os.getenv("AUDIT_RETENTION_DAYS", "365"))
 
 # --- Live collectors ----------------------------------------------------------------------
+# ABAP push agent (report Z_SENTINEL_PUSH)
+ABAP_SOURCES_DIR = os.getenv("ABAP_SOURCES_DIR", "")
+AGENT_MAX_BYTES = int(os.getenv("AGENT_MAX_BYTES", str(8 * 1024 * 1024)))
+AGENT_MIN_INTERVAL_SECONDS = int(os.getenv("AGENT_MIN_INTERVAL_SECONDS", "20"))
+AGENT_SILENT_SECONDS = int(os.getenv("AGENT_SILENT_SECONDS", "900"))
 INTELLIGENCE_CACHE_SECONDS = int(os.getenv("INTELLIGENCE_CACHE_SECONDS", "60"))
 COLLECTOR_TICK_SECONDS = int(os.getenv("COLLECTOR_TICK_SECONDS", "15"))
 COLLECTOR_TIMEOUT_SECONDS = float(os.getenv("COLLECTOR_TIMEOUT_SECONDS", "15"))
