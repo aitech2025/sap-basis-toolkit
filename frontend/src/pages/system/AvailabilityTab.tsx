@@ -2,6 +2,7 @@ import { Link } from "react-router-dom";
 import { Freshness, NoData, Trend, useMonitor } from "../../components/monitor";
 import { Card, DataTable, ErrorBanner, Pill, Tile, fmtNumber } from "../../components/ui";
 import type { SystemDetail } from "../../types";
+import AbapLiveSection from "./AbapLiveSection";
 
 type Instance = { name: string; hostname: string; instance_nr: string; features: string; status: string; error: string | null;
   processes: { name: string; description: string; status: string; textstatus: string; elapsed: string; pid: string }[] };
@@ -43,6 +44,7 @@ export default function AvailabilityTab({ system }: { system: SystemDetail }) {
           <Trend points={wp.data?.series["wp.btc_busy_pct"]} unit="%" label="BTC busy percentage" threshold={{ value: 90, label: "90% warning" }} />
         </Card>
       </div>
+      {system.stack !== "JAVA" && <AbapLiveSection system={system} />}
       <Card title="Instances & processes">
         <div className="instance-grid">
           {a?.instances.map((i) => (

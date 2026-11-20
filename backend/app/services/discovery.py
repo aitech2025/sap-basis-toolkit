@@ -486,7 +486,8 @@ def register(data: dict) -> dict:
     collector_cfg = {"type": "sapcontrol", "host": found["collector"]["host"], "port": found["collector"]["port"],
                      "use_tls": found["collector"]["use_tls"], "verify_tls": found["collector"]["verify_tls"],
                      "username": data.get("username") or None, "password": data.get("password") or None,
-                     "interval_seconds": int(data.get("interval_seconds") or 300)}
+                     # near real time: sapcontrol reads shared memory (work processes, queues, CCMS, locks) and is cheap
+                     "interval_seconds": int(data.get("interval_seconds") or config.SAPCONTROL_INTERVAL_SECONDS)}
     with get_db() as connection:
         current = connection.execute(select(collectors).where(collectors.c.system_id == system["id"],
                                                               collectors.c.type == "sapcontrol")).mappings().first()

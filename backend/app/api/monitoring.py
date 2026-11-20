@@ -22,6 +22,8 @@ MONITOR_METRICS = {
     "trfc": ["trfc.errors"],
     "qrfc": ["qrfc.blocked_queues"],
     "idocs": ["idoc.errors_24h"],
+    "abap_live": ["abap.queue_dia", "abap.queue_upd", "abap.dialog_response_ms", "abap.users_logged_on", "abap.enq_table_used_pct",
+                  "abap.locks", "abap.locks_oldest_min", "ccms.red_now"],
     "hana": ["hana.memory_used_pct", "hana.cpu_pct", "hana.disk_used_pct", "hana.data_backup_age_h", "hana.log_backup_age_h"],
 }
 UPLOADABLE = ("dumps", "syslog", "updates", "trfc", "qrfc", "idocs")
