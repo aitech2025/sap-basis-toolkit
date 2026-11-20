@@ -23,6 +23,14 @@ def test_health_is_public(monkeypatch, tmp_path):
     assert response.status_code == 200 and response.json()["status"] == "ok"
 
 
+def test_readiness_checks_database(monkeypatch, tmp_path):
+    setup_test_db(monkeypatch, tmp_path)
+    with TestClient(app) as client:
+        response = client.get("/ready")
+    assert response.status_code == 200
+    assert response.json()["database"] == "ok"
+
+
 def test_api_requires_key(monkeypatch, tmp_path):
     setup_test_db(monkeypatch, tmp_path)
     with TestClient(app) as client:
