@@ -24,6 +24,7 @@ services:
         RFC_CLIENT: ${RFC_CLIENT:-false}
     command: ["alembic", "upgrade", "head"]
     environment: &app-environment
+      APP_ENV: ${APP_ENV:-production}
       DATABASE_URL: postgresql+psycopg://sentinel:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}@db:5432/sentinel
       API_AUTH_TOKEN: ${API_AUTH_TOKEN:?Set API_AUTH_TOKEN in the project .env file}
       ALLOWED_TARGET_HOSTS: ${ALLOWED_TARGET_HOSTS:?Set ALLOWED_TARGET_HOSTS}
@@ -80,6 +81,7 @@ services:
       SNAPSHOT_FULL_RESOLUTION_HOURS: ${SNAPSHOT_FULL_RESOLUTION_HOURS:-24}
       QUERY_OVERRIDES_FILE: ${QUERY_OVERRIDES_FILE:-}
       SIMULATOR_ENABLED: ${SIMULATOR_ENABLED:-false}
+      CONTROL_ENABLED: ${CONTROL_ENABLED:-false}
     depends_on:
       db:
         condition: service_healthy
