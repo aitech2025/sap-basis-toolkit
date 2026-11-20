@@ -1,6 +1,7 @@
 import os
 
 APP_NAME = "SAP Basis Sentinel"
+APP_ENV = os.getenv("APP_ENV", "development").strip().lower()
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./data/sentinel.db")
 CERTIFICATE_TIMEOUT_SECONDS = float(os.getenv("CERTIFICATE_TIMEOUT_SECONDS", "8"))
 CHECK_INTERVAL_MINUTES = int(os.getenv("CHECK_INTERVAL_MINUTES", "360"))
@@ -122,7 +123,7 @@ SIMULATOR_ENABLED = os.getenv("SIMULATOR_ENABLED", "false").lower() == "true"
 DISCOVERY_PROBE_TIMEOUT_SECONDS = float(os.getenv("DISCOVERY_PROBE_TIMEOUT_SECONDS", "0.8"))
 DISCOVERY_MAX_PARALLEL = int(os.getenv("DISCOVERY_MAX_PARALLEL", "48"))
 # Global switch for start/stop/restart from Sentinel (per-system switch also required).
-CONTROL_ENABLED = os.getenv("CONTROL_ENABLED", "true").lower() == "true"
+CONTROL_ENABLED = os.getenv("CONTROL_ENABLED", "false").lower() == "true"
 CONTROL_TIMEOUT_SECONDS = int(os.getenv("CONTROL_TIMEOUT_SECONDS", "1200"))
 CONTROL_POLL_SECONDS = float(os.getenv("CONTROL_POLL_SECONDS", "5"))
 HANA_START_TIMEOUT_SECONDS = int(os.getenv("HANA_START_TIMEOUT_SECONDS", "3600"))
@@ -130,3 +131,23 @@ HANA_SQL_WAIT_SECONDS = int(os.getenv("HANA_SQL_WAIT_SECONDS", "300"))
 # OS discovery and inventory over SSH (root or <sid>adm). Only fixed read-only commands are run.
 SSH_ALLOWED_PORTS = os.getenv("SSH_ALLOWED_PORTS", "22")
 SSH_TIMEOUT_SECONDS = float(os.getenv("SSH_TIMEOUT_SECONDS", "15"))
+
+
+
+def validate_runtime_config() -> None:
+    """Fail startup on unsafe production configuration; development remains easy to run locally."""
+    if APP_ENV not in ("production", "prod"):
+        return
+    problems = []
+    if len(SECRET_KEY) < 32 or "replace-with" in SECRET_KEY.lower():
+        problems.append("SECRET_KEY must be a unique random value of at least 32 characters")
+    if len(API_AUTH_TOKEN) < 32 or "replace-with" in API_AUTH_TOKEN.lower():
+        problems.append("API_AUTH_TOKEN must be a unique random value of at least 32 characters")
+    if not DATABASE_URL.startswith(("postgresql://", "postgresql+", "postgres://")):
+        problems.append("production requires PostgreSQL; SQLite is for development and tests only")
+    if not ALLOWED_TARGET_HOSTS:
+        problems.append("ALLOWED_TARGET_HOSTS must explicitly allow approved SAP targets")
+    if SIMULATOR_ENABLED:
+        problems.append("SIMULATOR_ENABLED must be false in production")
+    if problems:
+        raise RuntimeError("Unsafe production configuration: " + "; ".join(problems))
