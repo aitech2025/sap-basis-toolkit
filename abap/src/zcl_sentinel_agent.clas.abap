@@ -273,11 +273,8 @@ CLASS zcl_sentinel_agent IMPLEMENTATION.
 
     lv_from = mv_since_date.
     TRY.
-        IF has_function_execute( `/SDF/GET_DUMP_LOG` ) = abap_false.
-          add_error( EXPORTING iv_area = `dumps` iv_text = `Missing S_RFC execute authorisation for /SDF/GET_DUMP_LOG` CHANGING cs_payload = cs_payload ).
-          RAISE EXCEPTION TYPE cx_sy_dyn_call_error.
-        ENDIF.
-        CREATE DATA lr_log TYPE STANDARD TABLE OF ('/SDF/E2E_LOG_STRUC').
+        IF has_function_execute( `/SDF/GET_DUMP_LOG` ) = abap_true.
+          CREATE DATA lr_log TYPE STANDARD TABLE OF ('/SDF/E2E_LOG_STRUC').
         CREATE DATA lr_desc TYPE ('/SDF/E2E_LOG_STRUC_DESC').
         ASSIGN lr_log->* TO <lt_log>.
         ASSIGN lr_desc->* TO <ls_desc>.
@@ -303,6 +300,9 @@ CLASS zcl_sentinel_agent IMPLEMENTATION.
           cs_payload-dump_log = |\{"ET_E2E_LOG":{ /ui2/cl_json=>serialize( data = <lt_log> ) },| &&
                                 |"ES_E2E_LOG_STRUCT_DESC":{ /ui2/cl_json=>serialize( data = <ls_desc> ) }\}|.
           RETURN.
+          ENDIF.
+        ELSE.
+          add_error( EXPORTING iv_area = `dumps` iv_text = `Missing S_RFC execute authorisation for /SDF/GET_DUMP_LOG` CHANGING cs_payload = cs_payload ).
         ENDIF.
       CATCH cx_sy_create_data_error cx_sy_dyn_call_error.
         " ST-PI not installed: fall back to SNAP below
@@ -452,7 +452,7 @@ CLASS zcl_sentinel_agent IMPLEMENTATION.
   METHOD select_any_client.
     CLEAR et_rows.
     IF has_table_display( iv_table ) = abap_false.
-      RAISE EXCEPTION TYPE cx_sy_dynamic_osql_error.
+      RETURN.
     ENDIF.
     TRY.
         IF iv_where IS INITIAL.
@@ -478,6 +478,10 @@ CLASS zcl_sentinel_agent IMPLEMENTATION.
     DATA lv_from TYPE decfloat34.
     DATA lv_to TYPE decfloat34.
     DATA lv_level TYPE decfloat34.
+    IF has_table_display( `NRIV` ) = abap_false.
+      add_error( EXPORTING iv_area = `number_ranges` iv_text = `Missing S_TABU_NAM display authorisation for NRIV` CHANGING cs_payload = cs_payload ).
+      RETURN.
+    ENDIF.
     TRY.
         select_any_client( EXPORTING iv_table = `NRIV` iv_where = `EXTERNIND = ' '` IMPORTING et_rows = lt_nriv ).
       CATCH cx_sy_dynamic_osql_error cx_sy_open_sql_db INTO DATA(lx_sql).
@@ -543,11 +547,15 @@ CLASS zcl_sentinel_agent IMPLEMENTATION.
 
   METHOD collect_security.
     " SCC4 client settings and the state of the standard users (SU01), across clients.
+    IF has_table_display( `T000` ) = abap_true.
     TRY.
         select_any_client( EXPORTING iv_table = `T000` IMPORTING et_rows = cs_payload-clients ).
       CATCH cx_sy_dynamic_osql_error cx_sy_open_sql_db INTO DATA(lx_t000).
         add_error( EXPORTING iv_area = `clients` iv_text = lx_t000->get_text( ) CHANGING cs_payload = cs_payload ).
     ENDTRY.
+    ELSE.
+      add_error( EXPORTING iv_area = `clients` iv_text = `Missing S_TABU_NAM display authorisation for T000` CHANGING cs_payload = cs_payload ).
+    ENDIF.
     IF has_table_display( `USR02` ) = abap_false.
       add_error( EXPORTING iv_area = `users` iv_text = `Missing S_TABU_NAM display authorisation for USR02` CHANGING cs_payload = cs_payload ).
       RETURN.
