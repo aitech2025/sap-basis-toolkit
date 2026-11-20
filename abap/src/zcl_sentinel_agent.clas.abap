@@ -409,24 +409,32 @@ CLASS zcl_sentinel_agent IMPLEMENTATION.
         add_error( EXPORTING iv_area = `trfc` iv_text = lx_trfc->get_text( ) CHANGING cs_payload = cs_payload ).
     ENDTRY.
     ENDIF.
-    IF has_table_display( `TRFCQOUT` ) = abap_false OR has_table_display( `TRFCQIN` ) = abap_false.
-      add_error( EXPORTING iv_area = `qrfc` iv_text = `Missing S_TABU_NAM display authorisation for TRFCQOUT and/or TRFCQIN` CHANGING cs_payload = cs_payload ).
-      RETURN.
+    IF has_table_display( `TRFCQOUT` ) = abap_true.
+      TRY.
+          SELECT qname, dest, qstate, COUNT(*) AS entries
+            FROM trfcqout CLIENT SPECIFIED
+            GROUP BY qname, dest, qstate
+            INTO CORRESPONDING FIELDS OF TABLE @cs_payload-qrfc_out
+            UP TO @mv_max_rows ROWS.
+        CATCH cx_sy_open_sql_db INTO DATA(lx_qrfc_out).
+          add_error( EXPORTING iv_area = `qrfc_out` iv_text = lx_qrfc_out->get_text( ) CHANGING cs_payload = cs_payload ).
+      ENDTRY.
+    ELSE.
+      add_error( EXPORTING iv_area = `qrfc_out` iv_text = `Missing S_TABU_NAM display authorisation for TRFCQOUT` CHANGING cs_payload = cs_payload ).
     ENDIF.
-    TRY.
-        SELECT qname, dest, qstate, COUNT(*) AS entries
-          FROM trfcqout CLIENT SPECIFIED
-          GROUP BY qname, dest, qstate
-          INTO CORRESPONDING FIELDS OF TABLE @cs_payload-qrfc_out
-          UP TO @mv_max_rows ROWS.
-        SELECT qname, qstate, COUNT(*) AS entries
-          FROM trfcqin CLIENT SPECIFIED
-          GROUP BY qname, qstate
-          INTO CORRESPONDING FIELDS OF TABLE @cs_payload-qrfc_in
-          UP TO @mv_max_rows ROWS.
-      CATCH cx_sy_open_sql_db INTO DATA(lx_qrfc).
-        add_error( EXPORTING iv_area = `qrfc` iv_text = lx_qrfc->get_text( ) CHANGING cs_payload = cs_payload ).
-    ENDTRY.
+    IF has_table_display( `TRFCQIN` ) = abap_true.
+      TRY.
+          SELECT qname, qstate, COUNT(*) AS entries
+            FROM trfcqin CLIENT SPECIFIED
+            GROUP BY qname, qstate
+            INTO CORRESPONDING FIELDS OF TABLE @cs_payload-qrfc_in
+            UP TO @mv_max_rows ROWS.
+        CATCH cx_sy_open_sql_db INTO DATA(lx_qrfc_in).
+          add_error( EXPORTING iv_area = `qrfc_in` iv_text = lx_qrfc_in->get_text( ) CHANGING cs_payload = cs_payload ).
+      ENDTRY.
+    ELSE.
+      add_error( EXPORTING iv_area = `qrfc_in` iv_text = `Missing S_TABU_NAM display authorisation for TRFCQIN` CHANGING cs_payload = cs_payload ).
+    ENDIF.
   ENDMETHOD.
 
 
