@@ -244,7 +244,13 @@ CLASS zcl_sentinel_agent IMPLEMENTATION.
       SELECT SINGLE tzonesys FROM ttzcu INTO @lv_tz.
       rs_payload-timezone = lv_tz.
     ELSE.
-      add_error( EXPORTING iv_area = `timezone` iv_text = `Missing S_TABU_NAM display authorisation for TTZCU` CHANGING cs_payload = rs_payload ).
+      add_error(
+        EXPORTING
+          iv_area = `timezone`
+          iv_text = `Missing S_TABU_NAM display authorisation for TTZCU`
+        CHANGING
+          cs_payload = rs_payload
+      ).
     ENDIF.
 
     collect_dumps( CHANGING cs_payload = rs_payload ).
@@ -302,14 +308,26 @@ CLASS zcl_sentinel_agent IMPLEMENTATION.
           RETURN.
           ENDIF.
         ELSE.
-          add_error( EXPORTING iv_area = `dumps` iv_text = `Missing S_RFC execute authorisation for /SDF/GET_DUMP_LOG` CHANGING cs_payload = cs_payload ).
+          add_error(
+            EXPORTING
+              iv_area = `dumps`
+              iv_text = `Missing S_RFC execute authorisation for /SDF/GET_DUMP_LOG`
+            CHANGING
+              cs_payload = cs_payload
+          ).
         ENDIF.
       CATCH cx_sy_create_data_error cx_sy_dyn_call_error.
         " ST-PI not installed: fall back to SNAP below
     ENDTRY.
 
     IF has_table_display( `SNAP` ) = abap_false.
-      add_error( EXPORTING iv_area = `dumps` iv_text = `Missing S_TABU_NAM display authorisation for SNAP` CHANGING cs_payload = cs_payload ).
+      add_error(
+        EXPORTING
+          iv_area = `dumps`
+          iv_text = `Missing S_TABU_NAM display authorisation for SNAP`
+        CHANGING
+          cs_payload = cs_payload
+      ).
       RETURN.
     ENDIF.
     TRY.
@@ -329,7 +347,13 @@ CLASS zcl_sentinel_agent IMPLEMENTATION.
 
   METHOD collect_jobs.
     IF has_table_display( `TBTCO` ) = abap_false.
-      add_error( EXPORTING iv_area = `jobs` iv_text = `Missing S_TABU_NAM display authorisation for TBTCO` CHANGING cs_payload = cs_payload ).
+      add_error(
+        EXPORTING
+          iv_area = `jobs`
+          iv_text = `Missing S_TABU_NAM display authorisation for TBTCO`
+        CHANGING
+          cs_payload = cs_payload
+      ).
       RETURN.
     ENDIF.
     TRY.
@@ -347,7 +371,13 @@ CLASS zcl_sentinel_agent IMPLEMENTATION.
 
   METHOD collect_updates.
     IF has_table_display( `VBHDR` ) = abap_false.
-      add_error( EXPORTING iv_area = `updates` iv_text = `Missing S_TABU_NAM display authorisation for VBHDR` CHANGING cs_payload = cs_payload ).
+      add_error(
+        EXPORTING
+          iv_area = `updates`
+          iv_text = `Missing S_TABU_NAM display authorisation for VBHDR`
+        CHANGING
+          cs_payload = cs_payload
+      ).
       RETURN.
     ENDIF.
     TRY.
@@ -367,7 +397,13 @@ CLASS zcl_sentinel_agent IMPLEMENTATION.
     DATA ls_lock TYPE ty_lock.
 
     IF has_function_execute( `ENQUEUE_READ` ) = abap_false.
-      add_error( EXPORTING iv_area = `locks` iv_text = `Missing S_RFC execute authorisation for ENQUEUE_READ` CHANGING cs_payload = cs_payload ).
+      add_error(
+        EXPORTING
+          iv_area = `locks`
+          iv_text = `Missing S_RFC execute authorisation for ENQUEUE_READ`
+        CHANGING
+          cs_payload = cs_payload
+      ).
       RETURN.
     ENDIF.
     CALL FUNCTION 'ENQUEUE_READ'
@@ -397,7 +433,13 @@ CLASS zcl_sentinel_agent IMPLEMENTATION.
 
   METHOD collect_rfc.
     IF has_table_display( `ARFCSSTATE` ) = abap_false.
-      add_error( EXPORTING iv_area = `trfc` iv_text = `Missing S_TABU_NAM display authorisation for ARFCSSTATE` CHANGING cs_payload = cs_payload ).
+      add_error(
+        EXPORTING
+          iv_area = `trfc`
+          iv_text = `Missing S_TABU_NAM display authorisation for ARFCSSTATE`
+        CHANGING
+          cs_payload = cs_payload
+      ).
     ELSE.
     TRY.
         SELECT arfcdest, arfcstate, arfcfnam, arfcuser, arfcdatum, arfcuzeit
@@ -420,7 +462,13 @@ CLASS zcl_sentinel_agent IMPLEMENTATION.
           add_error( EXPORTING iv_area = `qrfc_out` iv_text = lx_qrfc_out->get_text( ) CHANGING cs_payload = cs_payload ).
       ENDTRY.
     ELSE.
-      add_error( EXPORTING iv_area = `qrfc_out` iv_text = `Missing S_TABU_NAM display authorisation for TRFCQOUT` CHANGING cs_payload = cs_payload ).
+      add_error(
+        EXPORTING
+          iv_area = `qrfc_out`
+          iv_text = `Missing S_TABU_NAM display authorisation for TRFCQOUT`
+        CHANGING
+          cs_payload = cs_payload
+      ).
     ENDIF.
     IF has_table_display( `TRFCQIN` ) = abap_true.
       TRY.
@@ -433,14 +481,26 @@ CLASS zcl_sentinel_agent IMPLEMENTATION.
           add_error( EXPORTING iv_area = `qrfc_in` iv_text = lx_qrfc_in->get_text( ) CHANGING cs_payload = cs_payload ).
       ENDTRY.
     ELSE.
-      add_error( EXPORTING iv_area = `qrfc_in` iv_text = `Missing S_TABU_NAM display authorisation for TRFCQIN` CHANGING cs_payload = cs_payload ).
+      add_error(
+        EXPORTING
+          iv_area = `qrfc_in`
+          iv_text = `Missing S_TABU_NAM display authorisation for TRFCQIN`
+        CHANGING
+          cs_payload = cs_payload
+      ).
     ENDIF.
   ENDMETHOD.
 
 
   METHOD collect_idocs.
     IF has_table_display( `EDIDC` ) = abap_false.
-      add_error( EXPORTING iv_area = `idocs` iv_text = `Missing S_TABU_NAM display authorisation for EDIDC` CHANGING cs_payload = cs_payload ).
+      add_error(
+        EXPORTING
+          iv_area = `idocs`
+          iv_text = `Missing S_TABU_NAM display authorisation for EDIDC`
+        CHANGING
+          cs_payload = cs_payload
+      ).
       RETURN.
     ENDIF.
     TRY.
@@ -487,7 +547,13 @@ CLASS zcl_sentinel_agent IMPLEMENTATION.
     DATA lv_to TYPE decfloat34.
     DATA lv_level TYPE decfloat34.
     IF has_table_display( `NRIV` ) = abap_false.
-      add_error( EXPORTING iv_area = `number_ranges` iv_text = `Missing S_TABU_NAM display authorisation for NRIV` CHANGING cs_payload = cs_payload ).
+      add_error(
+        EXPORTING
+          iv_area = `number_ranges`
+          iv_text = `Missing S_TABU_NAM display authorisation for NRIV`
+        CHANGING
+          cs_payload = cs_payload
+      ).
       RETURN.
     ENDIF.
     TRY.
@@ -512,7 +578,13 @@ CLASS zcl_sentinel_agent IMPLEMENTATION.
 
   METHOD collect_applog.
     IF has_table_display( `BALHDR` ) = abap_false.
-      add_error( EXPORTING iv_area = `applog` iv_text = `Missing S_TABU_NAM display authorisation for BALHDR` CHANGING cs_payload = cs_payload ).
+      add_error(
+        EXPORTING
+          iv_area = `applog`
+          iv_text = `Missing S_TABU_NAM display authorisation for BALHDR`
+        CHANGING
+          cs_payload = cs_payload
+      ).
       RETURN.
     ENDIF.
     " SLG1: application logs of the last 24 hours that contain abort (A) or error (E) messages, by object.
@@ -534,7 +606,13 @@ CLASS zcl_sentinel_agent IMPLEMENTATION.
 
   METHOD collect_batch_input.
     IF has_table_display( `APQI` ) = abap_false.
-      add_error( EXPORTING iv_area = `batch_input` iv_text = `Missing S_TABU_NAM display authorisation for APQI` CHANGING cs_payload = cs_payload ).
+      add_error(
+        EXPORTING
+          iv_area = `batch_input`
+          iv_text = `Missing S_TABU_NAM display authorisation for APQI`
+        CHANGING
+          cs_payload = cs_payload
+      ).
       RETURN.
     ENDIF.
     " SM35: sessions in error created in the last 7 days.
@@ -562,10 +640,22 @@ CLASS zcl_sentinel_agent IMPLEMENTATION.
         add_error( EXPORTING iv_area = `clients` iv_text = lx_t000->get_text( ) CHANGING cs_payload = cs_payload ).
     ENDTRY.
     ELSE.
-      add_error( EXPORTING iv_area = `clients` iv_text = `Missing S_TABU_NAM display authorisation for T000` CHANGING cs_payload = cs_payload ).
+      add_error(
+        EXPORTING
+          iv_area = `clients`
+          iv_text = `Missing S_TABU_NAM display authorisation for T000`
+        CHANGING
+          cs_payload = cs_payload
+      ).
     ENDIF.
     IF has_table_display( `USR02` ) = abap_false.
-      add_error( EXPORTING iv_area = `users` iv_text = `Missing S_TABU_NAM display authorisation for USR02` CHANGING cs_payload = cs_payload ).
+      add_error(
+        EXPORTING
+          iv_area = `users`
+          iv_text = `Missing S_TABU_NAM display authorisation for USR02`
+        CHANGING
+          cs_payload = cs_payload
+      ).
       RETURN.
     ENDIF.
     TRY.
@@ -593,11 +683,23 @@ CLASS zcl_sentinel_agent IMPLEMENTATION.
         add_error( EXPORTING iv_area = `spool` iv_text = lx_spool->get_text( ) CHANGING cs_payload = cs_payload ).
     ENDTRY.
     ELSE.
-      add_error( EXPORTING iv_area = `spool` iv_text = `Missing S_TABU_NAM display authorisation for TSP01` CHANGING cs_payload = cs_payload ).
+      add_error(
+        EXPORTING
+          iv_area = `spool`
+          iv_text = `Missing S_TABU_NAM display authorisation for TSP01`
+        CHANGING
+          cs_payload = cs_payload
+      ).
     ENDIF.
     lv_since = |{ mv_since_date }000000|.
     IF has_table_display( `TPALOG` ) = abap_false.
-      add_error( EXPORTING iv_area = `imports` iv_text = `Missing S_TABU_NAM display authorisation for TPALOG` CHANGING cs_payload = cs_payload ).
+      add_error(
+        EXPORTING
+          iv_area = `imports`
+          iv_text = `Missing S_TABU_NAM display authorisation for TPALOG`
+        CHANGING
+          cs_payload = cs_payload
+      ).
       RETURN.
     ENDIF.
     TRY.
