@@ -1,6 +1,7 @@
 """Collector configuration, execution and scheduling."""
 import json
 import logging
+import threading
 import time
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
@@ -409,6 +410,7 @@ def test_connection(system_id: int, data: dict) -> dict:
 
 
 def due_collectors(now: datetime | None = None) -> list[int]:
+    """Enabled collectors whose interval has elapsed, most overdue first (never-run collectors first of all)."""
     now = now or datetime.now(timezone.utc)
     with get_db() as connection:
         rows = connection.execute(
@@ -418,17 +420,94 @@ def due_collectors(now: datetime | None = None) -> list[int]:
     due = []
     for cid, last, interval in rows:
         last = datetime.fromisoformat(_iso(last)) if last else None
-        if last is None or (now - last).total_seconds() >= interval:
-            due.append(cid)
-    return due
+        overdue = float("inf") if last is None else (now - last).total_seconds() - interval
+        if overdue >= 0:
+            due.append((overdue, cid))
+    return [cid for _, cid in sorted(due, key=lambda d: (-d[0], d[1]))]
 
 
 def run_due() -> list[dict]:
+    """Run every due collector and wait for all of them (tests, CLI). The scheduler uses `Dispatcher` instead."""
     ids = due_collectors()
     if not ids:
         return []
     with ThreadPoolExecutor(max_workers=max(1, config.COLLECTOR_MAX_PARALLEL)) as pool:
         return list(pool.map(run, ids))
+
+
+class Dispatcher:
+    """Non-blocking collector scheduling for the worker process.
+
+    Each tick hands due collectors to a long-lived thread pool and returns at once, so a slow or unreachable SAP system
+    never delays the others. A collector that is still queued or running is not submitted again (no overlapping runs of
+    the same collector), and the most overdue collectors are queued first."""
+
+    def __init__(self, workers: int | None = None):
+        self.workers = max(1, workers or config.COLLECTOR_MAX_PARALLEL)
+        self.pool = ThreadPoolExecutor(max_workers=self.workers, thread_name_prefix="collector")
+        self._lock = threading.Lock()
+        self._inflight: set[int] = set()
+        self.started = self.completed = self.failed = 0
+        self._busy_ticks = 0
+
+    def _done(self, cid: int, future) -> None:
+        with self._lock:
+            self._inflight.discard(cid)
+            self.completed += 1
+            if future.exception() is not None:
+                self.failed += 1
+                logger.error("Collector %s crashed: %s", cid, future.exception())
+
+    def tick(self) -> int:
+        """Submit due collectors that are not already queued or running; returns how many were submitted."""
+        submitted = 0
+        for cid in due_collectors():
+            with self._lock:
+                if cid in self._inflight:
+                    continue
+                self._inflight.add(cid)
+            future = self.pool.submit(run, cid)
+            future.add_done_callback(lambda f, cid=cid: self._done(cid, f))
+            submitted += 1
+        with self._lock:
+            self.started += submitted
+            backlog = len(self._inflight)
+        # a burst after start-up is normal; warn only when the backlog persists
+        self._busy_ticks = self._busy_ticks + 1 if backlog > self.workers * 4 else 0
+        if self._busy_ticks == 8:
+            logger.warning("Collector backlog: %s collectors queued or running on %s workers; raise COLLECTOR_MAX_PARALLEL "
+                           "or lengthen collector intervals", backlog, self.workers)
+        return submitted
+
+    def inflight(self) -> int:
+        with self._lock:
+            return len(self._inflight)
+
+    def shutdown(self, wait: bool = True) -> None:
+        self.pool.shutdown(wait=wait, cancel_futures=not wait)
+
+
+def scheduling_health(now: datetime | None = None) -> dict:
+    """How far collection is behind schedule, computed from the database (works from any API process)."""
+    now = now or datetime.now(timezone.utc)
+    with get_db() as connection:
+        rows = connection.execute(
+            select(collectors.c.id, collectors.c.last_run_at, collectors.c.interval_seconds, collectors.c.last_status)
+            .join(sap_systems, sap_systems.c.id == collectors.c.system_id)
+            .where(collectors.c.enabled.is_(True), sap_systems.c.enabled.is_(True))).all()
+    lags, late, never, failing = [], 0, 0, 0
+    for _, last, interval, status in rows:
+        if last is None:
+            never += 1
+            continue
+        lag = (now - datetime.fromisoformat(_iso(last))).total_seconds() - interval
+        lags.append(max(0.0, lag))
+        if lag > max(2 * config.COLLECTOR_TICK_SECONDS, interval):  # missed more than a whole interval
+            late += 1
+        failing += status == "error"
+    return {"collectors": len(rows), "never_run": never, "late": late, "failing": failing,
+            "max_lag_s": round(max(lags), 1) if lags else None, "workers": config.COLLECTOR_MAX_PARALLEL,
+            "status": "behind" if late else "ok"}
 
 
 def status_by_system() -> dict[int, list[dict]]:

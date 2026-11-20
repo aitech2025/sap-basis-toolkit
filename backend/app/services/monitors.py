@@ -9,10 +9,10 @@ import re
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, update
 
 from .. import config
-from ..db import get_db, metric_points, monitor_snapshots
+from ..db import get_db, metric_points, monitor_latest, monitor_snapshots
 from .tabular import InputFormatError, parse_number, parse_sap_datetime, pick, read_rows, require_columns
 
 MONITORS = ("availability", "workprocesses", "dumps", "syslog", "updates", "trfc", "qrfc", "idocs", "hana", "host")
@@ -49,9 +49,16 @@ def store(system_id: int, monitor: str, source: str, data: dict, health: str,
           captured_at: datetime | None = None) -> None:
     captured_at = captured_at or _now()
     with get_db() as connection:
-        connection.execute(monitor_snapshots.insert().values(
+        snapshot_id = connection.execute(monitor_snapshots.insert().values(
             system_id=system_id, monitor=monitor, source=source, captured_at=captured_at, health=health,
-            data=json.dumps(data, default=str)))
+            data=json.dumps(data, default=str))).inserted_primary_key[0]
+        pointer = (monitor_latest.c.system_id == system_id) & (monitor_latest.c.monitor == monitor)
+        # an upload with an older capture time never replaces a newer snapshot
+        newer = select(monitor_snapshots.c.id).where(monitor_snapshots.c.id == monitor_latest.c.snapshot_id,
+                                                     monitor_snapshots.c.captured_at > captured_at).exists()
+        moved = connection.execute(update(monitor_latest).where(pointer, ~newer).values(snapshot_id=snapshot_id)).rowcount
+        if not moved and connection.execute(select(monitor_latest.c.snapshot_id).where(pointer)).first() is None:
+            connection.execute(monitor_latest.insert().values(system_id=system_id, monitor=monitor, snapshot_id=snapshot_id))
 
 
 def record_metrics(system_id: int, metrics: dict[str, float], ts: datetime | None = None) -> None:
@@ -65,11 +72,10 @@ def record_metrics(system_id: int, metrics: dict[str, float], ts: datetime | Non
 def latest(system_id: int, monitor: str | None = None) -> dict:
     """Latest snapshot per monitor: {monitor: {source, captured_at, health, stale, data}}."""
     with get_db() as connection:
-        newest = select(monitor_snapshots.c.monitor, func.max(monitor_snapshots.c.id).label("id")).where(
-            monitor_snapshots.c.system_id == system_id).group_by(monitor_snapshots.c.monitor).subquery()
-        query = select(monitor_snapshots).join(newest, newest.c.id == monitor_snapshots.c.id)
+        query = select(monitor_snapshots).join(monitor_latest, monitor_latest.c.snapshot_id == monitor_snapshots.c.id).where(
+            monitor_latest.c.system_id == system_id)
         if monitor:
-            query = query.where(monitor_snapshots.c.monitor == monitor)
+            query = query.where(monitor_latest.c.monitor == monitor)
         rows = connection.execute(query).mappings().all()
     stale_before = _now() - timedelta(hours=config.OPS_DATA_STALE_HOURS)
     result = {}
@@ -80,6 +86,9 @@ def latest(system_id: int, monitor: str | None = None) -> dict:
     return result
 
 
+SERIES_MAX_POINTS = 360
+
+
 def series(system_id: int, metrics: list[str], hours: int = 24) -> dict[str, list[dict]]:
     since = _now() - timedelta(hours=hours)
     with get_db() as connection:
@@ -87,8 +96,20 @@ def series(system_id: int, metrics: list[str], hours: int = 24) -> dict[str, lis
             metric_points.c.system_id == system_id, metric_points.c.metric.in_(metrics), metric_points.c.ts >= since,
         ).order_by(metric_points.c.ts)).all()
     out: dict[str, list[dict]] = {m: [] for m in metrics}
+    if hours <= 24:
+        for metric, value, ts in rows:
+            out[metric].append({"ts": _iso(ts), "value": value})
+        return out
+    # Longer windows: average into at most ~SERIES_MAX_POINTS buckets per metric (a week at 5-minute collection is
+    # 2016 points per metric; a chart cannot show more than a few hundred anyway).
+    step = max(300, int(hours * 3600 / SERIES_MAX_POINTS))
+    buckets: dict[str, dict[int, list[float]]] = {m: {} for m in metrics}
     for metric, value, ts in rows:
-        out[metric].append({"ts": _iso(ts), "value": value})
+        epoch = int(datetime.fromisoformat(_iso(ts)).timestamp())
+        buckets[metric].setdefault(epoch - epoch % step, []).append(float(value))
+    for metric, b in buckets.items():
+        out[metric] = [{"ts": datetime.fromtimestamp(k, timezone.utc).isoformat(), "value": round(sum(v) / len(v), 4)}
+                       for k, v in sorted(b.items())]
     return out
 
 
@@ -97,10 +118,46 @@ def prune() -> None:
         connection.execute(delete(metric_points).where(
             metric_points.c.ts < _now() - timedelta(days=config.METRIC_RETENTION_DAYS)))
         # keep the newest snapshot per system/monitor even when old
-        keep = select(func.max(monitor_snapshots.c.id)).group_by(monitor_snapshots.c.system_id, monitor_snapshots.c.monitor)
+        keep = select(monitor_latest.c.snapshot_id)
         connection.execute(delete(monitor_snapshots).where(
             monitor_snapshots.c.captured_at < _now() - timedelta(days=config.SNAPSHOT_RETENTION_DAYS),
             monitor_snapshots.c.id.notin_(keep)))
+    thin_snapshots()
+
+
+def thin_snapshots(now: datetime | None = None) -> int:
+    """Downsample snapshot history older than SNAPSHOT_FULL_RESOLUTION_HOURS.
+
+    Kept: the first snapshot of every hour per system and monitor, every snapshot whose health differs from the one
+    before it (state changes stay exact for root-cause analysis), and the current snapshot. Metric points are not
+    affected. Idempotent; runs with housekeeping."""
+    now = now or _now()
+    cutoff = now - timedelta(hours=config.SNAPSHOT_FULL_RESOLUTION_HOURS)
+    doomed: list[int] = []
+    deleted = 0
+    with get_db() as connection:
+        current = {r[0] for r in connection.execute(select(monitor_latest.c.snapshot_id))}
+        rows = connection.execution_options(yield_per=5000).execute(
+            select(monitor_snapshots.c.id, monitor_snapshots.c.system_id, monitor_snapshots.c.monitor,
+                   monitor_snapshots.c.captured_at, monitor_snapshots.c.health)
+            .where(monitor_snapshots.c.captured_at < cutoff)
+            .order_by(monitor_snapshots.c.system_id, monitor_snapshots.c.monitor, monitor_snapshots.c.captured_at,
+                      monitor_snapshots.c.id))
+        group, hour, health = None, None, None
+        for sid, system_id, monitor, captured, h in rows:
+            captured = datetime.fromisoformat(_iso(captured))
+            bucket = captured.replace(minute=0, second=0, microsecond=0)
+            if (system_id, monitor) != group:
+                group, hour, health = (system_id, monitor), bucket, h
+                continue
+            if bucket != hour or h != health or sid in current:
+                hour, health = bucket, h
+                continue
+            doomed.append(sid)
+    for i in range(0, len(doomed), 5000):
+        with get_db() as connection:
+            deleted += connection.execute(delete(monitor_snapshots).where(monitor_snapshots.c.id.in_(doomed[i:i + 5000]))).rowcount
+    return deleted
 
 
 def _health(levels: list[str]) -> str:

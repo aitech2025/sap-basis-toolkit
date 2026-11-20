@@ -288,6 +288,16 @@ monitor_snapshots = Table(
 )
 Index("ix_monitor_snapshots", monitor_snapshots.c.system_id, monitor_snapshots.c.monitor, monitor_snapshots.c.captured_at)
 
+# Pointer to the newest snapshot of each (system, monitor): dashboards read the current state of 50+ systems without
+# scanning snapshot history.
+monitor_latest = Table(
+    "monitor_latest", metadata,
+    SYSTEM_FK(),
+    Column("monitor", String(40), nullable=False),
+    Column("snapshot_id", Integer, nullable=False),
+)
+Index("uq_monitor_latest", monitor_latest.c.system_id, monitor_latest.c.monitor, unique=True)
+
 metric_samples = Table(
     "metric_samples", metadata,
     Column("id", Integer, primary_key=True, autoincrement=True),
@@ -489,11 +499,17 @@ def get_engine() -> Engine:
             db_path = DATABASE_URL.removeprefix("sqlite:///")
             if db_path != ":memory:":
                 Path(db_path).parent.mkdir(parents=True, exist_ok=True)
+        from . import config
+
+        pool = {} if DATABASE_URL.startswith("sqlite") else {
+            "pool_size": config.DB_POOL_SIZE, "max_overflow": config.DB_MAX_OVERFLOW,
+            "pool_timeout": config.DB_POOL_TIMEOUT_SECONDS, "pool_recycle": 1800}
         _engine = create_engine(
             DATABASE_URL,
             future=True,
             pool_pre_ping=True,
             connect_args={"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {},
+            **pool,
         )
         if DATABASE_URL.startswith("sqlite"):
             from sqlalchemy import event
@@ -569,8 +585,16 @@ def init_db() -> None:
         # Execute table DDL directly: Table.create also traverses FK dependencies
         # and can attempt to recreate indexes on already-existing parent tables.
         create_missing_tables(connection, missing_tables)
+        if any(t.name == "monitor_latest" for t in missing_tables):
+            backfill_monitor_latest(connection)
         add_missing_columns(connection)
         ensure_target_uniqueness(connection)
+
+
+def backfill_monitor_latest(connection: Connection) -> None:
+    connection.execute(text(
+        "INSERT INTO monitor_latest (system_id, monitor, snapshot_id) "
+        "SELECT system_id, monitor, MAX(id) FROM monitor_snapshots GROUP BY system_id, monitor"))
 
 
 def add_missing_columns(connection: Connection) -> None:

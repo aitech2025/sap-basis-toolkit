@@ -87,12 +87,22 @@ LOGIN_MAX_FAILURES = int(os.getenv("LOGIN_MAX_FAILURES", "5"))
 AUDIT_RETENTION_DAYS = int(os.getenv("AUDIT_RETENTION_DAYS", "365"))
 
 # --- Live collectors ----------------------------------------------------------------------
-COLLECTOR_TICK_SECONDS = int(os.getenv("COLLECTOR_TICK_SECONDS", "30"))
+INTELLIGENCE_CACHE_SECONDS = int(os.getenv("INTELLIGENCE_CACHE_SECONDS", "60"))
+COLLECTOR_TICK_SECONDS = int(os.getenv("COLLECTOR_TICK_SECONDS", "15"))
 COLLECTOR_TIMEOUT_SECONDS = float(os.getenv("COLLECTOR_TIMEOUT_SECONDS", "15"))
-COLLECTOR_MAX_PARALLEL = int(os.getenv("COLLECTOR_MAX_PARALLEL", "4"))
+COLLECTOR_MAX_PARALLEL = int(os.getenv("COLLECTOR_MAX_PARALLEL", "16"))
+# Per-instance sapcontrol calls inside one collector run (systems with many application servers).
+SAPCONTROL_INSTANCE_PARALLEL = int(os.getenv("SAPCONTROL_INSTANCE_PARALLEL", "4"))
+CERT_CHECK_PARALLEL = int(os.getenv("CERT_CHECK_PARALLEL", "8"))
+# SQLAlchemy pool per process. The worker needs at least COLLECTOR_MAX_PARALLEL connections.
+DB_POOL_SIZE = int(os.getenv("DB_POOL_SIZE", "10"))
+DB_MAX_OVERFLOW = int(os.getenv("DB_MAX_OVERFLOW", "20"))
+DB_POOL_TIMEOUT_SECONDS = int(os.getenv("DB_POOL_TIMEOUT_SECONDS", "30"))
 WP_LONG_RUNNING_SECONDS = int(os.getenv("WP_LONG_RUNNING_SECONDS", "1800"))
 METRIC_RETENTION_DAYS = int(os.getenv("METRIC_RETENTION_DAYS", "30"))
 SNAPSHOT_RETENTION_DAYS = int(os.getenv("SNAPSHOT_RETENTION_DAYS", "7"))
+# Snapshot history older than this is thinned to one per hour (plus every health change).
+SNAPSHOT_FULL_RESOLUTION_HOURS = int(os.getenv("SNAPSHOT_FULL_RESOLUTION_HOURS", "24"))
 HANA_GROWTH_SNAPSHOT_HOURS = int(os.getenv("HANA_GROWTH_SNAPSHOT_HOURS", "24"))
 # Optional JSON file overriding/adding collector SQL queries (see docs/monitoring.md).
 QUERY_OVERRIDES_FILE = os.getenv("QUERY_OVERRIDES_FILE", "").strip()

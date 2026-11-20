@@ -20,7 +20,7 @@ Set these in `.env` (see `.env.example`):
 - `SECRET_KEY`: signs sessions and encrypts collector passwords. Generate it with `openssl rand -hex 32`. If you rotate it, collector passwords must be entered again.
 - `ALLOWED_TARGET_HOSTS` / `ALLOWED_TARGET_CIDRS`: the SAP and HANA hosts the collectors may contact. Instance hostnames returned by `GetSystemInstanceList` must also be allowed.
 - `HANA_CLIENT=true`: builds the image with SAP's `hdbcli` driver. It is distributed under the SAP Developer License; check that the licence suits your use.
-- `COLLECTOR_TICK_SECONDS`, `COLLECTOR_MAX_PARALLEL`, `COLLECTOR_TIMEOUT_SECONDS`: control scheduling.
+- `COLLECTOR_TICK_SECONDS`, `COLLECTOR_MAX_PARALLEL`, `COLLECTOR_TIMEOUT_SECONDS`: control scheduling. See [scaling.md](scaling.md) for sizing a fleet of systems.
 
 Collectors run in the `scheduler` container. API replicas never poll.
 

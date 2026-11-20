@@ -7,7 +7,7 @@ import json
 import math
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 
 from ..db import capacity_snapshots, get_db, incidents, maintenance_windows, metric_points, sap_systems
 
@@ -167,11 +167,52 @@ def availability(hours: int = 24, system_id: int | None = None,
             "method": "up_samples / (up_samples + down_samples); unobserved time is excluded, not assumed available."}
 
 
-def anomalies(hours: int = 24, system_id: int | None = None,
-              landscape: str | None = None) -> dict:
-    now = datetime.now(timezone.utc)
-    recent_since = now - timedelta(hours=min(hours, 24))
-    baseline_since = now - timedelta(days=7)
+ANOMALY_SQL = """
+WITH base AS (
+  SELECT p.system_id, p.metric, date_trunc('hour', p.ts) AS h, avg(p.value) AS value
+  FROM metric_points p JOIN sap_systems s ON s.id = p.system_id
+  WHERE p.ts >= :baseline_since AND p.ts < :recent_since {filters}
+  GROUP BY 1, 2, 3),
+stats AS (
+  SELECT system_id, metric, count(*) AS n, percentile_cont(0.5) WITHIN GROUP (ORDER BY value) AS med,
+         stddev_pop(value) AS sd
+  FROM base GROUP BY system_id, metric HAVING count(*) >= :min_baseline),
+mad AS (
+  SELECT b.system_id, b.metric, percentile_cont(0.5) WITHIN GROUP (ORDER BY abs(b.value - st.med)) AS mad
+  FROM base b JOIN stats st ON st.system_id = b.system_id AND st.metric = b.metric GROUP BY b.system_id, b.metric),
+recent AS (
+  SELECT DISTINCT ON (p.system_id, p.metric) p.system_id, p.metric, p.value AS latest, p.ts,
+         count(*) OVER (PARTITION BY p.system_id, p.metric) AS recent_n
+  FROM metric_points p JOIN sap_systems s ON s.id = p.system_id
+  WHERE p.ts >= :recent_since {filters}
+  ORDER BY p.system_id, p.metric, p.ts DESC)
+SELECT st.system_id, st.metric, st.n, st.med, st.sd, m.mad, r.latest, r.ts, r.recent_n, s.sid, s.name, s.landscape
+FROM stats st JOIN mad m ON m.system_id = st.system_id AND m.metric = st.metric
+JOIN recent r ON r.system_id = st.system_id AND r.metric = st.metric
+JOIN sap_systems s ON s.id = st.system_id
+"""
+MIN_BASELINE_HOURS = 12
+
+
+def _anomaly_series(connection, baseline_since, recent_since, system_id, landscape) -> list[dict]:
+    """Per (system, metric): baseline median/MAD over hourly means, and the latest recent value.
+
+    PostgreSQL computes everything in one statement (returns one row per series, whatever the fleet size). Other
+    databases (SQLite in development) stream the raw points and compute the same statistics in Python."""
+    if connection.dialect.name == "postgresql":
+        filters, params = "", {"baseline_since": baseline_since, "recent_since": recent_since, "min_baseline": MIN_BASELINE_HOURS}
+        if system_id is not None:
+            filters += " AND p.system_id = :system_id"
+            params["system_id"] = system_id
+        if landscape:
+            filters += " AND s.landscape = :landscape"
+            params["landscape"] = landscape
+        connection.execute(text("SET LOCAL jit = off"))
+        rows = connection.execute(text(ANOMALY_SQL.format(filters=filters)), params).mappings().all()
+        return [{"system_id": r["system_id"], "sid": r["sid"], "name": r["name"], "landscape": r["landscape"],
+                 "metric": r["metric"], "n": int(r["n"]), "center": float(r["med"]), "mad": float(r["mad"] or 0),
+                 "std": float(r["sd"] or 0), "latest": float(r["latest"]), "latest_at": r["ts"], "recent_n": int(r["recent_n"])}
+                for r in rows]
     query = select(metric_points.c.system_id, sap_systems.c.sid, sap_systems.c.name,
         sap_systems.c.landscape, metric_points.c.metric, metric_points.c.value, metric_points.c.ts
     ).join(sap_systems, sap_systems.c.id == metric_points.c.system_id).where(
@@ -181,46 +222,63 @@ def anomalies(hours: int = 24, system_id: int | None = None,
         query = query.where(metric_points.c.system_id == system_id)
     if landscape:
         query = query.where(sap_systems.c.landscape == landscape)
-    with get_db() as connection:
-        rows = connection.execute(query.limit(MAX_ROWS + 1)).all()
-    grouped = {}
-    for row in rows[:MAX_ROWS]:
-        key = (row.system_id, row.metric)
-        grouped.setdefault(key, {"system_id": row.system_id, "sid": row.sid, "name": row.name,
-            "landscape": row.landscape, "metric": row.metric, "baseline": [], "recent": []})
-        target = "recent" if _aware(row.ts) >= recent_since else "baseline"
-        grouped[key][target].append(float(row.value))
-        grouped[key]["latest_at"] = row.ts
-    results = []
+    grouped: dict = {}
+    for row in connection.execution_options(yield_per=10000).execute(query):
+        item = grouped.setdefault((row.system_id, row.metric), {"system_id": row.system_id, "sid": row.sid, "name": row.name,
+            "landscape": row.landscape, "metric": row.metric, "hours": {}, "recent": []})
+        ts = _aware(row.ts)
+        if ts >= recent_since:
+            item["recent"].append(float(row.value))
+            item["latest_at"] = row.ts
+        else:
+            item["hours"].setdefault(ts.replace(minute=0, second=0, microsecond=0), []).append(float(row.value))
+    out = []
     for item in grouped.values():
-        baseline, recent = item["baseline"], item["recent"]
-        if len(baseline) < 12 or not recent:
+        baseline = [sum(v) / len(v) for v in item["hours"].values()]
+        if len(baseline) < MIN_BASELINE_HOURS or not item["recent"]:
             continue
         center = _median(baseline)
-        mad = _median([abs(x - center) for x in baseline])
-        latest = recent[-1]
-        scale = 1.4826 * mad
+        out.append({**{k: item[k] for k in ("system_id", "sid", "name", "landscape", "metric", "latest_at")},
+                    "n": len(baseline), "center": center, "mad": _median([abs(x - center) for x in baseline]),
+                    "std": math.sqrt(sum((x - center) ** 2 for x in baseline) / len(baseline)),
+                    "latest": item["recent"][-1], "recent_n": len(item["recent"])})
+    return out
+
+
+def anomalies(hours: int = 24, system_id: int | None = None,
+              landscape: str | None = None) -> dict:
+    """Robust anomaly score of the latest value against the preceding 7 days.
+
+    The baseline is the series of hourly means (at least 12 hours), so the cost and the result do not depend on how
+    often a collector runs, and the whole fleet is always analysed (no row cap)."""
+    now = datetime.now(timezone.utc)
+    recent_since = now - timedelta(hours=min(hours, 24))
+    baseline_since = now - timedelta(days=7)
+    with get_db() as connection:
+        series = _anomaly_series(connection, baseline_since, recent_since, system_id, landscape)
+    results = []
+    for item in series:
+        center, latest = item["center"], item["latest"]
+        scale = 1.4826 * item["mad"]
         if scale > 0:
             score = (latest - center) / scale
         else:
-            variance = sum((x - center) ** 2 for x in baseline) / len(baseline)
-            std = math.sqrt(variance)
-            score = (latest - center) / std if std > 0 else 0.0
+            score = (latest - center) / item["std"] if item["std"] > 0 else 0.0
         if abs(score) >= 3.5:
-            metric_name = item["metric"]
             results.append({
                 "system_id": item["system_id"], "sid": item["sid"], "name": item["name"],
-                "landscape": item["landscape"], "metric": metric_name,
+                "landscape": item["landscape"], "metric": item["metric"],
                 "baseline_median": round(center, 4), "latest_value": round(latest, 4),
                 "robust_z_score": round(score, 2), "direction": "high" if score > 0 else "low",
-                "baseline_samples": len(baseline), "recent_samples": len(recent),
+                "baseline_samples": item["n"], "recent_samples": item["recent_n"],
                 "observed_at": _iso(item["latest_at"]),
                 "severity": "critical" if abs(score) >= 6 else "warning",
-                "method": "Median/MAD robust score; baseline is preceding 7 days excluding the recent window. Minimum 12 baseline samples.",
+                "method": "Median/MAD robust score against hourly means of the preceding 7 days (recent window excluded). "
+                          "Minimum 12 hours of baseline.",
             })
     results.sort(key=lambda x: abs(x["robust_z_score"]), reverse=True)
     return {"baseline_days": 7, "recent_hours": min(hours, 24), "anomalies": results[:500],
-            "truncated": len(rows) > MAX_ROWS}
+            "series_analysed": len(series), "truncated": False}
 
 
 def correlations(hours: int = 24, system_id: int | None = None,

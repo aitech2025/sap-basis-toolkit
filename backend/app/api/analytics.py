@@ -2,6 +2,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from ..auth import authorize
+from ..services.cache import ttl_cached
 from ..services import analytics
 
 router = APIRouter(prefix="/api/v1/analytics", dependencies=[Depends(authorize)])
@@ -15,7 +16,7 @@ def metric_catalogue():
 @router.get("/summary")
 def analytics_summary(hours: int = Query(24, ge=1, le=24 * 30),
                       landscape: str | None = Query(None, min_length=1, max_length=80)):
-    return analytics.summary(hours, landscape)
+    return ttl_cached(analytics.summary)(hours, landscape)
 
 
 @router.get("/series")
