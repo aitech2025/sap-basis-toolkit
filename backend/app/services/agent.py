@@ -10,7 +10,7 @@ import json
 import secrets
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import select, update
+from sqlalchemy import or_, select, update
 
 from .. import config
 from ..db import agent_tokens, get_db
@@ -148,8 +148,16 @@ def ingest(token_row: dict, body: bytes, client_ip: str | None) -> dict:
     if len(body) > config.AGENT_MAX_BYTES:
         raise AgentError(f"Payload too large ({len(body)} bytes, limit {config.AGENT_MAX_BYTES})", 413)
     now = _now()
-    last = _aware(token_row["last_seen_at"])
-    if last and (now - last).total_seconds() < config.AGENT_MIN_INTERVAL_SECONDS:
+    # Claim the ingest interval atomically. A read-then-write check permits concurrent requests
+    # to pass the rate limit together when the same token is used by overlapping job runs.
+    eligible_after = now - timedelta(seconds=config.AGENT_MIN_INTERVAL_SECONDS)
+    with get_db() as connection:
+        claimed = connection.execute(update(agent_tokens).where(
+            agent_tokens.c.id == token_row["id"],
+            agent_tokens.c.revoked_at.is_(None),
+            or_(agent_tokens.c.last_seen_at.is_(None), agent_tokens.c.last_seen_at <= eligible_after),
+        ).values(last_seen_at=now)).rowcount
+    if not claimed:
         raise AgentError(f"Pushed too often: wait {config.AGENT_MIN_INTERVAL_SECONDS} seconds between pushes", 429)
     try:
         payload = json.loads(body.decode("utf-8"))
@@ -181,8 +189,9 @@ def ingest(token_row: dict, body: bytes, client_ip: str | None) -> dict:
     monitors.record_metrics(system["id"], metrics, now)
     evaluation = incidents.evaluate(system, metrics)
     with get_db() as connection:
-        connection.execute(update(agent_tokens).where(agent_tokens.c.id == token_row["id"]).values(
-            last_seen_at=now, last_ip=(client_ip or "")[:64] or None,
+        connection.execute(update(agent_tokens).where(agent_tokens.c.id == token_row["id"],
+                                                             agent_tokens.c.revoked_at.is_(None)).values(
+            last_ip=(client_ip or "")[:64] or None,
             last_agent_version=str(p.get("agent_version") or "")[:20] or None, last_payload_bytes=len(body)))
     errors = [str(e)[:300] for e in (p.get("errors") or [])][:20]
     return {"accepted": True, "system": system["sid"], "received_at": now.isoformat(),
