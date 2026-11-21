@@ -10,6 +10,7 @@ def main() -> None:
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
     from . import config
+    config.validate_runtime_config()
     # the worker runs COLLECTOR_MAX_PARALLEL collectors and CERT_CHECK_PARALLEL TLS checks at once, each needing a connection
     config.DB_POOL_SIZE = max(config.DB_POOL_SIZE, config.COLLECTOR_MAX_PARALLEL + config.CERT_CHECK_PARALLEL + 4)
     init_db()

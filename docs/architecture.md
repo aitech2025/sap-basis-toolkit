@@ -102,7 +102,7 @@ GRANT SELECT ON "SAPHANADB"."TPALOG" TO SENTINEL_MON;
 
 Validate the privileges on your HANA revision. If a query fails, it is listed in the collector diagnostics and the other monitors continue.
 
-Reading ABAP tables directly bypasses ABAP authorisations. Grant exactly these SELECT privileges, to this user only. Port `3<NN>15` is the first tenant's SQL port.
+Reading ABAP tables directly does not automatically enforce ABAP table authorisations. The push agent now explicitly checks S_TABU_NAM display access before each direct table read and S_RFC execute access before RFC-enabled function modules. Grant exactly these SELECT privileges, to this user only, and validate the checks on the target SAP_BASIS release. Port `3<NN>15` is the first tenant's SQL port.
 
 ### Query overrides
 

@@ -23,6 +23,29 @@ def test_health_is_public(monkeypatch, tmp_path):
     assert response.status_code == 200 and response.json()["status"] == "ok"
 
 
+def test_readiness_checks_database(monkeypatch, tmp_path):
+    setup_test_db(monkeypatch, tmp_path)
+    with TestClient(app) as client:
+        response = client.get("/ready")
+    assert response.status_code == 200
+    assert response.json()["database"] == "ok"
+
+
+def test_readiness_returns_503_when_database_is_unavailable(monkeypatch, tmp_path):
+    setup_test_db(monkeypatch, tmp_path)
+    from contextlib import contextmanager
+
+    @contextmanager
+    def unavailable_db():
+        raise RuntimeError("database unavailable")
+        yield
+
+    monkeypatch.setattr("app.main.get_db", unavailable_db)
+    with TestClient(app) as client:
+        response = client.get("/ready")
+    assert response.status_code == 503
+
+
 def test_api_requires_key(monkeypatch, tmp_path):
     setup_test_db(monkeypatch, tmp_path)
     with TestClient(app) as client:
