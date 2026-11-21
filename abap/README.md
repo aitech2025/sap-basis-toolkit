@@ -55,9 +55,10 @@ table access in a role alone is not enough unless the role grants the exact acti
 
 - `S_TABU_NAM`, activity `03` (display), for each table actually collected: `TTZCU`, `SNAP` (fallback only), `TBTCO`, `VBHDR`,
   `ARFCSSTATE`, `TRFCQOUT`, `TRFCQIN`, `EDIDC`, `NRIV`, `BALHDR`, `APQI`, `T000`, `USR02`, `TSP01`, and `TPALOG`.
-- `S_RFC`, type `F`, activity `16` (execute), for `ENQUEUE_READ` and `/SDF/GET_DUMP_LOG` (function group `/SDF/SMD_E2E`).
+- `S_RFC` authorization values must be verified against the exact function module/function group and target release for
+  `ENQUEUE_READ` and `/SDF/GET_DUMP_LOG` (function group `/SDF/SMD_E2E`).
 - `S_ENQUE` display where required by the target release for lock-list access.
-- `S_ICF`: use of the SM59 destination, if destinations are protected
+- `S_ICF`: use of the SM59 destination, if destinations are protected.
 
 ## Security notes
 
@@ -69,13 +70,23 @@ table access in a role alone is not enough unless the role grants the exact acti
 - Configure SM59 with HTTPS certificate validation. Never disable TLS verification to make the push work.
 - Validate every table and function authorization in SU53/ST01 on the target SAP_BASIS release before scheduling the job.
 
-## Compatibility
+## Compatibility and lint targets
 
-- Written in ABAP 7.40 SP08 syntax and checked with abaplint for 7.40 SP08 and 7.50 (`abaplint.json`).
-- Standard tables are read with `INTO CORRESPONDING FIELDS`, so a field missing on an older release stays empty instead of
-  breaking activation.
-- `/SDF/GET_DUMP_LOG` is called dynamically: the class activates without ST-PI and falls back to SNAP.
-- T000 and NRIV are read with dynamic SQL across clients, falling back to a plain read where a table is cross-client. The
-  BALHDR condition is dynamic too, so a release without its message counters reports an error instead of failing activation.
-- abaplint cannot see SAP's dictionary, so table-specific checks (for example, which tables are client-dependent) happen at
-  activation in your system.
+The source intentionally stays within the ABAP 7.50 language subset so the same transport can be installed on NetWeaver 7.50
+and newer on-premise ABAP platforms. CI runs two independent abaplint syntax checks:
+
+- `abaplint.json`: SAP NetWeaver AS ABAP 7.50 baseline.
+- `abaplint-s4hana.json`: SAP S/4HANA on-premise ABAP Platform 7.58 syntax profile.
+
+The S/4HANA profile checks a newer ABAP language parser; it does not prove S/4HANA DDIC/API compatibility or runtime behavior.
+SAP HANA is a database platform, not a separate ABAP syntax version. HANA SQL collector compatibility is validated separately
+against the supported HANA revisions and monitoring views.
+
+Standard tables are read with `INTO CORRESPONDING FIELDS`, so a field missing on an older release stays empty instead of
+breaking activation. `/SDF/GET_DUMP_LOG` is called dynamically: the class activates without ST-PI and falls back to SNAP.
+T000 and NRIV are read with dynamic SQL across clients, falling back to a plain read where a table is cross-client. The
+BALHDR condition is dynamic too, so a release without its message counters reports an error instead of failing activation.
+
+abaplint cannot see SAP's dictionary, installed add-ons or customer modifications. Table-specific checks (for example, which
+tables are client-dependent) and API availability must still be verified by activation and integration tests in each target
+SAP system.
