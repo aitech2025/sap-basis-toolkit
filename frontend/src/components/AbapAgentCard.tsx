@@ -31,6 +31,12 @@ export function AbapAgentCard({ system }: { system: SystemDetail }) {
         A background job in {system.sid} (report Z_SENTINEL_PUSH) reads ST22, SM37, SM13, SM12, SM58, SMQ1/SMQ2 and IDoc status with ABAP
         authorisations and pushes them here every minute. It works on any database and needs no inbound access to SAP.
       </p>
+      {!system.monitoring_layers.includes("application") && (
+        <div className="banner warn" role="status">
+          SAP application monitoring is turned off for {system.sid}, so Sentinel rejects the agent's pushes until you turn that layer on.
+          Deschedule Z_SENTINEL_PUSH if you do not plan to.
+        </div>
+      )}
       {active ? (
         <table>
           <tbody>

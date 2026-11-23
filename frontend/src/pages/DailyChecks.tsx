@@ -132,7 +132,7 @@ export default function DailyChecks() {
             </table>
           </div>
         )}
-        <p className="mt-3 text-xs text-muted-foreground">Empty cells: the signal is not collected for that system (for example HANA checks on Oracle, or security checks without the ABAP push agent). Stale: the newest value is older than the check expects.</p>
+        <p className="mt-3 text-xs text-muted-foreground">Empty cells: the signal is not collected for that system (for example HANA checks on Oracle, security checks without the ABAP push agent, or a monitoring layer that is turned off for the system). Stale: the newest value is older than the check expects.</p>
       </Card>
 
       <Card title="Sign-off history">

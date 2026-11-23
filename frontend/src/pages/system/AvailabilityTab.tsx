@@ -1,5 +1,6 @@
 import { Link } from "react-router-dom";
 import { Freshness, NoData, Trend, useMonitor } from "../../components/monitor";
+import { LayerOffNotice } from "../../components/MonitoringLayers";
 import { Card, DataTable, ErrorBanner, Pill, Tile, fmtNumber } from "../../components/ui";
 import type { SystemDetail } from "../../types";
 import AbapLiveSection from "./AbapLiveSection";
@@ -17,11 +18,13 @@ export default function AvailabilityTab({ system }: { system: SystemDetail }) {
   const a = avail.data?.latest?.data as { summary: { instances: number; running: number; degraded: number; down: number; system_up: boolean }; instances: Instance[] } | undefined;
   const w = wp.data?.latest?.data as { summary: { by_type: Record<string, { total: number; busy: number; stopped: number; busy_pct: number }>; long_running: number; stopped: number; restarts: number; threshold_s: number }; long_running: WP[]; stopped: WP[] } | undefined;
 
+  const layerOff = !system.monitoring_layers.includes("application") && <LayerOffNotice sid={system.sid} layer="application" />;
   if (avail.data && !avail.data.latest) {
-    return <Card title="Availability"><NoData system={system} what="availability" hint="Availability and work processes come from the SAP Start Service (sapcontrol)." /></Card>;
+    return <>{layerOff}<Card title="Availability"><NoData system={system} what="availability" hint="Availability and work processes come from the SAP Start Service (sapcontrol)." /></Card></>;
   }
   return (
     <>
+      {layerOff}
       <ErrorBanner error={avail.error || wp.error} />
       {a && (
         <div className={`banner ${a.summary.system_up ? (a.summary.down || a.summary.degraded ? "info" : "ok") : "error"}`}>

@@ -73,6 +73,8 @@ sap_systems = Table(
     Column("description", Text),
     Column("timezone", String(64)),
     Column("control_enabled", Boolean),   # NULL = default (off for PRD, on otherwise)
+    # Comma-separated subset of application,database,os. NULL = every layer (full monitoring).
+    Column("monitoring_layers", String(40)),
     Column("enabled", Boolean, nullable=False, default=True, server_default=true()),
     Column("created_at", DateTime(timezone=True), nullable=False, server_default=text("CURRENT_TIMESTAMP")),
 )
@@ -529,7 +531,7 @@ Index("ix_topology_links_target", topology_links.c.target_asset_id)
 # Columns added to pre-existing tables (applied by init_db and Alembic).
 ADDED_COLUMNS = {
     "targets": [("system_id", "INTEGER REFERENCES sap_systems(id) ON DELETE SET NULL")],
-    "sap_systems": [("timezone", "VARCHAR(64)"), ("control_enabled", "BOOLEAN")],
+    "sap_systems": [("timezone", "VARCHAR(64)"), ("control_enabled", "BOOLEAN"), ("monitoring_layers", "VARCHAR(40)")],
     "collectors": [("private_key_enc", "TEXT"), ("host_key", "VARCHAR(120)"), ("sap_client", "VARCHAR(3)")],
     "system_operations": [("steps", "TEXT"), ("checklist", "TEXT"), ("force", "BOOLEAN"), ("abort_requested", "BOOLEAN")],
 }

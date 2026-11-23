@@ -81,6 +81,34 @@ Choose **OS login (root or <sid>adm)** in *Discover system*. Enter one applicati
 - root sees everything. `<sid>adm` also works, but `saphostctrl ListDatabases` needs root.
 - When you log in as root, enter the `<sid>adm` password as well to enable start/stop.
 
+### Choosing the monitoring layers
+
+Each system monitors any combination of three layers: **SAP application**, **database** and **operating system**. New
+systems monitor all three (full monitoring). Choose the layers in step 3 of *Discover system*, in *Add manually*, or later
+with *Edit* on the system page. At least one layer must stay selected.
+
+| Layer | Collectors | Alerting metrics |
+|---|---|---|
+| SAP application | SAP Start Service (`sapcontrol`); RFC (`rfc`); the ABAP push agent; HANA SQL with an ABAP schema for dumps, updates, tRFC/qRFC, IDocs, jobs, imports and table growth | `availability.*`, `wp.*`, `abap.*`, `syslog.*`, `dumps.*`, `updates.*`, `trfc.*`, `qrfc.*`, `idoc.*`, `jobs.*`, `agent.up` |
+| Database | HANA SQL (`hana`), HANA instance (`hana_sapcontrol`), and the database-process check of the OS collector on the database server | `hana.*`, `db.os_process_up` |
+| Operating system | OS inventory over SSH (`os_ssh`), node_exporter | `host.*`, `db.host_*` |
+
+- **Discovery** sets up collectors only for the selected layers and stores no credentials for the others. It still records all
+  three layers in the inventory (*Infrastructure* tab). Without the application layer, start/stop from Sentinel is not
+  available, because it uses the SAP Start Service connection.
+- A collector that serves two layers (HANA SQL with an ABAP schema, or SSH on the database server) runs while either layer is
+  selected and stores only the data of the selected layers.
+- **Turning a layer off** pauses its collectors (credentials are kept), resolves its open rule incidents, and stops its metrics
+  and snapshots. *Run now* on a paused collector explains why it did not run. Turning the layer back on resumes collection.
+- While the application layer is off, Sentinel rejects pushes from the ABAP push agent (HTTP 409, with the reason in the
+  job log of Z_SENTINEL_PUSH) and does not raise the "agent silent" incident.
+- *Daily checks* leave out the checks of layers that are turned off, so their last values do not show as stale.
+- `collector.failed` counts the active collectors of a system whose last run failed. It opens one incident per system and
+  resolves it once no active collector is failing, including when you pause or delete the failing collector or turn its layer off.
+- API: `monitoring_layers` (a list of `application`, `database`, `os`) on `POST /systems`, `PATCH /systems/{id}` and
+  `POST /discovery/register`. Omitting it keeps the current selection (all layers for a new system). Each collector reports
+  the layers it serves in `layers`.
+
 ## 4. Start, stop and restart
 
 The *Instances & control* tab can start, stop or restart the whole system or one instance through sapstartsrv:

@@ -56,6 +56,8 @@ CHECKS = [
     ("certificates.min_days", "Security", "Certificate expiry (days)", "STRUST / SMICM", ("<", 30, 7), 1440),
 ]
 FLAGS = {"availability.system_up", "hana.system_up", "db.os_process_up", "agent.up", "hana.replication_ok"}
+# Checks that do not come from a monitoring layer's collectors (certificates: TLS endpoints and STRUST imports).
+UNLAYERED = {"certificates.min_days"}
 
 
 def _format(key: str) -> str:
@@ -125,9 +127,12 @@ def matrix(landscape: str | None = None, environment: str | None = None, now: da
         if system["id"] in cert_days:
             values["certificates.min_days"] = (cert_days[system["id"]], now)
         cells, counts = {}, {k: 0 for k in RANK}
+        layers = systems.layers_of(system)
         for key, _area, _label, _tcode, default, fresh_min in CHECKS:
             if key not in values:
                 continue  # not applicable / not collected for this system: shown empty, not as a failure
+            if key not in UNLAYERED and systems.metric_layer(key) not in layers:
+                continue  # layer turned off: its last values would only age into "stale", which reads as a fault
             value, ts = values[key]
             rule = rules[system["id"]].get(key)
             op, warning, critical = (rule["operator"], rule["warning"], rule["critical"]) if rule else default

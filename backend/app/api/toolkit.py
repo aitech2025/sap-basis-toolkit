@@ -1,5 +1,6 @@
 """Multi-system API: system registry, per-system modules, landscape overview and alert history."""
 from datetime import datetime, timezone
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi.responses import PlainTextResponse
@@ -22,6 +23,7 @@ router = APIRouter(prefix="/api/v1", dependencies=[Depends(authorize)])
 CERT_SEVERITY = {"expired": 3, "critical": 3, "unreachable": 3, "blocked": 2, "warning": 2, "untrusted": 2,
                  "healthy": 0, "pending": 1}
 HEALTH = {0: "healthy", 1: "unknown", 2: "warning", 3: "critical"}
+Layer = Literal["application", "database", "os"]
 
 
 async def read_body(request: Request) -> bytes:
@@ -73,6 +75,7 @@ class SystemIn(BaseModel):
     description: str | None = Field(default=None, max_length=2000)
     enabled: bool = True
     control_enabled: bool | None = None
+    monitoring_layers: list[Layer] | None = Field(default=None, max_length=3, description="Default: every layer")
 
 
 class SystemPatch(BaseModel):
@@ -92,6 +95,7 @@ class SystemPatch(BaseModel):
     description: str | None = Field(default=None, max_length=2000)
     enabled: bool | None = None
     control_enabled: bool | None = None
+    monitoring_layers: list[Layer] | None = Field(default=None, max_length=3)
 
 
 def _registry_errors(fn, *args):
@@ -457,7 +461,7 @@ def system_health(registry: list[dict]) -> dict[int, dict]:
         own_incidents = incident_counts.get(sid)
         worst_incident = incidents.worst_severity(own_incidents) if own_incidents else None
         incident_level = {"critical": 3, "warning": 2}.get(worst_incident) if worst_incident else None
-        live = monitors.latest(sid, "availability").get("availability")
+        live = monitors.latest(sid, "availability").get("availability")             if "application" in systems.layers_of(system) else None
         availability = live["data"]["summary"] if live and not live["stale"] else None
         availability_level = None if availability is None else 3 if not availability["system_up"] else \
             2 if availability["down"] or availability["degraded"] else 0
@@ -491,7 +495,7 @@ def overview(landscape: str | None = None):
     health = system_health(registry)
     result = [
         {**{k: system[k] for k in ("id", "sid", "name", "product", "product_label", "stack", "database",
-                                   "environment", "landscape", "effective_license_model")},
+                                   "environment", "landscape", "effective_license_model", "monitoring_layers")},
          **health[system["id"]]}
         for system in registry
     ]

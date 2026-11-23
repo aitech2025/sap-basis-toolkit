@@ -172,6 +172,9 @@ def ingest(token_row: dict, body: bytes, client_ip: str | None) -> dict:
     sid = str(p.get("sid") or "").strip().upper()
     if sid != system["sid"]:
         raise AgentError(f"Token belongs to {system['sid']}, payload is from {sid or 'an unknown system'}", 403)
+    if "application" not in systems.layers_of(system):
+        raise AgentError(f"SAP application monitoring is turned off for {system['sid']} in Sentinel, so this push was not "
+                         "stored. Turn the layer on, or deschedule Z_SENTINEL_PUSH.", 409)
     zone = systems.system_zone(system)
     raw = map_payload(payload, zone)
     metrics: dict[str, float] = {"agent.up": 1.0}
@@ -210,7 +213,7 @@ def watchdog(now: datetime | None = None) -> list[int]:
     for system_id, last in rows:
         if _aware(last) < silent_before:
             system = systems.get_system(system_id)
-            if not system.get("enabled", True):
+            if not system.get("enabled", True) or "application" not in systems.layers_of(system):
                 continue
             monitors.record_metrics(system_id, {"agent.up": 0.0}, now)
             incidents.evaluate(system, {"agent.up": 0.0})

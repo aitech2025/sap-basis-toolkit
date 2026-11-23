@@ -1,7 +1,9 @@
 import { useState } from "react";
 import { NavLink, Navigate, Route, Routes, useNavigate, useParams } from "react-router-dom";
 import { api } from "../api";
+import { LayerBadges } from "../components/MonitoringLayers";
 import { SystemForm } from "../components/SystemForm";
+import type { MonitoringLayer } from "../types";
 import { RequireRole } from "../components/session";
 import { Pencil, Trash2 } from "lucide-react";
 import { ErrorBanner, Pill, useAsync } from "../components/ui";
@@ -43,10 +45,12 @@ export default function SystemDetailPage() {
   if (error) return <ErrorBanner error={error} />;
   if (!system || system.id !== id) return <div className="space-y-4"><Skeleton className="h-14 w-96" /><Skeleton className="h-9 w-full" /><Skeleton className="h-64 w-full" /></div>;
   const abap = system.stack !== "JAVA";
+  const off = (label: string, layer: MonitoringLayer) => (system.monitoring_layers.includes(layer) ? label : `${label} (off)`);
   const tabs = [
-    ["", "Overview"], ["infrastructure", "Infrastructure"], ["instances", "Instances & control"], ["availability", "Availability"],
+    ["", "Overview"], ["infrastructure", "Infrastructure"], ["instances", "Instances & control"],
+    ["availability", off("Availability", "application")],
     ...(abap ? [["basis", "Basis checks"], ["errors", "Errors"], ["interfaces", "Interfaces"]] : []),
-    ...(system.database === "HANA" ? [["hana", "HANA"]] : []),
+    ...(system.database === "HANA" ? [["hana", off("HANA", "database")]] : []),
     ["certificates", "Certificates"], ["growth", "Table growth"],
     ["users", "Users & licences"],
     ["transports", system.capabilities.transports.supported ? "Transports" : "Transports (n/a)"],
@@ -75,6 +79,7 @@ export default function SystemDetailPage() {
               {system.basis_release && <span>SAP_BASIS {system.basis_release}</span>}
               {host}
               <NavLink to={`/landscapes/${encodeURIComponent(system.landscape)}`}>Landscape {system.landscape}</NavLink>
+              <span className="inline-flex items-center gap-1.5">Monitoring <LayerBadges layers={system.monitoring_layers} /></span>
             </div>
           </div>
         </div>

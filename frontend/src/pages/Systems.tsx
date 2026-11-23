@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { api } from "../api";
+import { LayerBadges } from "../components/MonitoringLayers";
 import { SystemForm } from "../components/SystemForm";
 import { RequireRole } from "../components/session";
 import { Plus, Radar, Search } from "lucide-react";
@@ -63,6 +64,7 @@ export default function Systems() {
             { key: "stack", label: "Stack / DB", render: (s) => `${s.stack} · ${s.database}` },
             { key: "environment", label: "Env", render: (s) => <Badge variant={s.environment === "PRD" ? "bad" : "secondary"} className="font-mono">{s.environment}</Badge> },
             { key: "landscape", label: "Landscape" },
+            { key: "monitoring", label: "Monitoring", render: (s) => <LayerBadges layers={s.monitoring_layers} /> },
             { key: "license", label: "Licensing", render: (s) => s.effective_license_model === "FUE" ? "FUE" : "Named user" },
             { key: "enabled", label: "Status", render: (s) => <Pill value={s.enabled ? "enabled" : "disabled"} /> },
           ]}

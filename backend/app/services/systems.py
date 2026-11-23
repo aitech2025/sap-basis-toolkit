@@ -11,6 +11,10 @@ from . import profiles
 
 SID_PATTERN = re.compile(r"^[A-Z][A-Z0-9]{2}$")
 
+# Monitoring layers a system can opt into. Every collector and every metric belongs to one of them.
+LAYERS = ("application", "database", "os")
+LAYER_LABELS = {"application": "SAP application", "database": "database", "os": "operating system"}  # mid-sentence
+
 
 class SystemNotFound(LookupError):
     pass
@@ -24,10 +28,45 @@ class SystemConflict(ValueError):
     pass
 
 
+def normalise_layers(value) -> str | None:
+    """Canonical stored form ("application,os") of a layer selection; None keeps the default (every layer)."""
+    if value is None:
+        return None
+    items = value.split(",") if isinstance(value, str) else list(value)
+    chosen = {str(i).strip().lower() for i in items if str(i).strip()}
+    unknown = sorted(chosen - set(LAYERS))
+    if unknown:
+        raise SystemValidationError(f"Unknown monitoring layer {', '.join(unknown)}; choose from {', '.join(LAYERS)}")
+    if not chosen:
+        raise SystemValidationError("Select at least one monitoring layer (application, database or os)")
+    return ",".join(layer for layer in LAYERS if layer in chosen)
+
+
+def layers_of(system) -> set[str]:
+    """Layers a system monitors, from a stored row (string or NULL) or a serialised system (list)."""
+    raw = system.get("monitoring_layers")
+    if not raw:
+        return set(LAYERS)
+    items = raw if isinstance(raw, (list, tuple, set)) else str(raw).split(",")
+    return {i for i in items if i in LAYERS} or set(LAYERS)
+
+
+def metric_layer(metric: str | None) -> str | None:
+    """Layer a metric belongs to; None for metrics about the collectors themselves (collector.failed)."""
+    if not metric or metric.startswith("collector."):
+        return None
+    if metric.startswith(("host.", "db.host_")):
+        return "os"
+    if metric.startswith(("hana.", "db.")):
+        return "database"
+    return "application"
+
+
 def _serialize(row) -> dict:
     item = dict(row)
     item["enabled"] = bool(item["enabled"])
     item["control_enabled"] = None if item.get("control_enabled") is None else bool(item["control_enabled"])
+    item["monitoring_layers"] = [layer for layer in LAYERS if layer in layers_of(item)]
     if hasattr(item.get("created_at"), "isoformat"):
         item["created_at"] = item["created_at"].isoformat()
     prod = profiles.product(item["product"]) or {}
@@ -46,6 +85,8 @@ def normalise(data: dict) -> dict:
             clean[key] = str(clean[key]).strip() or None
     if "landscape" in clean and not clean["landscape"]:
         clean["landscape"] = "default"
+    if "monitoring_layers" in clean:
+        clean["monitoring_layers"] = normalise_layers(clean["monitoring_layers"])
     return clean
 
 
@@ -122,7 +163,22 @@ def update_system(system_id: int, changes: dict) -> dict:
             connection.execute(update(sap_systems).where(sap_systems.c.id == system_id).values(**changes))
     except IntegrityError as exc:
         raise SystemConflict(f"System {merged['sid']} already exists in landscape '{merged['landscape']}'") from exc
-    return get_system(system_id)
+    updated = get_system(system_id)
+    turned_off = layers_of(current) - layers_of(updated)
+    if turned_off:
+        _layers_turned_off(updated, turned_off)
+    return updated
+
+
+def _layers_turned_off(system: dict, layers: set[str]) -> None:
+    """Close what the switched-off layers left open: their rule incidents, and failure alerts of their collectors.
+
+    Collectors stay configured (credentials kept) and resume when the layer is switched back on."""
+    from . import incidents
+    from .collectors import runner
+
+    incidents.resolve_layers(system, layers)
+    runner.resolve_failures_if_clear(system)
 
 
 def delete_system(system_id: int) -> None:

@@ -12,7 +12,7 @@ from sqlalchemy import select, update
 from ... import config
 from ...db import collectors, get_db, sap_systems
 from .. import growth, incidents, monitors, ops, transports, vault
-from ..systems import system_zone
+from ..systems import LAYER_LABELS, layers_of, metric_layer, system_zone
 from ..tabular import parse_sap_datetime
 from . import CollectorError, ssh, hana, node_exporter, rfc, sapcontrol, simulator, validate_port
 
@@ -20,6 +20,30 @@ logger = logging.getLogger(__name__)
 TYPES = ("sapcontrol", "hana", "hana_sapcontrol", "node_exporter", "os_ssh", "rfc")
 # os_ssh: read-only SSH inventory of an application or database host (OS layer).
 # hana_sapcontrol: the HANA instance's own sapstartsrv (5<NN>13/14, <hanasid>adm) for DB availability and start/stop.
+
+# Monitoring layers each collector type serves. A collector runs while at least one of them is monitored, and only
+# stores and alerts on the parts that belong to monitored layers.
+LAYERS_BY_TYPE = {
+    "sapcontrol": ("application",),
+    "hana": ("database",),               # + application when an ABAP schema is set (dumps, RFC, IDocs, jobs ...)
+    "hana_sapcontrol": ("database",),
+    "os_ssh": ("os", "database"),        # database: the database process check on the database host
+    "node_exporter": ("os",),
+    "rfc": ("application",),             # ABAP stack over RFC: dumps, jobs, application servers
+}
+HANA_DB_MONITORS = ("hana",)             # everything else the HANA SQL collector stores is read from the ABAP schema
+
+
+def collector_layers(row) -> tuple[str, ...]:
+    layers = LAYERS_BY_TYPE.get(row["type"], ())
+    if row["type"] == "hana" and row.get("abap_schema"):
+        layers = (*layers, "application")
+    return layers
+
+
+def is_active(row, system) -> bool:
+    """Whether the collector serves at least one layer the system monitors."""
+    return bool(set(collector_layers(row)) & layers_of(system))
 
 
 def _iso(value):
@@ -45,6 +69,7 @@ def view(row) -> dict:
     item["created_at"] = _iso(row["created_at"])
     item["diagnostics"] = json.loads(row["last_details"]) if row["last_details"] else []
     item["simulated"] = simulator.is_sim(row["host"])
+    item["layers"] = list(collector_layers(row))
     return item
 
 
@@ -136,13 +161,16 @@ def update_collector(collector_id: int, changes: dict) -> dict:
     if changes:
         with get_db() as connection:
             connection.execute(update(collectors).where(collectors.c.id == collector_id).values(**changes))
+    if changes.get("enabled") is False:
+        resolve_failures_if_clear(_system(current["system_id"]))
     return view(get(collector_id))
 
 
 def delete(collector_id: int) -> None:
-    get(collector_id)
+    row = get(collector_id)
     with get_db() as connection:
         connection.execute(collectors.delete().where(collectors.c.id == collector_id))
+    resolve_failures_if_clear(_system(row["system_id"]))
 
 
 # ------------------------------------------------------------------------------- execution
@@ -330,8 +358,12 @@ def _run_hana(row: dict, system: dict, persist: bool) -> tuple[dict, dict]:
     at = raw["collected_at"]
     metrics: dict[str, float] = {}
     summary: dict = {}
+    layers = layers_of(system)
+    app_on = "application" in layers  # dumps, updates, RFC, IDocs, jobs, imports, table growth (ABAP schema)
 
     def emit(monitor, built):
+        if ("database" if monitor in HANA_DB_MONITORS else "application") not in layers:
+            return
         data, m, h = built
         metrics.update(m)
         summary[monitor] = data.get("summary", {k: data.get(k) for k in ("memory", "cpu_pct", "disk")})
@@ -340,8 +372,9 @@ def _run_hana(row: dict, system: dict, persist: bool) -> tuple[dict, dict]:
 
     if raw["hana"]:
         emit("hana", monitors.build_hana(raw["hana"]))
-    emit_abap(system, raw, source, at, zone, persist, metrics, summary)
-    if persist and raw.get("table_sizes"):
+    if app_on:
+        emit_abap(system, raw, source, at, zone, persist, metrics, summary)
+    if persist and app_on and raw.get("table_sizes"):
         last = growth.last_snapshot_at(system["id"])
         if last is None or last < at - timedelta(hours=config.HANA_GROWTH_SNAPSHOT_HOURS):
             entries = [{"table_name": str(r["TABLE_NAME"]).upper(), "size_mb": float(r["MEMORY_SIZE_IN_TOTAL"] or 0) / 1048576,
@@ -388,10 +421,12 @@ def _run_os_ssh(row: dict, system: dict, persist: bool) -> tuple[dict, dict]:
                 connection.execute(update(collectors).where(collectors.c.id == row["id"]).values(host_key=raw["host_key"]))
     metrics: dict[str, float] = {}
     diagnostics = [{"call": "ssh inventory", "ok": True, "host_key": raw["host_key"], "role": role}]
+    layers = layers_of(system)
+    os_on, db_on = "os" in layers, "database" in layers
     is_app = "application" in role
     is_db = "database" in role
     # host.* has no host dimension yet: only the application host feeds it, and only without node_exporter.
-    if is_app:
+    if is_app and os_on:
         with get_db() as connection:
             has_node = connection.execute(select(collectors.c.id).where(collectors.c.system_id == system["id"],
                                                                       collectors.c.type == "node_exporter")).first()
@@ -400,11 +435,12 @@ def _run_os_ssh(row: dict, system: dict, persist: bool) -> tuple[dict, dict]:
             metrics.update({k: v for k, v in {"host.memory_used_pct": os_info.get("memory_used_pct"), "host.load1": os_info.get("load1"),
                                                "host.disk_used_pct": app_disk, "host.cpu_pct": os_info.get("cpu_pct"),
                                                "host.swap_used_pct": os_info.get("swap_used_pct")}.items() if v is not None})
-    if is_db:
+    if is_db and os_on:
         db_disk = max((d["used_pct"] for d in disks if d["mount"].startswith(DB_MOUNTS)), default=None)
         metrics.update({k: v for k, v in {"db.host_memory_used_pct": os_info.get("memory_used_pct"), "db.host_load1": os_info.get("load1"),
                                            "db.host_disk_used_pct": db_disk, "db.host_cpu_pct": os_info.get("cpu_pct"),
                                            "db.host_swap_used_pct": os_info.get("swap_used_pct")}.items() if v is not None})
+    if is_db and db_on:
         running = ssh.database_running(os_info, system.get("database"))
         if running is not None:
             metrics["db.os_process_up"] = 1.0 if running else 0.0
@@ -427,6 +463,13 @@ def run(collector_id: int, persist: bool = True) -> dict:
     """Run one collector now. With persist=False it is a connection test (nothing stored or alerted)."""
     row = get(collector_id)
     system = _system(row["system_id"])
+    if not is_active(row, system):
+        off = " and ".join(LAYER_LABELS[layer] for layer in collector_layers(row))
+        return {"collector_id": collector_id, "status": "skipped", "duration_ms": 0, "summary": {}, "metrics": {},
+                "diagnostics": [], "incidents": None,
+                "error": f"{off[0].upper()}{off[1:]} monitoring is turned off for {system['sid']}; "
+                         "turn the layer on to run this collector"}
+    layers = layers_of(system)
     started = time.monotonic()
     runner = RUNNERS[row["type"]]
     try:
@@ -436,27 +479,46 @@ def run(collector_id: int, persist: bool = True) -> dict:
         if failed_calls:
             status = "partial"
             error = "; ".join(f"{d.get('instance', '')} {d['call']}: {d.get('error')}".strip() for d in failed_calls[:5])
-        metrics = {**result["metrics"], "collector.failed": 0.0}
+        metrics = {k: v for k, v in result["metrics"].items() if metric_layer(k) in layers}
     except (CollectorError, ValueError) as exc:
         result, details = {"metrics": {}, "summary": {}}, {"diagnostics": []}
         status, error = "error", str(exc)[:1000]
-        metrics = {"collector.failed": 1.0}
+        metrics = {}
     except Exception as exc:  # unexpected: keep the scheduler alive, surface the error
         logger.exception("Collector %s failed", collector_id)
         result, details = {"metrics": {}, "summary": {}}, {"diagnostics": []}
         status, error = "error", f"Unexpected error: {exc}"[:1000]
-        metrics = {"collector.failed": 1.0}
+        metrics = {}
     duration = int((time.monotonic() - started) * 1000)
     evaluation = None
     if persist:
-        monitors.record_metrics(system["id"], metrics)
-        evaluation = incidents.evaluate(system, metrics)
         with get_db() as connection:
             connection.execute(update(collectors).where(collectors.c.id == collector_id).values(
                 last_run_at=datetime.now(timezone.utc), last_status=status, last_error=error, last_duration_ms=duration,
                 last_details=json.dumps(details["diagnostics"], default=str)[:20000]))
+        # One system-wide count, so a healthy collector cannot resolve the incident a failing one opened.
+        metrics["collector.failed"] = float(failing_collectors(system))
+        monitors.record_metrics(system["id"], metrics)
+        evaluation = incidents.evaluate(system, metrics)
+    else:
+        metrics["collector.failed"] = 1.0 if status == "error" else 0.0
     return {"collector_id": collector_id, "status": status, "error": error, "duration_ms": duration,
             "summary": result["summary"], "metrics": metrics, "diagnostics": details["diagnostics"], "incidents": evaluation}
+
+
+def failing_collectors(system: dict) -> int:
+    """Enabled collectors of monitored layers whose last run failed."""
+    with get_db() as connection:
+        rows = connection.execute(select(collectors.c.type, collectors.c.abap_schema, collectors.c.last_status).where(
+            collectors.c.system_id == system["id"], collectors.c.enabled.is_(True))).mappings().all()
+    return sum(1 for r in rows if r["last_status"] == "error" and is_active(r, system))
+
+
+def resolve_failures_if_clear(system: dict) -> bool:
+    """Close the collector-failure incident once no active collector is failing (paused, deleted or layer turned off)."""
+    if failing_collectors(system):
+        return False
+    return incidents.auto_resolve(system, f"rule:collector.failed:{system['id']}", "No active collector is failing")
 
 
 def test_connection(system_id: int, data: dict) -> dict:
@@ -480,15 +542,18 @@ def due_collectors(now: datetime | None = None) -> list[int]:
     now = now or datetime.now(timezone.utc)
     with get_db() as connection:
         rows = connection.execute(
-            select(collectors.c.id, collectors.c.last_run_at, collectors.c.interval_seconds)
+            select(collectors.c.id, collectors.c.type, collectors.c.abap_schema, collectors.c.last_run_at,
+                   collectors.c.interval_seconds, sap_systems.c.monitoring_layers)
             .join(sap_systems, sap_systems.c.id == collectors.c.system_id)
-            .where(collectors.c.enabled.is_(True), sap_systems.c.enabled.is_(True))).all()
+            .where(collectors.c.enabled.is_(True), sap_systems.c.enabled.is_(True))).mappings().all()
     due = []
-    for cid, last, interval in rows:
-        last = datetime.fromisoformat(_iso(last)) if last else None
-        overdue = float("inf") if last is None else (now - last).total_seconds() - interval
+    for row in rows:
+        if not set(collector_layers(row)) & layers_of(row):  # every layer this collector serves is turned off
+            continue
+        last = datetime.fromisoformat(_iso(row["last_run_at"])) if row["last_run_at"] else None
+        overdue = float("inf") if last is None else (now - last).total_seconds() - row["interval_seconds"]
         if overdue >= 0:
-            due.append((overdue, cid))
+            due.append((overdue, row["id"]))
     return [cid for _, cid in sorted(due, key=lambda d: (-d[0], d[1]))]
 
 

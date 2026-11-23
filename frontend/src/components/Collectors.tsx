@@ -1,8 +1,21 @@
 import { useState } from "react";
 import { api } from "../api";
-import type { Collector, SystemDetail } from "../types";
+import type { Collector, MonitoringLayer, SystemDetail } from "../types";
+import { LAYER_INFO } from "./MonitoringLayers";
 import { RequireRole, useSession } from "./session";
 import { Card, DataTable, Empty, Pill, fmtDate, useAsync } from "./ui";
+
+/** Mirrors the server's LAYERS_BY_TYPE: the layers a collector type serves. */
+function typeLayers(type: string, abapSchema: string | null | undefined): MonitoringLayer[] {
+  switch (type) {
+    case "sapcontrol":
+    case "rfc": return ["application"];
+    case "hana": return abapSchema ? ["database", "application"] : ["database"];
+    case "hana_sapcontrol": return ["database"];
+    case "os_ssh": return ["os", "database"];
+    default: return ["os"];
+  }
+}
 
 const DEFAULTS = {
   sapcontrol: { port: 50014, interval_seconds: 120, username: "", abap_schema: "" },
@@ -24,6 +37,8 @@ export function CollectorsCard({ system }: { system: SystemDetail }) {
   const [message, setMessage] = useState<{ ok: boolean; text: string; details?: string[] } | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
 
+  const monitored = (layers: MonitoringLayer[]) => layers.some((l) => system.monitoring_layers.includes(l));
+  const newLayers = typeLayers(type, form.abap_schema);
   const pickType = (t: CollectorType) => {
     setType(t);
     setForm({ ...form, ...DEFAULTS[t] });
@@ -57,7 +72,11 @@ export function CollectorsCard({ system }: { system: SystemDetail }) {
       {data && !data.length && <Empty>No collectors yet — data comes only from uploads until you add one.</Empty>}
       {!!data?.length && (
         <DataTable<Collector> rows={data} rowKey={(c) => c.id} columns={[
-          { key: "type", label: "Type", render: (c) => <><strong>{TYPE_LABEL[c.type] ?? c.type}</strong>{c.simulated && <span className="tag">demo</span>}</> },
+          { key: "type", label: "Type / layer", render: (c) => <>
+            <strong>{TYPE_LABEL[c.type] ?? c.type}</strong>{c.simulated && <span className="tag">demo</span>}
+            <div className="text-xs text-muted-foreground">{c.layers.map((l) => LAYER_INFO[l].short).join(" + ")}</div>
+            {!monitored(c.layers) && <span className="tag !ml-0 whitespace-nowrap" title="Every layer this collector serves is turned off; it does not run.">paused: layer off</span>}
+          </> },
           { key: "host", label: "Endpoint", render: (c) => <code>{c.use_tls ? "https" : "http"}://{c.host}:{c.port}</code> },
           { key: "user", label: "User", render: (c) => c.username ? `${c.username}${c.has_password ? " (password set)" : ""}` : <span className="muted">–</span> },
           { key: "abap_schema", label: "ABAP schema", render: (c) => c.abap_schema ?? "–" },
@@ -71,6 +90,7 @@ export function CollectorsCard({ system }: { system: SystemDetail }) {
               <RequireRole role="operator">
                 <button className="btn small" disabled={busy === `run${c.id}`} onClick={() => run(`run${c.id}`, async () => {
                   const r = await api.runCollector(c.id);
+                  if (r.status === "skipped") return { ok: false, text: r.error ?? "Skipped: the collector's layer is turned off" };
                   return { ok: r.status !== "error", text: `Run ${r.status} in ${r.duration_ms} ms${r.error ? `: ${r.error}` : ""}` };
                 })}>{busy === `run${c.id}` ? "Running…" : "Run now"}</button>
               </RequireRole>
@@ -129,6 +149,10 @@ export function CollectorsCard({ system }: { system: SystemDetail }) {
             <label className="field check"><input type="checkbox" checked={form.use_tls} onChange={(e) => setForm({ ...form, use_tls: e.target.checked })} /> <span>Use TLS</span></label>
             <label className="field check"><input type="checkbox" checked={form.verify_tls} disabled={!form.use_tls} onChange={(e) => setForm({ ...form, verify_tls: e.target.checked })} /> <span>Verify certificate</span></label></>}
           </div>
+          <p className="muted small" style={{ marginTop: 8 }}>
+            Serves the {newLayers.map((l) => LAYER_INFO[l].name).join(" and ")} layer{newLayers.length > 1 ? "s" : ""}.
+            {!monitored(newLayers) && " That layer is turned off for this system, so the collector will not run until you turn it on (Edit)."}
+          </p>
           <div className="actions" style={{ marginTop: 12 }}>
             <button type="button" className="btn" disabled={busy === "test" || !form.host} onClick={() => run("test", async () => {
               const r = await api.testCollector(system.id, body());
