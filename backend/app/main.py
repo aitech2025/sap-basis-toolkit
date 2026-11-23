@@ -3,22 +3,27 @@ from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse
+from sqlalchemy import text
 
 from . import auth, config
 from .api.auth_routes import public as auth_public_router
 from .api.auth_routes import router as auth_router
+from .api.agent import ingest_router as agent_ingest_router
+from .api.agent import router as agent_router
 from .api.analytics import router as analytics_router
+from .api.daily_checks import router as daily_checks_router
 from .api.intelligence import router as intelligence_router
 from .api.lifecycle import router as lifecycle_router
 from .api.monitoring import router as monitoring_router
 from .api.routes import router
 from .api.toolkit import router as toolkit_router
 from .config import APP_NAME
-from .db import init_db
+from .db import get_db, init_db
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    config.validate_runtime_config()
     init_db()
     auth.bootstrap_admin()
     from .services import incidents
@@ -45,6 +50,9 @@ app.include_router(monitoring_router)
 app.include_router(analytics_router)
 app.include_router(intelligence_router)
 app.include_router(lifecycle_router)
+app.include_router(agent_router)
+app.include_router(agent_ingest_router)
+app.include_router(daily_checks_router)
 
 
 @app.middleware("http")
@@ -53,7 +61,7 @@ async def audit_mutations(request: Request, call_next):
     response = await call_next(request)
     path = request.url.path
     if (request.method in ("POST", "PUT", "PATCH", "DELETE") and path.startswith("/api/")
-            and not path.startswith("/api/v1/auth/")):
+            and not path.startswith(("/api/v1/auth/", "/api/v1/agent/ingest"))):  # agent pushes: see agent_tokens
         principal = getattr(request.state, "principal", None)
         try:
             auth.audit(principal.username if principal else "anonymous", f"{request.method} {path}"[:80],
@@ -68,7 +76,19 @@ async def audit_mutations(request: Request, call_next):
 
 @app.get("/health")
 def health():
+    """Liveness probe: the API process is running; deliberately does not depend on downstream services."""
     return {"status": "ok", "service": APP_NAME}
+
+
+@app.get("/ready")
+def readiness():
+    """Readiness probe: only receive traffic when the configured database accepts queries."""
+    try:
+        with get_db() as connection:
+            connection.execute(text("SELECT 1"))
+    except Exception as exc:
+        raise HTTPException(503, "Database is not ready") from exc
+    return {"status": "ready", "service": APP_NAME, "database": "ok"}
 
 
 def _dist() -> Path:
@@ -78,7 +98,7 @@ def _dist() -> Path:
 @app.get("/{path:path}", include_in_schema=False)
 def spa(path: str):
     """Serve the built React UI (static assets + client-side routes). Data calls need the API key."""
-    if path.startswith(("api/", "health")):
+    if path.startswith(("api/", "health", "ready")):
         raise HTTPException(404, "Not found")
     dist = _dist().resolve()
     index = dist / "index.html"

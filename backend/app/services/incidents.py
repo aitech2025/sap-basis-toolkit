@@ -12,7 +12,7 @@ import json
 import operator as op
 from datetime import datetime, timezone
 
-from sqlalchemy import and_, or_, select, update
+from sqlalchemy import and_, func, or_, select, update
 
 from ..db import alert_rules, get_db, incident_events, incidents, maintenance_windows, sap_systems
 from . import notifications
@@ -27,6 +27,24 @@ BUILTIN_RULES = [
     ("availability.instances_down", "Instances not running", ">=", 1, None, "One or more instances are not GREEN"),
     ("hana.system_up", "HANA database down", "<", None, 1, "The HANA instance is not GREEN in its own sapstartsrv"),
     ("hana.services_inactive", "HANA service not active", ">=", None, 1, "A HANA service (M_SERVICES) is not ACTIVE"),
+    ("abap.queue_dia", "Dialog requests queued in the dispatcher", ">=", 10, 50, "Requests waiting for a free dialog work process (GetQueueStatistic)"),
+    ("abap.queue_upd", "Update requests queued", ">=", 20, 100, "Update requests waiting in the dispatcher queue"),
+    ("abap.enq_table_used_pct", "Enqueue lock table filling up", ">=", 70, 90, "Lock table usage (EnqGetStatistic); an overflow stops all locking"),
+    ("abap.dialog_response_ms", "Dialog response time", ">=", 1500, 3000, "Average dialog response time (CCMS, instance shared memory)"),
+    ("ccms.red_now", "CCMS reports a red value", ">=", 1, None, "An instance CCMS monitoring attribute is currently red"),
+    ("numrange.max_used_pct", "Number range filling up (SNRO)", ">=", 80, 90, "Highest fill level of an internal number range; a full range stops document creation"),
+    ("applog.error_logs_24h", "Application log errors (SLG1)", ">=", 100, None, "Application logs with abort or error messages in 24 hours"),
+    ("batchinput.error_sessions_7d", "Batch input sessions in error (SM35)", ">=", 1, None, "Sessions in status Error created in the last 7 days"),
+    ("security.prod_clients_open", "Client open for changes (SCC4)", ">=", 1, None, "A business client of a production/QA system allows changes"),
+    ("security.sapstar_risk", "SAP* missing or unlocked (SU01)", ">=", 1, None, "Clients where SAP* is missing or not locked"),
+    ("hana.log_disk_used_pct", "HANA log volume full", ">=", 80, 90, "Log volume usage; a full log volume stops the database"),
+    ("hana.blocked_transactions", "HANA blocked transactions", ">=", 5, 20, "Transactions waiting for locks (M_BLOCKED_TRANSACTIONS)"),
+    ("hana.oom_events_24h", "HANA out-of-memory events", ">=", 1, None, "Out-of-memory events in the last 24 hours"),
+    ("host.cpu_pct", "Application host CPU", ">=", 85, 95, "CPU utilisation of the application host (ST06)"),
+    ("host.swap_used_pct", "Application host swap", ">=", 20, 50, "Swap in use on the application host"),
+    ("db.host_cpu_pct", "Database host CPU", ">=", 85, 95, "CPU utilisation of the database host"),
+    ("abap.buffer_swaps", "ABAP buffer swaps (ST02)", ">=", 1000, 10000, "Swaps across ABAP buffers since instance start, highest instance"),
+    ("agent.up", "ABAP push agent silent", "<", 1, None, "The ABAP push agent (job Z_SENTINEL_PUSH) has not sent data within AGENT_SILENT_SECONDS"),
     ("collector.failed", "Collector cannot reach the system", ">=", 1, None,
      "Number of active collectors whose last run failed; their data is stale until they recover"),
     ("wp.dia_busy_pct", "Dialog work processes busy", ">=", 80, 95, "Share of DIA work processes running"),
@@ -438,19 +456,46 @@ def act(incident_id: int, action: str, actor: str, message: str | None = None, a
     return get_incident(incident_id)
 
 
+def _empty_counts() -> dict:
+    return {"open": 0, "acknowledged": 0, "critical": 0, "warning": 0, "total": 0}
+
+
+def counts_by_system() -> dict[int | None, dict]:
+    """Active incident counts for every system in one aggregate query (dashboards over the whole fleet)."""
+    query = (select(incidents.c.system_id, incidents.c.status, incidents.c.severity, func.count().label("n"))
+             .where(incidents.c.status != "resolved")
+             .group_by(incidents.c.system_id, incidents.c.status, incidents.c.severity))
+    out: dict[int | None, dict] = {}
+    with get_db() as connection:
+        for system_id, status, severity, n in connection.execute(query):
+            c = out.setdefault(system_id, _empty_counts())
+            if status in ("open", "acknowledged"):
+                c[status] += n
+            if severity in ("critical", "warning"):
+                c[severity] += n
+            c["total"] += n
+    return out
+
+
 def counts(system_id: int | None = None) -> dict:
-    items = list_incidents("active", system_id, limit=10000)
-    return {
-        "open": sum(1 for i in items if i["status"] == "open"),
-        "acknowledged": sum(1 for i in items if i["status"] == "acknowledged"),
-        "critical": sum(1 for i in items if i["severity"] == "critical"),
-        "warning": sum(1 for i in items if i["severity"] == "warning"),
-        "total": len(items),
-    }
+    query = (select(incidents.c.status, incidents.c.severity, func.count().label("n"))
+             .where(incidents.c.status != "resolved").group_by(incidents.c.status, incidents.c.severity))
+    if system_id is not None:
+        query = query.where(incidents.c.system_id == system_id)
+    c = _empty_counts()
+    with get_db() as connection:
+        for status, severity, n in connection.execute(query):
+            if status in ("open", "acknowledged"):
+                c[status] += n
+            if severity in ("critical", "warning"):
+                c[severity] += n
+            c["total"] += n
+    return c
+
+
+def worst_severity(c: dict) -> str | None:
+    return "critical" if c.get("critical") else "warning" if c.get("warning") else None
 
 
 def worst_active_severity(system_id: int) -> str | None:
-    items = list_incidents("active", system_id, limit=10000)
-    if not items:
-        return None
-    return max(items, key=lambda i: SEVERITY_RANK[i["severity"]])["severity"]
+    return worst_severity(counts(system_id))

@@ -20,7 +20,7 @@ Set these in `.env` (see `.env.example`):
 - `SECRET_KEY`: signs sessions and encrypts collector passwords. Generate it with `openssl rand -hex 32`. If you rotate it, collector passwords must be entered again.
 - `ALLOWED_TARGET_HOSTS` / `ALLOWED_TARGET_CIDRS`: the SAP and HANA hosts the collectors may contact. Instance hostnames returned by `GetSystemInstanceList` must also be allowed.
 - `HANA_CLIENT=true`: builds the image with SAP's `hdbcli` driver. It is distributed under the SAP Developer License; check that the licence suits your use.
-- `COLLECTOR_TICK_SECONDS`, `COLLECTOR_MAX_PARALLEL`, `COLLECTOR_TIMEOUT_SECONDS`: control scheduling.
+- `COLLECTOR_TICK_SECONDS`, `COLLECTOR_MAX_PARALLEL`, `COLLECTOR_TIMEOUT_SECONDS`: control scheduling. See [scaling.md](scaling.md) for sizing a fleet of systems.
 
 Collectors run in the `scheduler` container. API replicas never poll.
 
@@ -102,7 +102,7 @@ GRANT SELECT ON "SAPHANADB"."TPALOG" TO SENTINEL_MON;
 
 Validate the privileges on your HANA revision. If a query fails, it is listed in the collector diagnostics and the other monitors continue.
 
-Reading ABAP tables directly bypasses ABAP authorisations. Grant exactly these SELECT privileges, to this user only. Port `3<NN>15` is the first tenant's SQL port.
+Reading ABAP tables directly does not automatically enforce ABAP table authorisations. The push agent now explicitly checks S_TABU_NAM display access before each direct table read and S_RFC execute access before RFC-enabled function modules. Grant exactly these SELECT privileges, to this user only, and validate the checks on the target SAP_BASIS release. Port `3<NN>15` is the first tenant's SQL port.
 
 ### Query overrides
 

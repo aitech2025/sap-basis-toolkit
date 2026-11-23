@@ -90,6 +90,27 @@ class SapStartSrv(BaseHTTPRequestHandler):
             payload = _items("workprocess", WP)
         elif method == "ABAPReadSyslog" and port == 50013:
             payload = _items("log", SYSLOG)
+        elif method == "GetQueueStatistic" and port == 50013:
+            payload = _items("queue", [{"Typ": "ABAP/DIA", "Now": 14, "High": 30, "Max": 14000, "Writes": 9, "Reads": 9},
+                                       {"Typ": "ABAP/UPD", "Now": 0, "High": 2, "Max": 14000, "Writes": 1, "Reads": 1}])
+        elif method == "GetAlertTree" and port == 50013:
+            payload = _items("tree", [
+                {"name": "saplab_S4L_00", "parent": -1, "ActualValue": "SAPControl-YELLOW", "description": "", "Time": ""},
+                {"name": "R3Services", "parent": 0, "ActualValue": "SAPControl-YELLOW", "description": "", "Time": ""},
+                {"name": "Dialog", "parent": 1, "ActualValue": "SAPControl-YELLOW", "description": "", "Time": ""},
+                {"name": "ResponseTime", "parent": 2, "ActualValue": "SAPControl-YELLOW", "description": "1650 msec",
+                 "Time": "2026 11 18 10:00:00"},
+                {"name": "UsersLoggedIn", "parent": 2, "ActualValue": "SAPControl-GREEN", "description": "57", "Time": ""}])
+        elif method == "GetAlerts" and port == 50013:
+            payload = _items("alert", [{"Object": "Dialog", "Attribute": "ResponseTime", "Value": "SAPControl-YELLOW",
+                                        "Description": "1650 msec > 1500 msec", "Time": "2026 11 18 10:00:00", "Tid": "x", "AId": "1"}])
+        elif method == "EnqGetLockTable" and port == 50113:
+            payload = _items("lock", [{"lock-name": "VBAK", "lock-arg": "1000000004711", "lock-mode": "E",
+                                       "owner": "20200101000000123456000saplab_S4L_00", "owner-vb": "", "use-count-owner": 1,
+                                       "use-count-owner-vb": 0, "client": "100", "user": "JSMITH", "transaction": "VA02",
+                                       "object": "", "backup": "FALSE"}])
+        elif method == "EnqGetStatistic" and port == 50113:
+            payload = "<statistic><locks-now>1</locks-now><locks-max>100</locks-max><owner-now>1</owner-now><owner-max>100</owner-max></statistic>"
         else:
             out = ENV.format(FAULT).encode()
             self.send_response(500)
@@ -262,6 +283,13 @@ def test_sapcontrol_real_http(lab, startsrv):
     assert monitor(c, system, "availability") and monitor(c, system, "workprocesses") and monitor(c, system, "syslog")
     calls = {(d["instance"], d["call"]) for d in out["diagnostics"] if d["ok"]}
     assert ("saplab_00", "ABAPGetWPTable") in calls and ("saplab_00", "ABAPReadSyslog") in calls
+    # live ABAP signals over the same HTTP endpoint and credentials
+    assert {("saplab_00", "GetQueueStatistic"), ("saplab_00", "GetAlertTree"), ("saplab_01", "EnqGetLockTable"),
+            ("saplab_01", "EnqGetStatistic")} <= calls
+    assert m["abap.queue_dia"] == 14 and m["abap.dialog_response_ms"] == 1650 and m["abap.users_logged_on"] == 57
+    assert m["ccms.yellow_now"] == 1 and m["abap.locks"] == 1 and m["abap.enq_table_used_pct"] == 1.0
+    assert m["abap.locks_oldest_min"] > 60 * 24 * 365  # owner timestamp from 2020
+    assert monitor(c, system, "abap_live")
 
 
 def test_sapcontrol_wrong_password_is_a_clear_error(lab, startsrv):

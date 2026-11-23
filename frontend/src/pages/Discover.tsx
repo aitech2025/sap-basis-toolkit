@@ -63,7 +63,7 @@ export default function Discover() {
       setForm({
         name: `${found.sid} ${catalogue.data?.products.find((p) => p.key === found.product)?.label ?? found.product}`,
         environment: found.suggested_environment, landscape: found.existing_systems[0]?.landscape ?? "default",
-        product: found.product, database: found.database ?? "", interval_seconds: "300", control_enabled: "",
+        product: found.product, database: found.database ?? "", interval_seconds: "", control_enabled: "",
       });
       setHana((h) => ({ ...h, enabled: false, host: found.database_layer?.host ?? found.db_host ?? "",
         abap_schema: found.database_layer?.schema ?? h.abap_schema, database_name: found.database_layer?.tenant ?? "" }));
@@ -92,7 +92,7 @@ export default function Discover() {
         expected_sid: scan.sid,
         system_id: target === "new" ? null : Number(target),
         name: form.name || null, environment: form.environment, landscape: form.landscape || "default",
-        product: form.product, database: form.database || null, interval_seconds: Number(form.interval_seconds) || 300,
+        product: form.product, database: form.database || null, interval_seconds: Number(form.interval_seconds) || null,
         control_enabled: form.control_enabled === "" ? null : form.control_enabled === "on",
         role_overrides: roles,
         monitoring_layers: layers,
@@ -367,7 +367,8 @@ export default function Discover() {
                 </select></label>
               <label className="field"><span>Collect every</span>
                 <select value={form.interval_seconds} onChange={(e) => set("interval_seconds", e.target.value)}>
-                  {[60, 300, 600, 900].map((s) => <option key={s} value={s}>{s / 60} min</option>)}
+                  <option value="">Recommended (SAP 1 min, database 5 min, OS 15 min)</option>
+                  {[60, 300, 600, 900].map((s) => <option key={s} value={s}>Everything every {s / 60} min</option>)}
                 </select></label>
               {monitors("application") && (
                 <label className="field"><span>Start / stop from Sentinel</span>

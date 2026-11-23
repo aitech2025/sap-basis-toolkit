@@ -11,6 +11,7 @@ const Analytics = lazy(() => import("./pages/Analytics"));
 const Alerts = lazy(() => import("./pages/Alerts"));
 const Audit = lazy(() => import("./pages/Audit"));
 const Certificates = lazy(() => import("./pages/Certificates"));
+const DailyChecks = lazy(() => import("./pages/DailyChecks"));
 const Discover = lazy(() => import("./pages/Discover"));
 const IncidentDetail = lazy(() => import("./pages/IncidentDetail"));
 const Incidents = lazy(() => import("./pages/Incidents"));
@@ -33,6 +34,7 @@ function Shell() {
             <Route path="/analytics" element={<Analytics />} />
             <Route path="/intelligence" element={<Intelligence />} />
             <Route path="/incidents" element={<Incidents />} />
+            <Route path="/daily-checks" element={<DailyChecks />} />
             <Route path="/incidents/:id" element={<IncidentDetail />} />
             <Route path="/landscapes" element={<Landscapes />} />
             <Route path="/landscapes/:name" element={<LandscapeDetail />} />

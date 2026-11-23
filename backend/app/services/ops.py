@@ -7,7 +7,7 @@ local timezone, so every timestamp is converted with the system's configured tim
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import and_, delete, select, update
+from sqlalchemy import and_, delete, func, select, update
 
 from .. import config
 from ..db import get_db, job_runs, lock_entries, lock_snapshots
@@ -250,14 +250,42 @@ def parse_locks(raw: bytes | str, zone, captured_at: datetime) -> list[dict]:
 
 
 def store_locks(system: dict, raw: bytes, zone, captured_at: datetime | None = None) -> dict:
+    """SM12 export upload."""
     captured_at = captured_at or datetime.now(timezone.utc)
     rows = read_rows(raw) if raw.strip() else []
     locks = parse_locks(raw, zone, captured_at) if rows else []  # an empty SM12 list is a valid snapshot
+    return store_lock_list(system, locks, captured_at, total=len(locks))
+
+
+def last_lock_snapshot_at(system_id: int) -> datetime | None:
     with get_db() as connection:
+        at = connection.execute(select(func.max(lock_snapshots.c.captured_at))
+                                .where(lock_snapshots.c.system_id == system_id)).scalar()
+    return _aware(at) if at else None
+
+
+def store_lock_list(system: dict, locks: list[dict], captured_at: datetime, total: int | None = None) -> dict:
+    """Persist one lock snapshot. Locks without a known time (owner ID without timestamp) inherit the time they were first
+    seen in an earlier snapshot, so their age is a lower bound rather than invented."""
+    with get_db() as connection:
+        unknown = [lock for lock in locks if lock.get("locked_at") is None]
+        if unknown:
+            prev = connection.execute(select(lock_snapshots.c.id).where(lock_snapshots.c.system_id == system["id"])
+                                      .order_by(lock_snapshots.c.captured_at.desc()).limit(1)).scalar()
+            known = {}
+            if prev:
+                for e in connection.execute(select(lock_entries).where(lock_entries.c.snapshot_id == prev)).mappings():
+                    known[(e["user_name"], e["table_name"], e["argument"])] = _aware(e["locked_at"])
+            for lock in unknown:
+                lock["locked_at"] = known.get((lock["user_name"], lock["table_name"], lock["argument"]), captured_at)
+                lock["age_minutes"] = max(0, int((captured_at - lock["locked_at"]).total_seconds() // 60))
+        rows = [{k: lock.get(k) for k in ("client", "user_name", "lock_mode", "table_name", "argument", "locked_at", "age_minutes")}
+                for lock in locks]
         snapshot_id = connection.execute(lock_snapshots.insert().values(
-            system_id=system["id"], captured_at=captured_at, total=len(locks)).returning(lock_snapshots.c.id)).scalar_one()
-        if locks:
-            connection.execute(lock_entries.insert(), [{**lock, "snapshot_id": snapshot_id} for lock in locks])
+            system_id=system["id"], captured_at=captured_at, total=len(locks) if total is None else total)
+            .returning(lock_snapshots.c.id)).scalar_one()
+        if rows:
+            connection.execute(lock_entries.insert(), [{**r, "snapshot_id": snapshot_id} for r in rows])
         connection.execute(delete(lock_snapshots).where(
             lock_snapshots.c.system_id == system["id"],
             lock_snapshots.c.captured_at < captured_at - timedelta(days=config.OPS_RETENTION_DAYS)))
@@ -276,7 +304,7 @@ def store_locks(system: dict, raw: bytes, zone, captured_at: datetime | None = N
             system_id=system["id"],
             incident_key=f"lock:{system['id']}:{lock['user_name']}:{lock['table_name']}:{lock['argument']}:{lock['locked_at'].isoformat()}",
         )
-    return {"snapshot_id": snapshot_id, "captured_at": captured_at.isoformat(), "locks": len(locks),
+    return {"snapshot_id": snapshot_id, "captured_at": captured_at.isoformat(), "locks": total if total is not None else len(locks),
             "long_running": len(long_locks)}
 
 
@@ -329,7 +357,8 @@ def lock_report(system_id: int, history_days: int = 7) -> dict:
         "latest": _iso(latest_at),
         "stale": latest_at < now - timedelta(hours=config.OPS_DATA_STALE_HOURS),
         "summary": {
-            "locks": len(current), "long_running": len(long_running),
+            # total from the snapshot: live snapshots store only locks held LOCK_STORE_MIN_AGE_MINUTES or longer
+            "locks": latest["total"], "locks_listed": len(current), "long_running": len(long_running),
             "critical": sum(1 for x in long_running if x["severity"] == "critical"),
             "oldest_minutes": max((e["age_minutes"] for e in current), default=None),
             "users": len(by_user), "tables": len(by_table), "snapshots": len(snapshots),

@@ -1,6 +1,7 @@
 """Collector configuration, execution and scheduling."""
 import json
 import logging
+import threading
 import time
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
@@ -13,10 +14,10 @@ from ...db import collectors, get_db, sap_systems
 from .. import growth, incidents, monitors, ops, transports, vault
 from ..systems import LAYER_LABELS, layers_of, metric_layer, system_zone
 from ..tabular import parse_sap_datetime
-from . import CollectorError, ssh, hana, node_exporter, sapcontrol, simulator, validate_port
+from . import CollectorError, ssh, hana, node_exporter, rfc, sapcontrol, simulator, validate_port
 
 logger = logging.getLogger(__name__)
-TYPES = ("sapcontrol", "hana", "hana_sapcontrol", "node_exporter", "os_ssh")
+TYPES = ("sapcontrol", "hana", "hana_sapcontrol", "node_exporter", "os_ssh", "rfc")
 # os_ssh: read-only SSH inventory of an application or database host (OS layer).
 # hana_sapcontrol: the HANA instance's own sapstartsrv (5<NN>13/14, <hanasid>adm) for DB availability and start/stop.
 
@@ -28,6 +29,7 @@ LAYERS_BY_TYPE = {
     "hana_sapcontrol": ("database",),
     "os_ssh": ("os", "database"),        # database: the database process check on the database host
     "node_exporter": ("os",),
+    "rfc": ("application",),             # ABAP stack over RFC: dumps, jobs, application servers
 }
 HANA_DB_MONITORS = ("hana",)             # everything else the HANA SQL collector stores is read from the ABAP schema
 
@@ -62,6 +64,7 @@ def view(row) -> dict:
     item["has_password"] = bool(row["password_enc"])
     item["has_private_key"] = bool(row.get("private_key_enc"))
     item["host_key"] = row.get("host_key")
+    item["sap_client"] = row.get("sap_client")
     item["last_run_at"] = _iso(row["last_run_at"])
     item["created_at"] = _iso(row["created_at"])
     item["diagnostics"] = json.loads(row["last_details"]) if row["last_details"] else []
@@ -84,6 +87,8 @@ def validate(data: dict) -> None:
         validate_port("sapcontrol" if data["type"] == "hana_sapcontrol" else data["type"], int(data["port"]))
     if data["type"] == "os_ssh" and not data.get("username"):
         raise CollectorError("OS inventory needs an OS user (root or <sid>adm)")
+    if data["type"] == "rfc" and not simulator.is_sim(data["host"]) and not (data.get("username") and data.get("sap_client")):
+        raise CollectorError("RFC collectors need a technical user and the SAP client")
     if data["type"] == "hana" and not simulator.is_sim(data["host"]) and not data.get("username"):
         raise CollectorError("HANA collectors need a database user")
     if data["type"] == "node_exporter" and simulator.is_sim(data["host"]):
@@ -202,6 +207,17 @@ def _run_sapcontrol(row: dict, system: dict, persist: bool) -> tuple[dict, dict]
         summary["workprocesses"] = data["summary"]
         if persist:
             monitors.store(system["id"], "workprocesses", source, data, h, raw["collected_at"])
+    if raw.get("live") and system["stack"] != "JAVA":
+        data, m, h = monitors.build_abap_live(raw["live"])
+        metrics.update(m)
+        summary["abap_live"] = data["summary"]
+        if persist:
+            monitors.store(system["id"], "abap_live", source, data, h, raw["collected_at"])
+            locks = next((inst["locks"] for inst in raw["live"] if inst.get("locks") is not None), None)
+            last = ops.last_lock_snapshot_at(system["id"])
+            if locks is not None and (last is None or raw["collected_at"] - last >= timedelta(seconds=config.LOCK_SNAPSHOT_SECONDS)):
+                kept = [lk for lk in locks if lk["age_minutes"] is None or lk["age_minutes"] >= config.LOCK_STORE_MIN_AGE_MINUTES]
+                summary["locks_snapshot"] = ops.store_lock_list(system, kept, raw["collected_at"], total=len(locks))
     if raw["syslog_supported"]:
         data, m, h = monitors.build_syslog(raw["syslog"])
         metrics.update(m)
@@ -254,6 +270,80 @@ def _run_hana_sapcontrol(row: dict, system: dict, persist: bool) -> tuple[dict, 
     return {"metrics": metrics, "summary": {"hana_instances": len(instances), "hana_down": down}}, {"diagnostics": diagnostics}
 
 
+def emit_abap(system: dict, raw: dict, source: str, at: datetime, zone, persist: bool, metrics: dict, summary: dict) -> None:
+    """ABAP runtime monitors from any source (HANA SQL, RFC, ABAP push agent): dumps, updates, tRFC, qRFC, IDocs, jobs,
+    imports. ``raw`` holds whichever of these the source delivered; the rest are left untouched."""
+    def emit(monitor, built):
+        data, m, h = built
+        metrics.update(m)
+        summary[monitor] = data.get("summary")
+        if persist:
+            monitors.store(system["id"], monitor, source, data, h, at)
+
+    if "dumps" in raw:
+        emit("dumps", monitors.build_dumps(raw["dumps"]))
+    if "updates" in raw:
+        emit("updates", monitors.build_updates(raw["updates"]))
+    if "trfc" in raw:
+        emit("trfc", monitors.build_trfc(raw["trfc"]))
+    if "qrfc" in raw:
+        emit("qrfc", monitors.build_qrfc(raw["qrfc"]))
+    if "idocs" in raw:
+        emit("idocs", monitors.build_idocs(raw["idocs"]["errors"], raw["idocs"]["total"]))
+    if raw.get("number_ranges") is not None:
+        emit("number_ranges", monitors.build_number_ranges(raw["number_ranges"]))
+    if raw.get("applog") is not None:
+        emit("applog", monitors.build_applog(raw["applog"]))
+    if raw.get("batch_input") is not None:
+        emit("batch_input", monitors.build_batch_input(raw["batch_input"]))
+    if raw.get("security") is not None:
+        emit("security", monitors.build_security(raw["security"], system.get("environment")))
+    if raw.get("spool") is not None:
+        emit("spool", monitors.build_spool(raw["spool"]))
+    if persist and raw.get("jobs") is not None:
+        try:
+            jobs = ops.parse_job_rows(raw["jobs"], zone, at) if raw["jobs"] else []
+        except ops.InputFormatError:
+            jobs = []
+        day_ago = at - timedelta(hours=24)
+        metrics["jobs.cancelled_24h"] = float(sum(1 for j in jobs if j["status"] == "cancelled"
+                                                  and (j.get("end_at") or j.get("start_at") or at) >= day_ago))
+        summary["jobs_synced"] = ops.store_job_list(system, jobs, at) if jobs else {"jobs": 0}
+    if persist and raw.get("imports") is not None:
+        grouped: dict[tuple, dict] = {}
+        for r in raw["imports"]:
+            when = parse_sap_datetime(str(r.get("TRTIME") or ""), "", zone)
+            rc_raw = str(r.get("RETCODE") or "0").strip()
+            if not when or not rc_raw.isdigit():
+                continue
+            key = (str(r["TRKORR"]).upper(), when)
+            entry = grouped.setdefault(key, {"trkorr": key[0], "rc": 0, "imported_at": when, "time_known": True,
+                                             "owner": None, "description": None})
+            entry["rc"] = max(entry["rc"], int(rc_raw))
+        entries = [{**e, "result": transports.classify_rc(e["rc"])} for e in grouped.values()]
+        summary["imports_synced"] = transports.store_import_history(system["id"], entries)
+
+
+def _run_rfc(row: dict, system: dict, persist: bool) -> tuple[dict, dict]:
+    """ABAP stack over RFC: ST22 dumps (/SDF/GET_DUMP_LOG), SM37 jobs (XBP), application servers (TH_SERVER_LIST)."""
+    zone = system_zone(system)
+    client = rfc.make_client(row, vault.decrypt(row["password_enc"]), _seed(system))
+    source = "simulator" if simulator.is_sim(row["host"]) else "rfc"
+    try:
+        raw = rfc.collect(client, zone)
+    finally:
+        client.close()
+    if raw["system"].get("sid") and raw["system"]["sid"] != system["sid"] and not simulator.is_sim(row["host"]):
+        raise CollectorError(f"RFC reached system {raw['system']['sid']}, but this collector belongs to {system['sid']}")
+    metrics: dict[str, float] = {}
+    summary: dict = {"system": raw["system"]}
+    if raw.get("servers") is not None:
+        metrics["rfc.app_servers"] = float(len(raw["servers"]))
+        summary["servers"] = raw["servers"]
+    emit_abap(system, raw, source, raw["collected_at"], zone, persist, metrics, summary)
+    return {"metrics": metrics, "summary": summary}, {"diagnostics": raw["diagnostics"]}
+
+
 def _run_hana(row: dict, system: dict, persist: bool) -> tuple[dict, dict]:
     zone = system_zone(system)
     client = hana_client(row, system)
@@ -282,32 +372,8 @@ def _run_hana(row: dict, system: dict, persist: bool) -> tuple[dict, dict]:
 
     if raw["hana"]:
         emit("hana", monitors.build_hana(raw["hana"]))
-    if "dumps" in raw:
-        emit("dumps", monitors.build_dumps(raw["dumps"]))
-    if "updates" in raw:
-        emit("updates", monitors.build_updates(raw["updates"]))
-    if "trfc" in raw:
-        emit("trfc", monitors.build_trfc(raw["trfc"]))
-    if "qrfc" in raw:
-        emit("qrfc", monitors.build_qrfc(raw["qrfc"]))
-    if "idocs" in raw:
-        emit("idocs", monitors.build_idocs(raw["idocs"]["errors"], raw["idocs"]["total"]))
-    if persist and app_on and raw.get("jobs") is not None:
-        jobs = ops.parse_job_rows(raw["jobs"], zone, at)
-        summary["jobs_synced"] = ops.store_job_list(system, jobs, at)
-    if persist and app_on and raw.get("imports") is not None:
-        grouped: dict[tuple, dict] = {}
-        for r in raw["imports"]:
-            when = parse_sap_datetime(str(r.get("TRTIME") or ""), "", zone)
-            rc_raw = str(r.get("RETCODE") or "0").strip()
-            if not when or not rc_raw.isdigit():
-                continue
-            key = (str(r["TRKORR"]).upper(), when)
-            entry = grouped.setdefault(key, {"trkorr": key[0], "rc": 0, "imported_at": when, "time_known": True,
-                                             "owner": None, "description": None})
-            entry["rc"] = max(entry["rc"], int(rc_raw))
-        entries = [{**e, "result": transports.classify_rc(e["rc"])} for e in grouped.values()]
-        summary["imports_synced"] = transports.store_import_history(system["id"], entries)
+    if app_on:
+        emit_abap(system, raw, source, at, zone, persist, metrics, summary)
     if persist and app_on and raw.get("table_sizes"):
         last = growth.last_snapshot_at(system["id"])
         if last is None or last < at - timedelta(hours=config.HANA_GROWTH_SNAPSHOT_HOURS):
@@ -367,11 +433,13 @@ def _run_os_ssh(row: dict, system: dict, persist: bool) -> tuple[dict, dict]:
         if not has_node:
             app_disk = max((d["used_pct"] for d in disks if d["mount"] in APP_MOUNTS), default=None)
             metrics.update({k: v for k, v in {"host.memory_used_pct": os_info.get("memory_used_pct"), "host.load1": os_info.get("load1"),
-                                               "host.disk_used_pct": app_disk}.items() if v is not None})
+                                               "host.disk_used_pct": app_disk, "host.cpu_pct": os_info.get("cpu_pct"),
+                                               "host.swap_used_pct": os_info.get("swap_used_pct")}.items() if v is not None})
     if is_db and os_on:
         db_disk = max((d["used_pct"] for d in disks if d["mount"].startswith(DB_MOUNTS)), default=None)
         metrics.update({k: v for k, v in {"db.host_memory_used_pct": os_info.get("memory_used_pct"), "db.host_load1": os_info.get("load1"),
-                                           "db.host_disk_used_pct": db_disk}.items() if v is not None})
+                                           "db.host_disk_used_pct": db_disk, "db.host_cpu_pct": os_info.get("cpu_pct"),
+                                           "db.host_swap_used_pct": os_info.get("swap_used_pct")}.items() if v is not None})
     if is_db and db_on:
         running = ssh.database_running(os_info, system.get("database"))
         if running is not None:
@@ -382,12 +450,13 @@ def _run_os_ssh(row: dict, system: dict, persist: bool) -> tuple[dict, dict]:
                                 "note": f"No process check for {system.get('database')}"})
     summary = {"host": row["host"], "role": role, "os": os_info.get("os_pretty"), "kernel": os_info.get("kernel"),
                "memory_used_pct": os_info.get("memory_used_pct"), "load1": os_info.get("load1"),
+               "cpu_pct": os_info.get("cpu_pct"), "swap_used_pct": os_info.get("swap_used_pct"),
                "disk_used_pct": max((d["used_pct"] for d in disks), default=None), "processes": os_info.get("processes")}
     return {"metrics": metrics, "summary": summary}, {"diagnostics": diagnostics}
 
 
 RUNNERS = {"sapcontrol": _run_sapcontrol, "hana": _run_hana, "hana_sapcontrol": _run_hana_sapcontrol,
-           "node_exporter": _run_node_exporter, "os_ssh": _run_os_ssh}
+           "node_exporter": _run_node_exporter, "os_ssh": _run_os_ssh, "rfc": _run_rfc}
 
 
 def run(collector_id: int, persist: bool = True) -> dict:
@@ -469,6 +538,7 @@ def test_connection(system_id: int, data: dict) -> dict:
 
 
 def due_collectors(now: datetime | None = None) -> list[int]:
+    """Enabled collectors whose interval has elapsed, most overdue first (never-run collectors first of all)."""
     now = now or datetime.now(timezone.utc)
     with get_db() as connection:
         rows = connection.execute(
@@ -481,17 +551,94 @@ def due_collectors(now: datetime | None = None) -> list[int]:
         if not set(collector_layers(row)) & layers_of(row):  # every layer this collector serves is turned off
             continue
         last = datetime.fromisoformat(_iso(row["last_run_at"])) if row["last_run_at"] else None
-        if last is None or (now - last).total_seconds() >= row["interval_seconds"]:
-            due.append(row["id"])
-    return due
+        overdue = float("inf") if last is None else (now - last).total_seconds() - row["interval_seconds"]
+        if overdue >= 0:
+            due.append((overdue, row["id"]))
+    return [cid for _, cid in sorted(due, key=lambda d: (-d[0], d[1]))]
 
 
 def run_due() -> list[dict]:
+    """Run every due collector and wait for all of them (tests, CLI). The scheduler uses `Dispatcher` instead."""
     ids = due_collectors()
     if not ids:
         return []
     with ThreadPoolExecutor(max_workers=max(1, config.COLLECTOR_MAX_PARALLEL)) as pool:
         return list(pool.map(run, ids))
+
+
+class Dispatcher:
+    """Non-blocking collector scheduling for the worker process.
+
+    Each tick hands due collectors to a long-lived thread pool and returns at once, so a slow or unreachable SAP system
+    never delays the others. A collector that is still queued or running is not submitted again (no overlapping runs of
+    the same collector), and the most overdue collectors are queued first."""
+
+    def __init__(self, workers: int | None = None):
+        self.workers = max(1, workers or config.COLLECTOR_MAX_PARALLEL)
+        self.pool = ThreadPoolExecutor(max_workers=self.workers, thread_name_prefix="collector")
+        self._lock = threading.Lock()
+        self._inflight: set[int] = set()
+        self.started = self.completed = self.failed = 0
+        self._busy_ticks = 0
+
+    def _done(self, cid: int, future) -> None:
+        with self._lock:
+            self._inflight.discard(cid)
+            self.completed += 1
+            if future.exception() is not None:
+                self.failed += 1
+                logger.error("Collector %s crashed: %s", cid, future.exception())
+
+    def tick(self) -> int:
+        """Submit due collectors that are not already queued or running; returns how many were submitted."""
+        submitted = 0
+        for cid in due_collectors():
+            with self._lock:
+                if cid in self._inflight:
+                    continue
+                self._inflight.add(cid)
+            future = self.pool.submit(run, cid)
+            future.add_done_callback(lambda f, cid=cid: self._done(cid, f))
+            submitted += 1
+        with self._lock:
+            self.started += submitted
+            backlog = len(self._inflight)
+        # a burst after start-up is normal; warn only when the backlog persists
+        self._busy_ticks = self._busy_ticks + 1 if backlog > self.workers * 4 else 0
+        if self._busy_ticks == 8:
+            logger.warning("Collector backlog: %s collectors queued or running on %s workers; raise COLLECTOR_MAX_PARALLEL "
+                           "or lengthen collector intervals", backlog, self.workers)
+        return submitted
+
+    def inflight(self) -> int:
+        with self._lock:
+            return len(self._inflight)
+
+    def shutdown(self, wait: bool = True) -> None:
+        self.pool.shutdown(wait=wait, cancel_futures=not wait)
+
+
+def scheduling_health(now: datetime | None = None) -> dict:
+    """How far collection is behind schedule, computed from the database (works from any API process)."""
+    now = now or datetime.now(timezone.utc)
+    with get_db() as connection:
+        rows = connection.execute(
+            select(collectors.c.id, collectors.c.last_run_at, collectors.c.interval_seconds, collectors.c.last_status)
+            .join(sap_systems, sap_systems.c.id == collectors.c.system_id)
+            .where(collectors.c.enabled.is_(True), sap_systems.c.enabled.is_(True))).all()
+    lags, late, never, failing = [], 0, 0, 0
+    for _, last, interval, status in rows:
+        if last is None:
+            never += 1
+            continue
+        lag = (now - datetime.fromisoformat(_iso(last))).total_seconds() - interval
+        lags.append(max(0.0, lag))
+        if lag > max(2 * config.COLLECTOR_TICK_SECONDS, interval):  # missed more than a whole interval
+            late += 1
+        failing += status == "error"
+    return {"collectors": len(rows), "never_run": never, "late": late, "failing": failing,
+            "max_lag_s": round(max(lags), 1) if lags else None, "workers": config.COLLECTOR_MAX_PARALLEL,
+            "status": "behind" if late else "ok"}
 
 
 def status_by_system() -> dict[int, list[dict]]:

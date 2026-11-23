@@ -14,7 +14,7 @@ router = APIRouter(prefix="/api/v1", dependencies=[Depends(authorize)])
 
 MONITOR_METRICS = {
     "availability": ["availability.system_up", "availability.instances_down"],
-    "host": ["host.load1", "host.memory_used_pct", "host.disk_used_pct", "db.host_memory_used_pct", "db.host_disk_used_pct", "db.os_process_up"],
+    "host": ["host.load1", "host.cpu_pct", "host.swap_used_pct", "host.memory_used_pct", "host.disk_used_pct", "db.host_cpu_pct", "db.host_memory_used_pct", "db.host_disk_used_pct", "db.os_process_up"],
     "workprocesses": ["wp.dia_busy_pct", "wp.btc_busy_pct", "wp.long_running", "wp.stopped"],
     "dumps": ["dumps.last_hour", "dumps.last_24h"],
     "syslog": ["syslog.errors_last_hour"],
@@ -22,7 +22,15 @@ MONITOR_METRICS = {
     "trfc": ["trfc.errors"],
     "qrfc": ["qrfc.blocked_queues"],
     "idocs": ["idoc.errors_24h"],
-    "hana": ["hana.memory_used_pct", "hana.cpu_pct", "hana.disk_used_pct", "hana.data_backup_age_h", "hana.log_backup_age_h"],
+    "abap_live": ["abap.queue_dia", "abap.queue_upd", "abap.dialog_response_ms", "abap.users_logged_on", "abap.enq_table_used_pct",
+                  "abap.locks", "abap.locks_oldest_min", "ccms.red_now"],
+    "hana": ["hana.memory_used_pct", "hana.cpu_pct", "hana.disk_used_pct", "hana.data_backup_age_h", "hana.log_backup_age_h",
+             "hana.log_disk_used_pct", "hana.blocked_transactions"],
+    "number_ranges": ["numrange.max_used_pct"],
+    "applog": ["applog.error_logs_24h"],
+    "batch_input": ["batchinput.error_sessions_7d"],
+    "security": ["security.prod_clients_open", "security.sapstar_risk", "security.users_locked_failed_logon"],
+    "spool": ["spool.requests"],
 }
 UPLOADABLE = ("dumps", "syslog", "updates", "trfc", "qrfc", "idocs")
 
@@ -33,7 +41,7 @@ def _principal(request: Request) -> Principal:
 
 # ------------------------------------------------------------------------------- collectors
 class CollectorIn(BaseModel):
-    type: str = Field(pattern="^(sapcontrol|hana|hana_sapcontrol|node_exporter|os_ssh)$")
+    type: str = Field(pattern="^(sapcontrol|hana|hana_sapcontrol|node_exporter|os_ssh|rfc)$")
     host: str = Field(min_length=1, max_length=253)
     port: int = Field(ge=1, le=65535)
     use_tls: bool = True
@@ -43,6 +51,7 @@ class CollectorIn(BaseModel):
     private_key: str | None = Field(default=None, max_length=16384)
     database_name: str | None = Field(default=None, max_length=64)
     abap_schema: str | None = Field(default=None, max_length=64)
+    sap_client: str | None = Field(default=None, pattern=r"^\d{3}$")
     interval_seconds: int = Field(default=300, ge=30, le=86400)
     enabled: bool = True
 
@@ -59,6 +68,7 @@ class CollectorPatch(BaseModel):
     trust_new_host_key: bool | None = None
     database_name: str | None = Field(default=None, max_length=64)
     abap_schema: str | None = Field(default=None, max_length=64)
+    sap_client: str | None = Field(default=None, pattern=r"^\d{3}$")
     interval_seconds: int | None = Field(default=None, ge=30, le=86400)
     enabled: bool | None = None
 
@@ -392,3 +402,9 @@ def end_maintenance(window_id: int):
     except LookupError as exc:
         raise HTTPException(404, str(exc))
     return {"ended": window_id}
+
+
+@router.get("/scheduler/health")
+def scheduler_health():
+    """Whether collection keeps up with its schedule (late = missed more than a whole interval)."""
+    return runner.scheduling_health()

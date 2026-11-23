@@ -3,8 +3,8 @@ from alembic import op
 
 from app.db import add_missing_columns
 
-revision = "20261122_0012"
-down_revision = "20261118_0011"
+revision = "20261122_0015"
+down_revision = "20261118_0014"
 branch_labels = None
 depends_on = None
 

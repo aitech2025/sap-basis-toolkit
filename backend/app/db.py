@@ -1,4 +1,5 @@
 from contextlib import contextmanager
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from sqlalchemy import (
@@ -267,6 +268,7 @@ collectors = Table(
     Column("abap_schema", String(64)),                  # e.g. SAPHANADB / SAPABAP1: enables ABAP table monitors
     Column("private_key_enc", Text),                     # os_ssh: encrypted private key (alternative to password)
     Column("host_key", String(120)),                     # os_ssh: pinned SSH host key fingerprint (TOFU)
+    Column("sap_client", String(3)),                     # rfc: logon client
     Column("interval_seconds", Integer, nullable=False, default=300),
     Column("enabled", Boolean, nullable=False, default=True),
     Column("last_run_at", DateTime(timezone=True)),
@@ -289,6 +291,59 @@ monitor_snapshots = Table(
     Column("data", Text, nullable=False),
 )
 Index("ix_monitor_snapshots", monitor_snapshots.c.system_id, monitor_snapshots.c.monitor, monitor_snapshots.c.captured_at)
+
+# Latest value of every metric per system (upserted on each write): fleet views and daily checks read this instead of
+# scanning the time series.
+metric_latest = Table(
+    "metric_latest", metadata,
+    SYSTEM_FK(),
+    Column("metric", String(80), nullable=False),
+    Column("value", Float, nullable=False),
+    Column("ts", DateTime(timezone=True), nullable=False),
+)
+Index("uq_metric_latest", metric_latest.c.system_id, metric_latest.c.metric, unique=True)
+
+# Daily Basis check sign-off: who reviewed the fleet (or a landscape) when, with the check results at that moment.
+daily_check_reviews = Table(
+    "daily_check_reviews", metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("check_date", String(10), nullable=False),     # YYYY-MM-DD (reviewer's day)
+    Column("landscape", String(80)),                       # null = whole fleet
+    Column("reviewed_by", String(80), nullable=False),
+    Column("reviewed_at", DateTime(timezone=True), nullable=False),
+    Column("comment", Text),
+    Column("summary", Text, nullable=False),               # JSON: counts per status
+    Column("results", Text, nullable=False),               # JSON: the matrix as reviewed
+)
+Index("ix_daily_check_reviews", daily_check_reviews.c.check_date, daily_check_reviews.c.landscape)
+
+# ABAP push agent (report Z_SENTINEL_PUSH in the SAP system): one token per system; only its SHA-256 is stored.
+agent_tokens = Table(
+    "agent_tokens", metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    SYSTEM_FK(),
+    Column("token_hash", String(64), nullable=False),
+    Column("hint", String(12), nullable=False),          # first characters, to recognise the token in the SAP variant
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    Column("created_by", String(80)),
+    Column("revoked_at", DateTime(timezone=True)),
+    Column("last_seen_at", DateTime(timezone=True)),
+    Column("last_ip", String(64)),
+    Column("last_agent_version", String(20)),
+    Column("last_payload_bytes", Integer),
+)
+Index("uq_agent_tokens_hash", agent_tokens.c.token_hash, unique=True)
+Index("ix_agent_tokens_system", agent_tokens.c.system_id)
+
+# Pointer to the newest snapshot of each (system, monitor): dashboards read the current state of 50+ systems without
+# scanning snapshot history.
+monitor_latest = Table(
+    "monitor_latest", metadata,
+    SYSTEM_FK(),
+    Column("monitor", String(40), nullable=False),
+    Column("snapshot_id", Integer, nullable=False),
+)
+Index("uq_monitor_latest", monitor_latest.c.system_id, monitor_latest.c.monitor, unique=True)
 
 metric_samples = Table(
     "metric_samples", metadata,
@@ -477,7 +532,7 @@ Index("ix_topology_links_target", topology_links.c.target_asset_id)
 ADDED_COLUMNS = {
     "targets": [("system_id", "INTEGER REFERENCES sap_systems(id) ON DELETE SET NULL")],
     "sap_systems": [("timezone", "VARCHAR(64)"), ("control_enabled", "BOOLEAN"), ("monitoring_layers", "VARCHAR(40)")],
-    "collectors": [("private_key_enc", "TEXT"), ("host_key", "VARCHAR(120)")],
+    "collectors": [("private_key_enc", "TEXT"), ("host_key", "VARCHAR(120)"), ("sap_client", "VARCHAR(3)")],
     "system_operations": [("steps", "TEXT"), ("checklist", "TEXT"), ("force", "BOOLEAN"), ("abort_requested", "BOOLEAN")],
 }
 
@@ -491,11 +546,17 @@ def get_engine() -> Engine:
             db_path = DATABASE_URL.removeprefix("sqlite:///")
             if db_path != ":memory:":
                 Path(db_path).parent.mkdir(parents=True, exist_ok=True)
+        from . import config
+
+        pool = {} if DATABASE_URL.startswith("sqlite") else {
+            "pool_size": config.DB_POOL_SIZE, "max_overflow": config.DB_MAX_OVERFLOW,
+            "pool_timeout": config.DB_POOL_TIMEOUT_SECONDS, "pool_recycle": 1800}
         _engine = create_engine(
             DATABASE_URL,
             future=True,
             pool_pre_ping=True,
             connect_args={"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {},
+            **pool,
         )
         if DATABASE_URL.startswith("sqlite"):
             from sqlalchemy import event
@@ -571,8 +632,29 @@ def init_db() -> None:
         # Execute table DDL directly: Table.create also traverses FK dependencies
         # and can attempt to recreate indexes on already-existing parent tables.
         create_missing_tables(connection, missing_tables)
+        if any(t.name == "monitor_latest" for t in missing_tables):
+            backfill_monitor_latest(connection)
+        if any(t.name == "metric_latest" for t in missing_tables):
+            backfill_metric_latest(connection)
         add_missing_columns(connection)
         ensure_target_uniqueness(connection)
+
+
+def backfill_monitor_latest(connection: Connection) -> None:
+    connection.execute(text(
+        "INSERT INTO monitor_latest (system_id, monitor, snapshot_id) "
+        "SELECT system_id, monitor, MAX(id) FROM monitor_snapshots GROUP BY system_id, monitor"))
+
+
+def backfill_metric_latest(connection: Connection) -> None:
+    """Latest point per (system, metric) from the last 7 days; other metrics fill on their next collection."""
+    since = datetime.now(timezone.utc) - timedelta(days=7)
+    connection.execute(text(
+        "INSERT INTO metric_latest (system_id, metric, value, ts) "
+        "SELECT p.system_id, p.metric, MAX(p.value), p.ts FROM metric_points p "
+        "JOIN (SELECT system_id, metric, MAX(ts) AS ts FROM metric_points WHERE ts >= :since GROUP BY system_id, metric) m "
+        "ON m.system_id = p.system_id AND m.metric = p.metric AND m.ts = p.ts "
+        "GROUP BY p.system_id, p.metric, p.ts"), {"since": since})
 
 
 def add_missing_columns(connection: Connection) -> None:

@@ -436,6 +436,7 @@ def system_health(registry: list[dict]) -> dict[int, dict]:
     """Per-system health across certificates, capacity forecast and last import."""
     certs = certificate_summary()
     runs = _latest_runs()
+    incident_counts = incidents.counts_by_system()
     result = {}
     for system in registry:
         sid = system["id"]
@@ -457,7 +458,8 @@ def system_health(registry: list[dict]) -> dict[int, dict]:
         locks = ops.lock_report(sid, history_days=1) if system["stack"] != "JAVA" else None
         lock_level = None if not locks or locks["stale"] or not locks["summary"] else \
             3 if locks["summary"]["critical"] else 2 if locks["summary"]["long_running"] else 0
-        worst_incident = incidents.worst_active_severity(sid)
+        own_incidents = incident_counts.get(sid)
+        worst_incident = incidents.worst_severity(own_incidents) if own_incidents else None
         incident_level = {"critical": 3, "warning": 2}.get(worst_incident) if worst_incident else None
         live = monitors.latest(sid, "availability").get("availability")             if "application" in systems.layers_of(system) else None
         availability = live["data"]["summary"] if live and not live["stale"] else None
@@ -478,7 +480,7 @@ def system_health(registry: list[dict]) -> dict[int, dict]:
                      "cancelled_24h": jobs["summary"]["cancelled_24h"] if jobs else None,
                      "long_running": jobs["summary"]["long_running"] if jobs else None},
             "availability": availability,
-            "incidents": incidents.counts(sid) if worst_incident else {"open": 0, "acknowledged": 0, "critical": 0, "warning": 0, "total": 0},
+            "incidents": own_incidents or {"open": 0, "acknowledged": 0, "critical": 0, "warning": 0, "total": 0},
             "locks": {"health": HEALTH.get(lock_level, "unknown"),
                       "long_running": (locks["summary"] or {}).get("long_running") if locks else None,
                       "oldest_minutes": (locks["summary"] or {}).get("oldest_minutes") if locks else None},

@@ -50,8 +50,8 @@ def test_anomaly_detection_requires_baseline_and_flags_robust_outlier(monkeypatc
     with TestClient(app) as client:
         system = create_system(client)
         rows = [
-            {"system_id": system["id"], "metric": "hana.cpu_pct", "value": 20 + (i % 3), "ts": now - timedelta(hours=2, minutes=10-i)}
-            for i in range(20)
+            {"system_id": system["id"], "metric": "hana.cpu_pct", "value": 20 + (i % 3), "ts": now - timedelta(hours=3 + i, minutes=10)}
+            for i in range(20)  # 20 hours of baseline (hourly means)
         ]
         rows.append({"system_id": system["id"], "metric": "hana.cpu_pct", "value": 95, "ts": now - timedelta(minutes=5)})
         with db.get_db() as connection:

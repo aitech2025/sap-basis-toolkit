@@ -1,7 +1,7 @@
 name: CI
 on:
   push:
-    branches: [main, 'feature/**']
+    branches: [main, 'feature/**', 'ci/**']
   pull_request:
     branches: [main]
 jobs:
@@ -48,3 +48,23 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
       - run: npm ci
       - run: npm run build
+
+  abap:
+    name: ABAP lint (${{ matrix.target }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: SAP NetWeaver AS ABAP 7.50
+            config: abaplint.json
+          - target: SAP S/4HANA on-premise ABAP Platform 7.58
+            config: abaplint-s4hana.json
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Run abaplint
+        working-directory: abap
+        run: npx --yes @abaplint/cli@2 ${{ matrix.config }}

@@ -21,8 +21,10 @@ services:
       dockerfile: backend/Dockerfile
       args:
         HANA_CLIENT: ${HANA_CLIENT:-true}
+        RFC_CLIENT: ${RFC_CLIENT:-false}
     command: ["alembic", "upgrade", "head"]
     environment: &app-environment
+      APP_ENV: ${APP_ENV:-production}
       DATABASE_URL: postgresql+psycopg://sentinel:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}@db:5432/sentinel
       API_AUTH_TOKEN: ${API_AUTH_TOKEN:?Set API_AUTH_TOKEN in the project .env file}
       ALLOWED_TARGET_HOSTS: ${ALLOWED_TARGET_HOSTS:?Set ALLOWED_TARGET_HOSTS}
@@ -59,14 +61,27 @@ services:
       SESSION_HOURS: ${SESSION_HOURS:-12}
       ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
-      COLLECTOR_TICK_SECONDS: ${COLLECTOR_TICK_SECONDS:-30}
+      COLLECTOR_TICK_SECONDS: ${COLLECTOR_TICK_SECONDS:-15}
       COLLECTOR_TIMEOUT_SECONDS: ${COLLECTOR_TIMEOUT_SECONDS:-15}
-      COLLECTOR_MAX_PARALLEL: ${COLLECTOR_MAX_PARALLEL:-4}
+      COLLECTOR_MAX_PARALLEL: ${COLLECTOR_MAX_PARALLEL:-16}
+      SAPCONTROL_INTERVAL_SECONDS: ${SAPCONTROL_INTERVAL_SECONDS:-60}
+      SAPCONTROL_INSTANCE_PARALLEL: ${SAPCONTROL_INSTANCE_PARALLEL:-4}
+      LOCK_SNAPSHOT_SECONDS: ${LOCK_SNAPSHOT_SECONDS:-300}
+      LOCK_STORE_MIN_AGE_MINUTES: ${LOCK_STORE_MIN_AGE_MINUTES:-5}
+      AGENT_MAX_BYTES: ${AGENT_MAX_BYTES:-8388608}
+      AGENT_MIN_INTERVAL_SECONDS: ${AGENT_MIN_INTERVAL_SECONDS:-20}
+      AGENT_SILENT_SECONDS: ${AGENT_SILENT_SECONDS:-900}
+      CERT_CHECK_PARALLEL: ${CERT_CHECK_PARALLEL:-8}
+      DB_POOL_SIZE: ${DB_POOL_SIZE:-10}
+      DB_MAX_OVERFLOW: ${DB_MAX_OVERFLOW:-20}
+      INTELLIGENCE_CACHE_SECONDS: ${INTELLIGENCE_CACHE_SECONDS:-60}
       WP_LONG_RUNNING_SECONDS: ${WP_LONG_RUNNING_SECONDS:-1800}
       METRIC_RETENTION_DAYS: ${METRIC_RETENTION_DAYS:-30}
       SNAPSHOT_RETENTION_DAYS: ${SNAPSHOT_RETENTION_DAYS:-7}
+      SNAPSHOT_FULL_RESOLUTION_HOURS: ${SNAPSHOT_FULL_RESOLUTION_HOURS:-24}
       QUERY_OVERRIDES_FILE: ${QUERY_OVERRIDES_FILE:-}
       SIMULATOR_ENABLED: ${SIMULATOR_ENABLED:-false}
+      CONTROL_ENABLED: ${CONTROL_ENABLED:-false}
     depends_on:
       db:
         condition: service_healthy
@@ -78,16 +93,23 @@ services:
       dockerfile: backend/Dockerfile
       args:
         HANA_CLIENT: ${HANA_CLIENT:-true}
+        RFC_CLIENT: ${RFC_CLIENT:-false}
     command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
     environment: *app-environment
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     depends_on:
       migrate:
         condition: service_completed_successfully
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    tmpfs:
+      - /tmp
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/ready', timeout=3)"]
       interval: 15s
       timeout: 5s
       retries: 5
@@ -98,12 +120,19 @@ services:
       dockerfile: backend/Dockerfile
       args:
         HANA_CLIENT: ${HANA_CLIENT:-true}
+        RFC_CLIENT: ${RFC_CLIENT:-false}
     command: ["python", "-m", "app.worker"]
     environment: *app-environment
     depends_on:
       migrate:
         condition: service_completed_successfully
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    tmpfs:
+      - /tmp
 
 volumes:
   sentinel-postgres:

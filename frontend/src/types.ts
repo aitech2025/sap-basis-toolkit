@@ -539,7 +539,7 @@ export interface MaintenanceWindow {
 export interface Collector {
   id: number;
   system_id: number;
-  type: "sapcontrol" | "hana" | "hana_sapcontrol" | "node_exporter" | "os_ssh";
+  type: "sapcontrol" | "hana" | "hana_sapcontrol" | "node_exporter" | "os_ssh" | "rfc";
   host: string;
   port: number;
   use_tls: boolean;
@@ -558,8 +558,31 @@ export interface Collector {
   simulated: boolean;
   has_private_key?: boolean;
   host_key?: string | null;
+  sap_client?: string | null;
   /** Layers this collector serves; it runs while at least one of them is monitored. */
   layers: MonitoringLayer[];
+}
+
+export interface AgentToken {
+  id: number;
+  system_id: number;
+  hint: string;
+  created_at: string;
+  created_by: string | null;
+  revoked_at: string | null;
+  last_seen_at: string | null;
+  last_ip: string | null;
+  last_agent_version: string | null;
+  last_payload_bytes: number | null;
+  token?: string;
+}
+
+export interface AgentStatus {
+  active: AgentToken | null;
+  tokens: AgentToken[];
+  endpoint: string;
+  abap_objects: string[];
+  schema: number;
 }
 
 export interface MonitorSnapshot<T = Record<string, any>> {
@@ -743,4 +766,27 @@ export interface ControlStatus {
   hana_start_timeout_seconds: number;
   start_sequence: string[];
   stop_sequence: string[];
+}
+
+export type CheckStatus = "critical" | "warning" | "stale" | "ok" | "no_data";
+export interface DailyCheckCell {
+  status: CheckStatus;
+  value: number;
+  at: string;
+  threshold: { operator: string; warning: number | null; critical: number | null; source: "rule" | "default" };
+}
+export interface DailyCheckSystem {
+  id: number; sid: string; name: string; landscape: string; environment: string;
+  overall: CheckStatus; counts: Record<CheckStatus, number>; cells: Record<string, DailyCheckCell>;
+}
+export interface DailyChecks {
+  generated_at: string;
+  checks: { key: string; area: string; label: string; tcode: string; fresh_minutes: number; format: "flag" | "pct" | "ms" | "hours" | "minutes" | "days" | "count" }[];
+  systems: DailyCheckSystem[];
+  totals: Record<CheckStatus, number>;
+  summary: { systems: number } & Record<CheckStatus, number>;
+}
+export interface DailyCheckReview {
+  id: number; check_date: string; landscape: string | null; reviewed_by: string; reviewed_at: string;
+  comment: string | null; summary: { systems: number } & Record<CheckStatus, number>;
 }

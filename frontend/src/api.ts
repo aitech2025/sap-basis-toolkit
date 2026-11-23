@@ -3,6 +3,7 @@ import type { AnomaliesResponse, AvailabilityResponse, CapacityForecastResponse,
 import type {
   AlertEvent, Catalogue, CertificateSummary, GrowthReport, Overview, PostcheckResult, PrecheckResult, Run,
   AuditEntry, Collector, ControlPlan, ControlStatus, Infrastructure, ImportHistory, Operation, RegisterResult, SapInstance, ScanResult, Incident, IncidentCounts, JobReport, LockReport, MaintenanceWindow, Me, MonitorDetail, MonitorsResponse, RouteProposal, Rule, RuleMetric, User, SapSystem, SystemDetail, SystemInput, SystemOverviewData, SystemRoutes, DependencyTopology, TopologyAsset, TopologyLink, Topology, TransportRoute, UserReport,
+  AgentStatus, AgentToken, DailyCheckReview, DailyChecks,
 } from "./types";
 
 const KEY_STORAGE = "sapBasisToolkit.apiKey";
@@ -93,6 +94,22 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   return data as T;
 }
 
+/** Download an authenticated file (the API needs the session token, so a plain link cannot be used). */
+async function download(path: string, filename: string): Promise<void> {
+  const headers = new Headers();
+  const token = getToken();
+  if (token) headers.set("Authorization", `Bearer ${token}`);
+  else if (getApiKey()) headers.set("X-API-Key", getApiKey());
+  const response = await fetch(path, { headers });
+  if (!response.ok) throw new ApiError(response.status, `Download failed (HTTP ${response.status})`);
+  const url = URL.createObjectURL(await response.blob());
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 const json = (method: string, body: unknown): RequestInit => ({
   method,
   headers: { "Content-Type": "application/json" },
@@ -161,6 +178,20 @@ export const api = {
   endMaintenance: (id: number) => request(`/api/v1/maintenance/${id}/end`, { method: "POST" }),
 
   collectors: (systemId: number) => request<Collector[]>(`/api/v1/systems/${systemId}/collectors`),
+  dailyChecks: (q: { landscape?: string; environment?: string } = {}) =>
+    request<DailyChecks>(`/api/v1/daily-checks?${new URLSearchParams(Object.entries(q).filter(([, v]) => v) as [string, string][])}`),
+  dailyCheckReviews: () => request<DailyCheckReview[]>("/api/v1/daily-checks/reviews"),
+  reviewDailyChecks: (body: { landscape?: string | null; comment?: string | null }) =>
+    request<DailyCheckReview>("/api/v1/daily-checks/reviews", json("POST", body)),
+  agentStatus: (systemId: number) => request<AgentStatus>(`/api/v1/systems/${systemId}/agent`),
+  issueAgentToken: (systemId: number) => request<AgentToken>(`/api/v1/systems/${systemId}/agent/token`, { method: "POST" }),
+  revokeAgentToken: (systemId: number, tokenId: number) =>
+    request<void>(`/api/v1/systems/${systemId}/agent/token/${tokenId}`, { method: "DELETE" }),
+  downloadAbapSources: () => download("/api/v1/agent/abap-sources.zip", "sentinel-abap-agent.zip"),
+  downloadDailyChecks: (q: { landscape?: string; environment?: string } = {}) =>
+    download(`/api/v1/daily-checks/export.csv?${new URLSearchParams(Object.entries(q).filter(([, v]) => v) as [string, string][])}`,
+             `basis-daily-checks-${new Date().toISOString().slice(0, 10)}.csv`),
+
   createCollector: (systemId: number, body: Record<string, unknown>) =>
     request<Collector>(`/api/v1/systems/${systemId}/collectors`, json("POST", body)),
   testCollector: (systemId: number, body: Record<string, unknown>) =>

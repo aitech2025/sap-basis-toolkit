@@ -71,7 +71,10 @@ def test_collectors_report_the_layers_they_serve(client):
     sql = add_collector(client, system["id"], type="hana", host="simulator", port=30015, abap_schema="SAPHANADB")
     plain_sql = add_collector(client, system["id"], type="hana", host="simulator", port=30015)
     ssh = add_collector(client, system["id"], type="os_ssh", host="simulator-s4q", port=22, username="root", password="pw")
+    rfc = add_collector(client, system["id"], type="rfc", host="simulator-s4p", port=3300, username="SENTINEL_RFC",
+                        password="pw", sap_client="100")
     assert sc["layers"] == ["application"]
+    assert rfc["layers"] == ["application"]
     assert sql["layers"] == ["database", "application"]  # the ABAP schema adds dumps, RFC, IDocs, jobs ...
     assert plain_sql["layers"] == ["database"]
     assert ssh["layers"] == ["os", "database"]  # the database process check on the DB host
@@ -203,3 +206,35 @@ def test_rediscovery_keeps_the_existing_selection(client):
     assert rescan["existing_systems"][0]["monitoring_layers"] == ["application", "os"]
     again = register(client, rescan, system_id=first["system"]["id"], hana=None).json()
     assert again["system"]["monitoring_layers"] == ["application", "os"]
+
+
+# ------------------------------------------------------------------------------------------------ push agent, daily checks
+def test_agent_pushes_and_daily_checks_follow_the_layers(client, monkeypatch):
+    from datetime import datetime, timedelta, timezone
+
+    from sqlalchemy import update
+
+    from app import config
+    from app.db import agent_tokens, get_db
+    from app.services import agent, monitors
+    from test_agent import payload
+
+    monkeypatch.setattr(config, "AGENT_MIN_INTERVAL_SECONDS", 0)
+    system = make_system(client)
+    token = client.post(f"/api/v1/systems/{system['id']}/agent/token", headers=KEY).json()["token"]
+    hdr = {"X-Sentinel-Agent-Token": token}
+    assert client.post("/api/v1/agent/ingest", json=payload(), headers=hdr).status_code == 200
+    monitors.record_metrics(system["id"], {"host.cpu_pct": 40.0, "hana.memory_used_pct": 50.0})
+    cells = client.get("/api/v1/daily-checks", headers=KEY).json()["systems"][0]["cells"]
+    assert {"agent.up", "dumps.last_24h", "host.cpu_pct", "hana.memory_used_pct"} <= set(cells)
+
+    client.patch(f"/api/v1/systems/{system['id']}", headers=KEY, json={"monitoring_layers": ["database"]})
+    rejected = client.post("/api/v1/agent/ingest", json=payload(), headers=hdr)
+    assert rejected.status_code == 409 and "turned off" in rejected.json()["detail"]
+    with get_db() as conn:  # the agent goes quiet: no "agent silent" incident while the application layer is off
+        conn.execute(update(agent_tokens).values(last_seen_at=datetime.now(timezone.utc) - timedelta(minutes=20)))
+    assert agent.watchdog() == []
+    assert not incidents(client, system["id"], "agent.up")
+    cells = client.get("/api/v1/daily-checks", headers=KEY).json()["systems"][0]["cells"]
+    assert "hana.memory_used_pct" in cells
+    assert not {"agent.up", "dumps.last_24h", "host.cpu_pct"} & set(cells)  # not shown as stale

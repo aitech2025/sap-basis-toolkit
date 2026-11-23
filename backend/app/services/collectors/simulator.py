@@ -276,6 +276,66 @@ def sapcontrol_transport(seed: str, java: bool = False):
                 rows.append({"Time": at.strftime("%Y-%m-%d %H:%M:%S"), "Severity": sev, "MNo": mno, "Text": text,
                              "User": r.choice(["SAPSYS", "JSMITH", "BATCH_FI"]), "Client": "100", "Program": "SAPMSSY1"})
             return _envelope(method, _items("log", rows))
+        if method == "GetQueueStatistic":
+            if "ABAP" not in row["features"] or not green:
+                return _fault("DpAttachStartService failed")
+            dia = r.randint(0, 3) + (r.randint(8, 30) if p["fragile"] and r.random() < 0.3 else 0)
+            return _envelope(method, _items("queue", [
+                {"Typ": t, "Now": now_, "High": max(now_, r.randint(5, 40)), "Max": 14000, "Writes": r.randint(10**5, 10**6),
+                 "Reads": r.randint(10**5, 10**6)}
+                for t, now_ in (("ABAP/NOWP", 0), ("ABAP/DIA", dia), ("ABAP/UPD", r.randint(0, 2)), ("ABAP/ENQ", 0),
+                                ("ABAP/BTC", r.randint(0, 4)), ("ABAP/SPO", 0), ("ABAP/UP2", 0), ("ICM/Intern", 0))]))
+        if method in ("GetAlertTree", "GetAlerts"):
+            if "ABAP" not in row["features"] or not green:
+                return _fault("GetAlertTree, OpenCCMSMemory failed")
+            ctx = f"{row['hostname']}_{sid}_{instance_nr}"
+            resp = int(350 + p["busy"] * 900 + (r.randint(800, 2500) if p["fragile"] and r.random() < 0.25 else r.randint(0, 200)))
+            dumps_red = p["fragile"] and r.random() < 0.4
+            t = now.strftime("%Y %m %d %H:%M:%S")
+            tree = [(ctx, -1, "GREEN", ""), ("R3Services", 0, "GREEN", ""), ("Dialog", 1, "YELLOW" if resp >= 1500 else "GREEN", ""),
+                    ("ResponseTime", 2, "RED" if resp >= 3000 else "YELLOW" if resp >= 1500 else "GREEN", f"{resp} msec"),
+                    ("FrontEndResponseTime", 2, "GREEN", f"{int(resp * 1.3)} msec"),
+                    ("UsersLoggedIn", 2, "GREEN", f"{r.randint(20, 400)} "), ("Background", 1, "GREEN", ""),
+                    ("AbortedJobs", 6, "RED" if p["fragile"] and r.random() < 0.3 else "GREEN", "Job canceled" if p["fragile"] else ""),
+                    ("R3Abap", 0, "RED" if dumps_red else "GREEN", ""),
+                    ("Shortdumps", 8, "RED" if dumps_red else "GREEN", "TIME_OUT" if dumps_red else ""),
+                    ("Update", 1, "GREEN", ""), ("UpdateStatus", 10, "GREEN", "Updates active"),
+                    ("Buffers", 0, "GREEN", ""),
+                    ("Program", 12, "GREEN", ""), ("HitRatio", 13, "GREEN", f"{r.uniform(97.5, 99.9):.1f} %"),
+                    ("Swap", 13, "YELLOW" if p["fragile"] else "GREEN", f"{r.randint(1500, 6000) if p['fragile'] else r.randint(0, 300)} /day"),
+                    ("GenericKey", 12, "GREEN", ""), ("HitRatio", 16, "GREEN", f"{r.uniform(98, 100):.1f} %"),
+                    ("Swap", 16, "GREEN", f"{r.randint(0, 50)} /day")]
+            if method == "GetAlertTree":
+                return _envelope(method, _items("tree", [
+                    {"name": n, "parent": par, "ActualValue": f"SAPControl-{c}", "description": d, "Time": t,
+                     "AnalyseToolString": "", "VisibleLevel": 1, "HighAlertValue": f"SAPControl-{c}", "AlValue": f"SAPControl-{c}",
+                     "Tid": f"{sid}\\{ctx}\\{n}"} for n, par, c, d in tree]))
+            alerts = [{"Object": n, "Attribute": n, "Value": f"SAPControl-{c}", "Description": d or n,
+                       "Time": (now - timedelta(hours=r.randint(0, 72))).strftime("%Y %m %d %H:%M:%S"), "Tid": n, "AId": str(i)}
+                      for i, (n, par, c, d) in enumerate(tree) if c in ("RED", "YELLOW")]
+            return _envelope(method, _items("alert", alerts))
+        if method in ("EnqGetLockTable", "EnqGetStatistic"):
+            if "ENQUE" not in row["features"] or not green:
+                return _fault("EnqGetLockTable: no enqueue server in this instance")
+            locks = []
+            for i in range(r.randint(5, 40)):
+                age = r.randint(0, 20) if not (p["fragile"] and i < 2) else r.randint(70, 400)
+                at = now - timedelta(minutes=age)  # system timezone defaults to UTC
+                locks.append({"lock-name": r.choice(["VBAK", "EKKO", "MARA", "BKPF", "ES_PROG"]), "lock-arg": f"100{r.randint(10**7, 10**8)}",
+                              "lock-mode": r.choice(["E", "E", "S", "X"]),
+                              "owner": at.strftime("%Y%m%d%H%M%S") + f"{r.randint(0, 999999):06d}000sap{sid.lower()}app1",
+                              "owner-vb": "", "use-count-owner": 1, "use-count-owner-vb": 0, "client": "100",
+                              "user": r.choice(["JSMITH", "BATCH_FI", "MMUELLER", "RFC_PI"]), "transaction": r.choice(["VA02", "ME22N", "SE38", ""]),
+                              "object": "", "backup": "FALSE"})
+            if method == "EnqGetLockTable":
+                return _envelope(method, _items("lock", locks))
+            n = len(locks)
+            fields = {"owner-now": n, "owner-high": n + 30, "owner-max": 80000, "owner-state": "SAPControl-GREEN",
+                      "arguments-now": n, "arguments-high": n + 40, "arguments-max": 80000, "arguments-state": "SAPControl-GREEN",
+                      "locks-now": n, "locks-high": n + 60, "locks-max": 80000, "locks-state": "SAPControl-GREEN",
+                      "enqueue-requests": r.randint(10**6, 10**7), "enqueue-rejects": r.randint(0, 5000), "enqueue-errors": 0,
+                      "dequeue-requests": r.randint(10**6, 10**7), "dequeue-errors": 0, "lock-time": "12.5", "lock-wait-time": "0.6"}
+            return _envelope(method, "<statistic>" + "".join(f"<{k}>{v}</{k}>" for k, v in fields.items()) + "</statistic>")
         return _envelope(method, "")
     return transport
 
@@ -283,6 +343,65 @@ def sapcontrol_transport(seed: str, java: bool = False):
 def _fault(text: str) -> str:
     return ('<SOAP-ENV:Envelope xmlns:SOAP-ENV="http://schemas.xmlsoap.org/soap/envelope/"><SOAP-ENV:Body><SOAP-ENV:Fault>'
             f'<faultcode>SOAP-ENV:Server</faultcode><faultstring>{escape(text)}</faultstring></SOAP-ENV:Fault></SOAP-ENV:Body></SOAP-ENV:Envelope>')
+
+
+class SimulatedRfc:
+    """Answers the RFC collector's function modules (same shapes as pyrfc results)."""
+
+    RUNTIME_ERRORS = ["TIME_OUT", "DBSQL_DUPLICATE_KEY_ERROR", "MESSAGE_TYPE_X", "TSV_TNEW_PAGE_ALLOC_FAILED",
+                      "CONVT_NO_NUMBER", "OBJECTS_OBJREF_NOT_ASSIGNED"]
+
+    def __init__(self, seed: str):
+        self.seed = seed
+        self.p = profile(seed)
+        self.r = _rng(f"{seed}:rfc")
+        self.sid = sim_sid(seed) if seed.startswith(SIM_HOST + "-") else "SIM"
+        self.xbp = False
+
+    def call(self, name: str, **params):
+        now = datetime.now(timezone.utc)
+        if name == "RFC_SYSTEM_INFO":
+            return {"RFCSI_EXPORT": {"RFCSYSID": self.sid, "RFCSAPRL": "758", "RFCDBSYS": "HDB", "RFCHOST": f"sap{self.sid.lower()}app1",
+                                     "RFCKERNRL": "793"}}
+        if name == "TH_SERVER_LIST":
+            return {"LIST": [{"NAME": f"sap{self.sid.lower()}app{i}_{self.sid}_0{i - 1}", "HOST": f"sap{self.sid.lower()}app{i}",
+                              "SERV": f"sapdp0{i - 1}", "MSGTYPES": 255} for i in (1, 2)]}
+        if name == "/SDF/GET_DUMP_LOG":
+            count = self.r.randint(0, 4) + (self.r.randint(5, 25) if self.p["fragile"] else 0)
+            rows = []
+            for _ in range(count):
+                at = now - timedelta(minutes=self.r.randint(0, 23 * 60))
+                rows.append({"FIELD1": at.strftime("%Y%m%d"), "FIELD2": at.strftime("%H%M%S"),
+                             "FIELD3": self.r.choice(self.RUNTIME_ERRORS), "FIELD4": self.r.choice(["JSMITH", "BATCH_FI", "RFC_PI"]),
+                             "FIELD5": f"sap{self.sid.lower()}app1_{self.sid}_00", "FIELD6": "100",
+                             "FIELD7": self.r.choice(["SAPMV45A", "ZFI_POSTING", "SAPLBAPT"])})
+            return {"ET_E2E_LOG": rows,
+                    "ES_E2E_LOG_STRUCT_DESC": {"FIELD1": "Date", "FIELD2": "Time", "FIELD3": "Runtime Error", "FIELD4": "User",
+                                               "FIELD5": "Application Server", "FIELD6": "Client", "FIELD7": "Program"}}
+        if name == "BAPI_XMI_LOGON":
+            self.xbp = True
+            return {"SESSIONID": "SIMXMI0001", "RETURN": {"TYPE": "S", "MESSAGE": ""}}
+        if name == "BAPI_XMI_LOGOFF":
+            self.xbp = False
+            return {"RETURN": {"TYPE": "S", "MESSAGE": ""}}
+        if name == "BAPI_XBP_JOB_SELECT":
+            if not self.xbp:
+                return {"SELECTED_JOBS": [], "RETURN": {"TYPE": "E", "MESSAGE": "Not logged on in interface XBP"}}
+            jobs = []
+            for i in range(self.r.randint(15, 40)):
+                start = now - timedelta(minutes=self.r.randint(5, 6 * 24 * 60))
+                status = "A" if self.p["fragile"] and self.r.random() < 0.15 else self.r.choice(["F", "F", "F", "F", "R"])
+                end = start + timedelta(minutes=self.r.randint(1, 50)) if status in ("F", "A") else None
+                jobs.append({"JOBNAME": self.r.choice(["SAP_COLLECTOR_PERFMON", "Z_FI_NIGHTLY", "SAP_REORG_SPOOL", "BTCTRNS1_CHECK",
+                                                       "Z_SD_BILLING"]), "JOBCOUNT": f"{10000000 + i:08d}", "STATUS": status,
+                             "SDLUNAME": "BATCH_FI", "STRTDATE": start.strftime("%Y%m%d"), "STRTTIME": start.strftime("%H%M%S"),
+                             "ENDDATE": end.strftime("%Y%m%d") if end else "", "ENDTIME": end.strftime("%H%M%S") if end else ""})
+            return {"SELECTED_JOBS": jobs, "RETURN": {"TYPE": "S", "MESSAGE": ""}}
+        from . import CollectorError
+        raise CollectorError(f"{name}: function module not found or not remote-enabled")
+
+    def close(self) -> None:
+        pass
 
 
 class SimulatedHana:
@@ -395,6 +514,32 @@ class SimulatedHana:
                                  "STRTDATE": start.strftime("%Y%m%d"), "STRTTIME": start.strftime("%H%M%S"),
                                  "ENDDATE": start.strftime("%Y%m%d"), "ENDTIME": (start + timedelta(minutes=5)).strftime("%H%M%S")})
             return rows
+        if name == "number_ranges":
+            rows = []
+            for obj, used in (("RF_BELEG", 0.42), ("RV_BELEG", 0.86 if p["fragile"] else 0.55), ("MATERIALNR", 0.12),
+                              ("SPO_NUM", 0.71), ("BU_PARTNER", 0.33), ("EINKBELEG", 0.93 if p["fragile"] and r.random() < 0.5 else 0.6)):
+                lo, hi = 1000000000, 1999999999
+                rows.append({"CLIENT": "100", "OBJECT": obj, "SUBOBJECT": "", "NRRANGENR": "01", "TOYEAR": "0000",
+                             "FROMNUMBER": f"{lo:020d}", "TONUMBER": f"{hi:020d}", "NRLEVEL": f"{int(lo + (hi - lo) * used):020d}"})
+            return rows
+        if name == "applog_errors":
+            return [{"OBJECT": o, "SUBOBJECT": so, "LOGS": r.randint(1, 40) * (4 if p["fragile"] else 1)}
+                    for o, so in (("BAL_TEST", ""), ("/SAPAPO/PPM", "ERROR"), ("MDG_BS", "MASS"), ("EDI", "INBOUND"))]
+        if name == "batch_input":
+            return [] if not p["fragile"] else [{"MANDANT": "100", "GROUPID": "MIGR_VENDORS", "QSTATE": "E",
+                                                  "CREDATE": (now - timedelta(days=1)).strftime("%Y%m%d"), "CREATOR": "MIGRATION"}]
+        if name == "clients":
+            return [{"MANDT": "000", "MTEXT": "SAP AG", "CCCATEGORY": "S", "CCCORACTIV": "2", "CCNOCLIIND": "3"},
+                    {"MANDT": "100", "MTEXT": "Production", "CCCATEGORY": "P",
+                     "CCCORACTIV": "1" if p["fragile"] else "2", "CCNOCLIIND": "3"}]
+        if name == "spool_requests":
+            return [{"TOTAL": r.randint(2000, 26000)}]
+        if name == "log_disk":
+            return [{"USED": 40 * 2**30 + r.randint(0, 20) * 2**30, "TOTAL": 100 * 2**30}]
+        if name == "blocked_transactions":
+            return [{"BLOCKED": r.randint(0, 3) + (r.randint(4, 12) if p["fragile"] else 0), "MAX_WAIT_S": r.randint(0, 90)}]
+        if name == "oom_events":
+            return [{"EVENTS": 1 if p["fragile"] and r.random() < 0.3 else 0}]
         if name == "imports":
             return [{"TRKORR": f"S4DK90{1200 + d:04d}", "RETCODE": "0008" if p["fragile"] and d == 0 else "0000",
                      "TRTIME": (now - timedelta(days=d, hours=3)).strftime("%Y%m%d%H%M%S")} for d in range(4)]
@@ -443,6 +588,8 @@ def ssh_command(host: str, user: str, command: str) -> str:
                  "@@mem", f"MemTotal:       {o['mem_kb']} kB", f"MemAvailable:   {int(o['mem_kb'] * o['avail_ratio'])} kB",
                  f"SwapTotal:      {8 * 1024 * 1024} kB", "SwapFree:       8000000 kB",
                  "@@load", f"{_rng(host + 'l').uniform(0.5, 6):.2f} 1.10 0.95 2/1450 31337",
+                 "@@cpustat", "cpu  1000000 2000 300000 8000000 50000 0 10000 0 0 0",
+                 f"cpu  {1000000 + (busy := _rng(host + str(int(time.time()) // 60)).randint(15, 85))} 2000 300000 {8000000 + (100 - busy)} 50000 0 10000 0 0 0",
                  "@@uptime", f"{_rng(host + 'u').randint(5, 140) * 86400 + 4711}.33 1000.00",
                  "@@virt", o["virt"], "@@tz", "UTC+0000",
                  "@@df", "Filesystem 1024-blocks Used Available Capacity Mounted on",

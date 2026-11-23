@@ -20,7 +20,7 @@ Set these in `.env` (see `.env.example`):
 - `SECRET_KEY`: signs sessions and encrypts collector passwords. Generate it with `openssl rand -hex 32`. If you rotate it, collector passwords must be entered again.
 - `ALLOWED_TARGET_HOSTS` / `ALLOWED_TARGET_CIDRS`: the SAP and HANA hosts the collectors may contact. Instance hostnames returned by `GetSystemInstanceList` must also be allowed.
 - `HANA_CLIENT=true`: builds the image with SAP's `hdbcli` driver. It is distributed under the SAP Developer License; check that the licence suits your use.
-- `COLLECTOR_TICK_SECONDS`, `COLLECTOR_MAX_PARALLEL`, `COLLECTOR_TIMEOUT_SECONDS`: control scheduling.
+- `COLLECTOR_TICK_SECONDS`, `COLLECTOR_MAX_PARALLEL`, `COLLECTOR_TIMEOUT_SECONDS`: control scheduling. See [scaling.md](scaling.md) for sizing a fleet of systems.
 
 Collectors run in the `scheduler` container. API replicas never poll.
 
@@ -89,7 +89,7 @@ with *Edit* on the system page. At least one layer must stay selected.
 
 | Layer | Collectors | Alerting metrics |
 |---|---|---|
-| SAP application | SAP Start Service (`sapcontrol`); HANA SQL with an ABAP schema for dumps, updates, tRFC/qRFC, IDocs, jobs, imports and table growth | `availability.*`, `wp.*`, `syslog.*`, `dumps.*`, `updates.*`, `trfc.*`, `qrfc.*`, `idoc.*` |
+| SAP application | SAP Start Service (`sapcontrol`); RFC (`rfc`); the ABAP push agent; HANA SQL with an ABAP schema for dumps, updates, tRFC/qRFC, IDocs, jobs, imports and table growth | `availability.*`, `wp.*`, `abap.*`, `syslog.*`, `dumps.*`, `updates.*`, `trfc.*`, `qrfc.*`, `idoc.*`, `jobs.*`, `agent.up` |
 | Database | HANA SQL (`hana`), HANA instance (`hana_sapcontrol`), and the database-process check of the OS collector on the database server | `hana.*`, `db.os_process_up` |
 | Operating system | OS inventory over SSH (`os_ssh`), node_exporter | `host.*`, `db.host_*` |
 
@@ -100,6 +100,9 @@ with *Edit* on the system page. At least one layer must stay selected.
   selected and stores only the data of the selected layers.
 - **Turning a layer off** pauses its collectors (credentials are kept), resolves its open rule incidents, and stops its metrics
   and snapshots. *Run now* on a paused collector explains why it did not run. Turning the layer back on resumes collection.
+- While the application layer is off, Sentinel rejects pushes from the ABAP push agent (HTTP 409, with the reason in the
+  job log of Z_SENTINEL_PUSH) and does not raise the "agent silent" incident.
+- *Daily checks* leave out the checks of layers that are turned off, so their last values do not show as stale.
 - `collector.failed` counts the active collectors of a system whose last run failed. It opens one incident per system and
   resolves it once no active collector is failing, including when you pause or delete the failing collector or turn its layer off.
 - API: `monitoring_layers` (a list of `application`, `database`, `os`) on `POST /systems`, `PATCH /systems/{id}` and
