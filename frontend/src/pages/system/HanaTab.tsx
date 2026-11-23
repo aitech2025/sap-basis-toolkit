@@ -1,4 +1,5 @@
 import { MonitorCard, NoData, Trend, useMonitor } from "../../components/monitor";
+import { LayerOffNotice } from "../../components/MonitoringLayers";
 import { Card, DataTable, ErrorBanner, Pill, Tile, fmtDate, fmtNumber } from "../../components/ui";
 import type { SystemDetail } from "../../types";
 
@@ -19,11 +20,13 @@ const RATING: Record<number, string> = { 1: "info", 2: "low", 3: "medium", 4: "h
 export default function HanaTab({ system }: { system: SystemDetail }) {
   const mon = useMonitor(system, "hana");
   const h = mon.data?.latest?.data as Hana | undefined;
-  if (mon.data && !h) return <Card title="SAP HANA"><NoData system={system} what="HANA" hint="Add a HANA SQL collector with a read-only monitoring user." /></Card>;
+  const layerOff = !system.monitoring_layers.includes("database") && <LayerOffNotice sid={system.sid} layer="database" />;
+  if (mon.data && !h) return <>{layerOff}<Card title="SAP HANA"><NoData system={system} what="HANA" hint="Add a HANA SQL collector with a read-only monitoring user." /></Card></>;
   const data = h?.backups["complete data backup"] ?? h?.backups["data snapshot"];
   const log = h?.backups["log backup"];
   return (
     <>
+      {layerOff}
       <ErrorBanner error={mon.error} />
       {h && (
         <div className="tiles">

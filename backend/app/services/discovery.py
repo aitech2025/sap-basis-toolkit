@@ -270,10 +270,7 @@ def scan(host: str, username: str | None = None, password: str | None = None, us
     else:
         warnings.append("No OS credentials given: protected monitoring methods and start/stop will not be available.")
 
-    with get_db() as connection:
-        existing = [dict(r) for r in connection.execute(
-            select(sap_systems.c.id, sap_systems.c.sid, sap_systems.c.landscape, sap_systems.c.name)
-            .where(sap_systems.c.sid == sid)).mappings().all()]
+    existing = _existing_systems(sid)
     return {
         "host": host, "sid": sid, "instances": instances, "stack": stack, "database": database, "db_host": db_host,
         "product": product["product"], "product_version": product["product_version"],
@@ -285,6 +282,14 @@ def scan(host: str, username: str | None = None, password: str | None = None, us
                       "username": username or None},
         "hana_instance": hana_instance, "existing_systems": existing, "warnings": warnings, "scanned_at": datetime.now(timezone.utc).isoformat(),
     }
+
+
+def _existing_systems(sid: str) -> list[dict]:
+    """Registered systems with this SID (any landscape), with their layer selection so re-discovery can keep it."""
+    with get_db() as connection:
+        rows = connection.execute(select(sap_systems.c.id, sap_systems.c.sid, sap_systems.c.landscape, sap_systems.c.name,
+                                         sap_systems.c.monitoring_layers).where(sap_systems.c.sid == sid)).mappings().all()
+    return [{**dict(r), "monitoring_layers": [l for l in systems.LAYERS if l in systems.layers_of(r)]} for r in rows]
 
 
 # ----------------------------------------------------------------------------- inventory
@@ -438,16 +443,32 @@ def detect_hana(db_host: str, use_tls: bool, verify_tls: bool) -> dict:
 
 
 # ----------------------------------------------------------------------------- register
+def _requested_layers(data: dict) -> tuple[str | None, set[str]]:
+    """(value to store, effective layers). Without a choice, new systems get every layer and re-discovery keeps the
+    existing selection."""
+    try:
+        value = systems.normalise_layers(data.get("monitoring_layers"))
+    except systems.SystemValidationError as exc:
+        raise DiscoveryError(str(exc)) from exc
+    if value is not None:
+        return value, systems.layers_of({"monitoring_layers": value})
+    if data.get("system_id"):
+        return None, systems.layers_of(systems.get_system(int(data["system_id"])))
+    return None, set(systems.LAYERS)
+
+
 def register(data: dict) -> dict:
     """Scan again (never trust a client-side instance list), create or update the system, store the inventory,
-    create collectors and run the first collection."""
+    create collectors for the selected monitoring layers and run the first collection."""
     os_method = data.get("method") == "os"
+    layer_value, layers = _requested_layers(data)
     db_target = None
     if os_method:
         found, os_target, db_target, (sap_user, sap_password) = _os_scan(data)
         data = {**data, "username": sap_user, "password": sap_password}
-        if not found.get("collector"):
-            raise DiscoveryError("The SAP Start Service of this system is not reachable; start it or open port 5<NN>13 and scan again.")
+        if not found.get("collector") and "application" in layers:
+            raise DiscoveryError("The SAP Start Service of this system is not reachable; start it or open port 5<NN>13 and scan "
+                                 "again, or register without the SAP application layer.")
         if data.get("hana") and not data["hana"].get("abap_schema") and (found.get("database_layer") or {}).get("schema"):
             data["hana"] = {**data["hana"], "abap_schema": found["database_layer"]["schema"]}
     else:
@@ -467,6 +488,7 @@ def register(data: dict) -> dict:
         raise DiscoveryError("The database type could not be detected; choose it before registering")
     if data.get("control_enabled") is not None:
         fields["control_enabled"] = bool(data["control_enabled"])
+    fields["monitoring_layers"] = layer_value
     try:
         if data.get("system_id"):
             existing = systems.get_system(int(data["system_id"]))
@@ -483,25 +505,32 @@ def register(data: dict) -> dict:
 
     upsert_instances(system["id"], found["instances"], data.get("role_overrides") or {})
 
-    collector_cfg = {"type": "sapcontrol", "host": found["collector"]["host"], "port": found["collector"]["port"],
-                     "use_tls": found["collector"]["use_tls"], "verify_tls": found["collector"]["verify_tls"],
-                     "username": data.get("username") or None, "password": data.get("password") or None,
-                     "interval_seconds": int(data.get("interval_seconds") or 300)}
-    with get_db() as connection:
-        current = connection.execute(select(collectors).where(collectors.c.system_id == system["id"],
-                                                              collectors.c.type == "sapcontrol")).mappings().first()
-    try:
-        if current:
-            changes = {k: v for k, v in collector_cfg.items() if k not in ("type", "password")}
-            if collector_cfg["password"]:
-                changes["password"] = collector_cfg["password"]
-            sc = runner.update_collector(current["id"], changes)
-        else:
-            sc = runner.create(system["id"], collector_cfg)
-    except CollectorError as exc:
-        raise DiscoveryError(f"Collector: {exc}") from exc
-    created_collectors = [sc]
+    created_collectors = []
+    if "application" in layers:
+        collector_cfg = {"type": "sapcontrol", "host": found["collector"]["host"], "port": found["collector"]["port"],
+                         "use_tls": found["collector"]["use_tls"], "verify_tls": found["collector"]["verify_tls"],
+                         "username": data.get("username") or None, "password": data.get("password") or None,
+                         "interval_seconds": int(data.get("interval_seconds") or 300)}
+        with get_db() as connection:
+            current = connection.execute(select(collectors).where(collectors.c.system_id == system["id"],
+                                                                  collectors.c.type == "sapcontrol")).mappings().first()
+        try:
+            if current:
+                changes = {k: v for k, v in collector_cfg.items() if k not in ("type", "password")}
+                if collector_cfg["password"]:
+                    changes["password"] = collector_cfg["password"]
+                created_collectors.append(runner.update_collector(current["id"], changes))
+            else:
+                created_collectors.append(runner.create(system["id"], collector_cfg))
+        except CollectorError as exc:
+            raise DiscoveryError(f"Collector: {exc}") from exc
+    else:
+        found["warnings"].append("The SAP application layer is not selected: no SAP Start Service collector was set up, "
+                                 "so availability is not monitored and start/stop from Sentinel is not available.")
     db_ctl = data.get("db_control")
+    if "database" not in layers and (db_ctl or (data.get("hana") or {}).get("host")):
+        found["warnings"].append("HANA connections were not set up because the database layer is not selected.")
+        db_ctl, data = None, {**data, "hana": None}
     if db_ctl and found.get("hana_instance"):
         hi = found["hana_instance"]
         upsert_instances(system["id"], hi["instances"])
@@ -534,8 +563,13 @@ def register(data: dict) -> dict:
         except CollectorError as exc:
             raise DiscoveryError(f"HANA collector: {exc}") from exc
     if os_method:
-        persist_layers(systems.get_system(system["id"]), found)
-        for tgt in (os_target, db_target):
+        persist_layers(systems.get_system(system["id"]), found)  # the inventory always records every layer found
+        db_on_app_host = bool((found.get("database_layer") or {}).get("on_application_host"))
+        # The application host serves the OS layer, plus the database process check when the database runs on it;
+        # a separate database host serves both its OS metrics and that check.
+        ssh_targets = [os_target if "os" in layers or ("database" in layers and db_on_app_host) else None,
+                       db_target if layers & {"os", "database"} else None]
+        for tgt in ssh_targets:
             if tgt is None:
                 continue
             with get_db() as connection:
@@ -553,6 +587,10 @@ def register(data: dict) -> dict:
                                                                             "private_key": tgt.private_key}))
             except CollectorError as exc:
                 found["warnings"].append(f"OS inventory for {tgt.host} not scheduled: {exc}")
+    covered = {layer for c in runner.list_for_system(system["id"]) for layer in c["layers"]}
+    for layer in sorted(layers - covered, key=systems.LAYERS.index):
+        found["warnings"].append(f"The {systems.LAYER_LABELS[layer]} layer is selected but has no collector yet; "
+                                 "add one under the system's Setup tab.")
     first_runs = [runner.run(c["id"]) for c in created_collectors] if data.get("start_monitoring", True) else []
     return {"system": systems.get_system(system["id"]), "created": created, "instances": list_instances(system["id"]),
             "collectors": [runner.view(runner.get(c["id"])) for c in created_collectors],
@@ -690,10 +728,7 @@ def _os_scan(data: dict):
               "db_host_key": db_inv["host_key"] if db_inv and not db_local else None,
               "sap_credentials": bool(sap_user), "warnings": sap_warnings + warnings}
     if not result.get("existing_systems"):
-        with get_db() as connection:
-            result["existing_systems"] = [dict(r) for r in connection.execute(
-                select(sap_systems.c.id, sap_systems.c.sid, sap_systems.c.landscape, sap_systems.c.name)
-                .where(sap_systems.c.sid == sid)).mappings().all()]
+        result["existing_systems"] = _existing_systems(sid)
     return result, target, db_target, (sap_user, sap_password)
 
 

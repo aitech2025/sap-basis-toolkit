@@ -19,6 +19,9 @@ export interface Catalogue {
   license_models: (Option & { tiers: Record<string, string> })[];
 }
 
+/** Layers a system can be monitored on: the SAP application, its database and the servers' operating system. */
+export type MonitoringLayer = "application" | "database" | "os";
+
 export interface SapSystem {
   id: number;
   sid: string;
@@ -40,6 +43,8 @@ export interface SapSystem {
   enabled: boolean;
   /** null = default (allowed except for PRD). */
   control_enabled: boolean | null;
+  /** Monitored layers in canonical order; every layer unless narrowed. */
+  monitoring_layers: MonitoringLayer[];
   created_at: string;
 }
 
@@ -553,6 +558,8 @@ export interface Collector {
   simulated: boolean;
   has_private_key?: boolean;
   host_key?: string | null;
+  /** Layers this collector serves; it runs while at least one of them is monitored. */
+  layers: MonitoringLayer[];
 }
 
 export interface MonitorSnapshot<T = Record<string, any>> {
@@ -618,7 +625,7 @@ export interface ScanResult extends OsScanExtras {
   hana_instance: {
     host: string; port: number; instance_nr: string; sid: string; suggested_user: string | null; instances: DiscoveredInstance[];
   } | null;
-  existing_systems: { id: number; sid: string; landscape: string; name: string }[];
+  existing_systems: { id: number; sid: string; landscape: string; name: string; monitoring_layers: MonitoringLayer[] }[];
   warnings: string[];
   scanned_at: string;
 }

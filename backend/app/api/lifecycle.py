@@ -1,4 +1,6 @@
 """Discovery (host + credentials -> registered, monitored system) and start/stop/restart control."""
+from typing import Literal
+
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
@@ -69,6 +71,8 @@ class RegisterIn(ScanIn):
     hana: HanaIn | None = None
     db_control: DbControlIn | None = None
     start_monitoring: bool = True
+    # Layers to monitor. New systems default to all three; re-discovery keeps the existing selection.
+    monitoring_layers: list[Literal["application", "database", "os"]] | None = Field(default=None, max_length=3)
 
 
 def _discovery(fn, *args):

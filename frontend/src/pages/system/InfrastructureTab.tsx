@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { RefreshCw } from "lucide-react";
 import { api } from "../../api";
 import { DatabaseCard, HostCard, LayerStack } from "../../components/layers";
+import { ALL_LAYERS } from "../../components/MonitoringLayers";
 import { RequireRole } from "../../components/session";
 import { Card, Empty, ErrorBanner, Pill, fmtDate, useAsync } from "../../components/ui";
 import { Button } from "../../components/ui/button";
@@ -46,6 +47,7 @@ export default function InfrastructureTab({ system }: { system: SystemDetail }) 
             actions={<RequireRole role="operator"><Button variant="outline" onClick={refresh} disabled={busy || !inf.collectors.length}>
               <RefreshCw className={cn(busy && "animate-spin")} />{busy ? "Refreshing…" : "Refresh inventory"}</Button></RequireRole>}>
         <LayerStack
+          off={ALL_LAYERS.filter((l) => !system.monitoring_layers.includes(l))}
           application={
             <div className="rounded-2xl bg-surface p-4">
               <div className="flex flex-wrap items-center gap-2">

@@ -82,7 +82,7 @@ function LiveRow({ system, base, live }: { system: SystemDetail; base: string; l
             ) : <p className="muted">HANA collector with ABAP schema, or uploads.</p>}
           </ModuleCard>
         )}
-        {system.database === "HANA" && (
+        {monitorsHana(system) && (
           <ModuleCard to={`${base}/hana`} title="SAP HANA" status={m.hana?.health ?? "unknown"} cta="Database health">
             {h ? (
               <>
@@ -116,6 +116,9 @@ const last = (series: Series, unit: string) => {
   return p?.length ? `${Math.round(p[p.length - 1].value)}${unit}` : "–";
 };
 
+/** HANA tiles and charts apply when the system runs on HANA and its database layer is monitored. */
+const monitorsHana = (s: SystemDetail) => s.database === "HANA" && s.monitoring_layers.includes("database");
+
 export default function OverviewTab({ system }: { system: SystemDetail }) {
   const { data, error } = useAsync(() => api.systemOverview(system.id), [system.id]);
   const [perf, setPerf] = useState(system.stack === "JAVA" ? "hana.memory_used_pct" : "wp.dia_busy_pct");
@@ -124,7 +127,7 @@ export default function OverviewTab({ system }: { system: SystemDetail }) {
     const [down, dia, mem] = await Promise.all([
       api.analyticsSeries("availability.instances_down", { ...opts, aggregation: "max" }),
       api.analyticsSeries("wp.dia_busy_pct", opts),
-      system.database === "HANA" ? api.analyticsSeries("hana.memory_used_pct", opts) : Promise.resolve(null),
+      monitorsHana(system) ? api.analyticsSeries("hana.memory_used_pct", opts) : Promise.resolve(null),
     ]);
     return { down: down.series, dia: dia.series, mem: mem?.series };
   }, [system.id]);
@@ -159,7 +162,7 @@ export default function OverviewTab({ system }: { system: SystemDetail }) {
               hint="DIA work processes busy, 24 h" chart={<Sparkline points={pts(spark.data?.dia)} />} />
         <Tile label="Active incidents" icon={Siren} value={activeCount} tone={activeCount ? "bad" : "good"}
               hint={`Overall health: ${data.health === "unknown" ? "no data" : data.health}`} />
-        {system.database === "HANA" ? (
+        {monitorsHana(system) ? (
           <Tile label="HANA memory" icon={MemoryStick} value={hanaMemory} tone={toneOf(liveHana ? (liveHana.memory?.pct >= 95 ? "critical" : liveHana.memory?.pct >= 85 ? "warning" : "healthy") : null)}
                 hint="Used of allocation limit, 24 h" chart={<Sparkline points={pts(spark.data?.mem)} />} />
         ) : (
@@ -171,7 +174,7 @@ export default function OverviewTab({ system }: { system: SystemDetail }) {
       <Card title="Performance, last 24 hours" className="mb-0 mt-4"
             actions={
               <div className="inline-flex rounded-full bg-surface p-1" role="tablist" aria-label="Metric">
-                {PERF.filter((m) => system.database === "HANA" || !m.key.startsWith("hana")).filter((m) => system.stack !== "JAVA" || !m.key.startsWith("wp") && !m.key.startsWith("dumps")).map((m) => (
+                {PERF.filter((m) => monitorsHana(system) || !m.key.startsWith("hana")).filter((m) => system.stack !== "JAVA" || !m.key.startsWith("wp") && !m.key.startsWith("dumps")).map((m) => (
                   <button key={m.key} role="tab" aria-selected={perf === m.key} onClick={() => setPerf(m.key)}
                     className={cn("rounded-full px-3 py-1.5 text-xs font-semibold transition-colors", perf === m.key ? "bg-foreground text-background" : "text-muted-foreground hover:text-foreground")}>
                     {m.label}

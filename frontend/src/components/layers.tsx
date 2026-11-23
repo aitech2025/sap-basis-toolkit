@@ -1,28 +1,37 @@
 import type { ReactNode } from "react";
 import { AppWindow, Cpu, Database, HardDrive, KeyRound, MemoryStick, Server } from "lucide-react";
 import { cn } from "@/lib/utils";
-import type { DatabaseLayer, OsInfo } from "@/types";
+import type { DatabaseLayer, MonitoringLayer, OsInfo } from "@/types";
 import { Pill } from "./ui";
 
-/** Application → database → operating system, drawn as three stacked layers joined by connectors. */
-export function LayerStack({ application, database, hosts }: {
-  application: ReactNode; database: ReactNode; hosts: ReactNode;
+/** Application → database → operating system, drawn as three stacked layers joined by connectors.
+ *  Layers listed in `off` are drawn muted and labelled as not monitored. */
+export function LayerStack({ application, database, hosts, off = [] }: {
+  application: ReactNode; database: ReactNode; hosts: ReactNode; off?: MonitoringLayer[];
 }) {
-  const layers: [string, typeof Server, ReactNode][] = [
-    ["Application layer", AppWindow, application], ["Database layer", Database, database], ["Operating system layer", Server, hosts],
+  const layers: [MonitoringLayer, string, typeof Server, ReactNode][] = [
+    ["application", "Application layer", AppWindow, application], ["database", "Database layer", Database, database],
+    ["os", "Operating system layer", Server, hosts],
   ];
   return (
     <ol className="m-0 list-none space-y-0 p-0">
-      {layers.map(([title, Icon, body], i) => (
-        <li key={title} className="relative pl-14">
-          {i < layers.length - 1 && <span aria-hidden="true" className="absolute bottom-0 left-[21px] top-12 w-0.5 bg-gradient-to-b from-primary/50 to-primary/10" />}
-          <span className="absolute left-0 top-1 flex h-11 w-11 items-center justify-center rounded-full bg-foreground text-background"><Icon className="h-5 w-5" /></span>
-          <div className="pb-6">
-            <div className="mb-2 pt-3 text-sm font-bold">{title}</div>
-            {body}
-          </div>
-        </li>
-      ))}
+      {layers.map(([key, title, Icon, body], i) => {
+        const muted = off.includes(key);
+        return (
+          <li key={key} className="relative pl-14">
+            {i < layers.length - 1 && <span aria-hidden="true" className="absolute bottom-0 left-[21px] top-12 w-0.5 bg-gradient-to-b from-primary/50 to-primary/10" />}
+            <span className={cn("absolute left-0 top-1 flex h-11 w-11 items-center justify-center rounded-full",
+              muted ? "border-2 border-dashed border-border bg-surface text-muted-foreground" : "bg-foreground text-background")}><Icon className="h-5 w-5" /></span>
+            <div className="pb-6">
+              <div className="mb-2 flex flex-wrap items-center gap-2 pt-3 text-sm font-bold">
+                {title}
+                {muted && <span className="tag !ml-0">not monitored</span>}
+              </div>
+              <div className={cn(muted && "opacity-60")}>{body}</div>
+            </div>
+          </li>
+        );
+      })}
     </ol>
   );
 }

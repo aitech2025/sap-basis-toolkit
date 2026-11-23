@@ -28,7 +28,7 @@ BUILTIN_RULES = [
     ("hana.system_up", "HANA database down", "<", None, 1, "The HANA instance is not GREEN in its own sapstartsrv"),
     ("hana.services_inactive", "HANA service not active", ">=", None, 1, "A HANA service (M_SERVICES) is not ACTIVE"),
     ("collector.failed", "Collector cannot reach the system", ">=", 1, None,
-     "A live collector failed; data is stale until it recovers"),
+     "Number of active collectors whose last run failed; their data is stale until they recover"),
     ("wp.dia_busy_pct", "Dialog work processes busy", ">=", 80, 95, "Share of DIA work processes running"),
     ("wp.btc_busy_pct", "Background work processes busy", ">=", 90, None, "Share of BTC work processes running"),
     ("wp.long_running", "Long-running work processes", ">=", 1, 5,
@@ -330,6 +330,22 @@ def evaluate(system: dict, metrics: dict[str, float]) -> dict:
         elif auto_resolve(system, fingerprint, f"{rule['name']} back to normal ({value:g})"):
             summary["resolved"] += 1
     return summary
+
+
+def resolve_layers(system: dict, layers: set[str]) -> int:
+    """Resolve active rule incidents whose metric belongs to a layer that is no longer monitored."""
+    from .systems import LAYER_LABELS, metric_layer
+
+    with get_db() as connection:
+        rows = connection.execute(select(incidents.c.fingerprint, incidents.c.metric).where(
+            incidents.c.system_id == system["id"], incidents.c.source == "rule",
+            incidents.c.status.in_(("open", "acknowledged")))).all()
+    resolved = 0
+    for fingerprint, metric in rows:
+        layer = metric_layer(metric)
+        if layer in layers and auto_resolve(system, fingerprint, f"Monitoring of the {LAYER_LABELS[layer]} layer was turned off"):
+            resolved += 1
+    return resolved
 
 
 def raise_module_incident(system_id: int | None, fingerprint: str, title: str, severity: str,

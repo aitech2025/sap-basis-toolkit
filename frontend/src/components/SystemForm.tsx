@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api";
-import type { Catalogue, SapSystem, SystemInput } from "../types";
+import type { Catalogue, MonitoringLayer, SapSystem, SystemInput } from "../types";
+import { ALL_LAYERS, LayerPicker, layerNames } from "./MonitoringLayers";
 import { useSession } from "./session";
 import { ErrorBanner } from "./ui";
 
@@ -9,6 +10,7 @@ const TIMEZONES = ["UTC", "Asia/Kolkata", "Asia/Singapore", "Asia/Tokyo", "Asia/
 const EMPTY: Partial<SystemInput> = {
   sid: "", name: "", product: "S4HANA", stack: "ABAP", database: "HANA", environment: "DEV", landscape: "default",
   product_version: "", basis_release: "", license_model: null, host: "", default_client: "", description: "", timezone: "", enabled: true, control_enabled: null,
+  monitoring_layers: ALL_LAYERS,
 };
 
 export function SystemForm({ open, initial, catalogue, landscapes, onClose, onSaved }: {
@@ -73,9 +75,11 @@ export function SystemForm({ open, initial, catalogue, landscapes, onClose, onSa
   };
 
   const licenseDefault = catalogue?.license_models.find((m) => m.key === product?.license_model);
+  const layers = form.monitoring_layers ?? ALL_LAYERS;
+  const turningOff: MonitoringLayer[] = initial ? initial.monitoring_layers.filter((l) => !layers.includes(l)) : [];
 
   return (
-    <dialog ref={ref} onClose={onClose} aria-labelledby="system-form-title">
+    <dialog ref={ref} onClose={onClose} aria-labelledby="system-form-title" className="wide-dialog">
       <form onSubmit={submit}>
         <div className="dialog-body">
           <h2 id="system-form-title" style={{ marginBottom: 14 }}>{initial ? `Edit ${initial.sid}` : "Register SAP system"}</h2>
@@ -124,6 +128,20 @@ export function SystemForm({ open, initial, catalogue, landscapes, onClose, onSa
               <small>Time zone SAP reports job, lock and import times in (default UTC).</small></label>
             <label className="field wide"><span>Description</span>
               <textarea rows={2} value={form.description ?? ""} onChange={(e) => set("description", e.target.value)} /></label>
+            <div className="wide">
+              <LayerPicker value={layers} onChange={(v) => set("monitoring_layers", v)} />
+              {!initial && (
+                <p className="mt-1.5 text-xs text-muted-foreground">Add the collectors for each layer afterwards under the system's
+                  Setup tab, or use Discover from host to set them up automatically.</p>
+              )}
+              {turningOff.length > 0 && (
+                <div className="banner warn mt-3 mb-0" role="status">
+                  <span>Turning off monitoring of {layerNames(turningOff)} pauses {turningOff.length > 1 ? "their" : "its"} collectors
+                    and resolves {turningOff.length > 1 ? "their" : "its"} open incidents. Credentials are kept, so turning a layer back on
+                    resumes monitoring.</span>
+                </div>
+              )}
+            </div>
             {can("admin") && (
               <label className="field"><span>Start / stop from Sentinel</span>
                 <select value={form.control_enabled === null || form.control_enabled === undefined ? "" : form.control_enabled ? "on" : "off"}

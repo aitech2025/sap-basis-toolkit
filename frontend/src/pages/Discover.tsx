@@ -3,7 +3,8 @@ import { Link, useNavigate } from "react-router-dom";
 import { api } from "../api";
 import { Card, DataTable, ErrorBanner, Pill, Tile, useAsync } from "../components/ui";
 import { DatabaseCard, HostCard, LayerStack } from "../components/layers";
-import type { DiscoveredInstance, RegisterResult, ScanResult } from "../types";
+import { ALL_LAYERS, LayerBadges, LayerPicker } from "../components/MonitoringLayers";
+import type { DiscoveredInstance, MonitoringLayer, RegisterResult, ScanResult } from "../types";
 
 export const ROLES = ["ASCS", "SCS", "ERS", "PAS", "AAS", "JAVA", "HANA", "WEBDISP", "SMDA", "GATEWAY", "OTHER"];
 const ROLE_SOURCE: Record<string, string> = {
@@ -33,6 +34,8 @@ export default function Discover() {
   const [result, setResult] = useState<RegisterResult | null>(null);
   const [dbCtl, setDbCtl] = useState({ enabled: true, username: "", password: "" });
   const [method, setMethod] = useState<"os" | "sapcontrol">("os");
+  const [layers, setLayers] = useState<MonitoringLayer[]>(ALL_LAYERS);
+  const monitors = (layer: MonitoringLayer) => layers.includes(layer);
   const [os, setOs] = useState({ os_user: "root", os_password: "", use_key: false, os_private_key: "", ssh_port: "22",
     sap_password: "", db_show: false, db_os_user: "", db_os_password: "", sid: "" });
   const osPayload = (sid?: string) => ({
@@ -56,6 +59,7 @@ export default function Discover() {
       setScan(found);
       setRoles({});
       setTarget(found.existing_systems[0] ? String(found.existing_systems[0].id) : "new");
+      setLayers(found.existing_systems[0]?.monitoring_layers ?? ALL_LAYERS);  // re-discovery keeps the current selection
       setForm({
         name: `${found.sid} ${catalogue.data?.products.find((p) => p.key === found.product)?.label ?? found.product}`,
         environment: found.suggested_environment, landscape: found.existing_systems[0]?.landscape ?? "default",
@@ -91,8 +95,9 @@ export default function Discover() {
         product: form.product, database: form.database || null, interval_seconds: Number(form.interval_seconds) || 300,
         control_enabled: form.control_enabled === "" ? null : form.control_enabled === "on",
         role_overrides: roles,
-        db_control: dbCtl.enabled && scan.hana_instance ? { username: dbCtl.username, password: dbCtl.password } : null,
-        hana: hana.enabled ? { host: hana.host, port: Number(hana.port) || 30015, username: hana.username,
+        monitoring_layers: layers,
+        db_control: monitors("database") && dbCtl.enabled && scan.hana_instance ? { username: dbCtl.username, password: dbCtl.password } : null,
+        hana: monitors("database") && hana.enabled ? { host: hana.host, port: Number(hana.port) || 30015, username: hana.username,
           password: hana.password, database_name: hana.database_name || null, abap_schema: hana.abap_schema || null } : null,
       });
       setResult(res);
@@ -123,6 +128,10 @@ export default function Discover() {
             {!result.first_runs.length && <li className="muted">Monitoring not started.</li>}
           </ul>
           <p className="muted">{result.instances.length} instances in the inventory.</p>
+          <p className="flex flex-wrap items-center gap-2 text-sm">Monitoring <LayerBadges layers={result.system.monitoring_layers} /></p>
+          {result.warnings.length > 0 && (
+            <div className="banner warn" role="status"><ul className="plain">{result.warnings.map((w) => <li key={w}>{w}</li>)}</ul></div>
+          )}
           <div className="actions">
             <button className="btn primary" onClick={() => navigate(`/systems/${result.system.id}`)}>Open {result.system.sid}</button>
             <button className="btn" onClick={() => navigate(`/systems/${result.system.id}/instances`)}>Instances &amp; control</button>
@@ -219,6 +228,7 @@ export default function Discover() {
                 </select>
               )}>
           <LayerStack
+            off={ALL_LAYERS.filter((l) => !monitors(l))}
             application={
               <div className="rounded-2xl bg-surface p-4">
                 <div className="flex flex-wrap items-center gap-2">
@@ -288,7 +298,7 @@ export default function Discover() {
               ]}
             />
           </Card>
-          {scan.hana_instance && (
+          {scan.hana_instance && monitors("database") && (
             <Card title={`HANA database ${scan.hana_instance.sid} · HDB${scan.hana_instance.instance_nr} on ${scan.hana_instance.host}`}>
               <p className="muted small">Found the HANA instance's own SAP Start Service (port {scan.hana_instance.port}). With its OS user,
                 Sentinel monitors database availability and includes HANA in the start/stop procedures (database first on start, last on stop).</p>
@@ -308,9 +318,29 @@ export default function Discover() {
           )}
           <Card title="3 · Register and monitor">
             <div className="form-grid">
+              <div className="wide">
+                <LayerPicker value={layers} onChange={(v) => {
+                  setLayers(v);
+                  if (!v.includes("database")) setHana((h) => ({ ...h, enabled: false }));
+                }} />
+                <ul className="mt-2 list-disc space-y-0.5 pl-5 text-xs text-muted-foreground">
+                  <li>Collectors are set up only for the layers you choose. Discovery still records all three layers in the inventory.</li>
+                  {!monitors("application") && <li>Without the SAP application layer, availability is not monitored and Sentinel cannot start or stop {scan.sid}.</li>}
+                  {scan.method === "os" && !monitors("os") && (
+                    <li>The OS login is used for discovery only{monitors("database") ? "; the database server is still checked for a running database process" : ""}.</li>
+                  )}
+                  {scan.method !== "os" && monitors("os") && (
+                    <li>This discovery mode has no OS login. Add an OS inventory (SSH) or node_exporter collector under Setup afterwards.</li>
+                  )}
+                </ul>
+              </div>
               {scan.existing_systems.length > 0 && (
                 <label className="field wide"><span>Register as</span>
-                  <select value={target} onChange={(e) => setTarget(e.target.value)}>
+                  <select value={target} onChange={(e) => {
+                    setTarget(e.target.value);
+                    const existing = scan.existing_systems.find((s) => String(s.id) === e.target.value);
+                    if (existing) setLayers(existing.monitoring_layers);
+                  }}>
                     {scan.existing_systems.map((s) => <option key={s.id} value={s.id}>Update existing {s.sid} in {s.landscape} ({s.name})</option>)}
                     <option value="new">New system</option>
                   </select></label>
@@ -339,13 +369,17 @@ export default function Discover() {
                 <select value={form.interval_seconds} onChange={(e) => set("interval_seconds", e.target.value)}>
                   {[60, 300, 600, 900].map((s) => <option key={s} value={s}>{s / 60} min</option>)}
                 </select></label>
-              <label className="field"><span>Start / stop from Sentinel</span>
-                <select value={form.control_enabled} onChange={(e) => set("control_enabled", e.target.value)}>
-                  <option value="">Default (off for PRD)</option><option value="on">Allowed</option><option value="off">Not allowed</option>
-                </select></label>
-              <label className="field check wide"><input type="checkbox" checked={hana.enabled} onChange={(e) => setHana({ ...hana, enabled: e.target.checked })} />
-                <span>Also monitor the HANA database (SQL user with MONITORING role)</span></label>
-              {hana.enabled && (
+              {monitors("application") && (
+                <label className="field"><span>Start / stop from Sentinel</span>
+                  <select value={form.control_enabled} onChange={(e) => set("control_enabled", e.target.value)}>
+                    <option value="">Default (off for PRD)</option><option value="on">Allowed</option><option value="off">Not allowed</option>
+                  </select></label>
+              )}
+              {monitors("database") && (form.database === "HANA" || scan.database === "HANA") && (
+                <label className="field check wide"><input type="checkbox" checked={hana.enabled} onChange={(e) => setHana({ ...hana, enabled: e.target.checked })} />
+                  <span>Connect to HANA with SQL for database health, backups and replication (user with the MONITORING role)</span></label>
+              )}
+              {monitors("database") && hana.enabled && (
                 <>
                   <label className="field"><span>HANA host</span><input value={hana.host} onChange={(e) => setHana({ ...hana, host: e.target.value })} /></label>
                   <label className="field"><span>SQL port</span><input value={hana.port} onChange={(e) => setHana({ ...hana, port: e.target.value })} />
